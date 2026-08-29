@@ -141,3 +141,52 @@ fn validation_is_deterministic() {
     let b = mesh.validate(1e-4);
     assert_eq!(a, b);
 }
+
+#[test]
+fn voxelises_a_real_non_watertight_mesh() {
+    use m2m_core::voxel::{VoxelGrid, DEFAULT_RESOLUTION};
+
+    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
+    let s = grid.stats();
+    let vs = grid.voxel_size();
+    let volume = s.interior as f32 * vs * vs * vs;
+
+    eprintln!(
+        "res {DEFAULT_RESOLUTION}: dims {:?}  surface {}  interior {}  volume {volume:.4}",
+        grid.dims(),
+        s.surface,
+        s.interior
+    );
+
+    // The mesh has 26 boundary edges and is not watertight, but every hole is
+    // far smaller than a voxel here, so conservative rasterisation seals the
+    // shell and the body still encloses volume. A leak shows up as interior 0.
+    assert!(s.interior > 0, "non-watertight mesh leaked entirely");
+
+    // Interior must dominate surface, or the geodesic field has nothing to
+    // propagate through. See DEFAULT_RESOLUTION for the full sweep — this
+    // ratio is 0.08 at resolution 32 and 2.69 here.
+    assert!(
+        s.interior > s.surface * 2,
+        "shell-dominated grid: {} interior vs {} surface",
+        s.interior,
+        s.surface
+    );
+
+    // Pinned so a rasterisation change cannot silently move the field the
+    // geodesic solver will propagate through.
+    assert_eq!(s.surface, 54608);
+    assert_eq!(s.interior, 146672);
+
+    // Physical sanity, not just internal consistency. The figure is 0.764
+    // units tall, so a 1.75 m human implies 2.29 m/unit and a volume scale of
+    // 2.29^3 = 12.0. A 60-70 kg person displaces roughly 60-70 litres.
+    let (lo, hi) = mesh.bounds().expect("non-empty");
+    let scale = 1.75 / (hi.y - lo.y);
+    let litres = volume * scale * scale * scale * 1000.0;
+    assert!(
+        (40.0..110.0).contains(&litres),
+        "voxelised body volume {litres:.1} L is not a plausible human"
+    );
+}

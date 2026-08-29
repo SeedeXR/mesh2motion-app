@@ -43,8 +43,13 @@
 
 - [x] **P1-1** Mesh representation *(2026-08-29 — SoA positions + indices, vertex welding with a 27-cell spatial hash, edge adjacency, union-find components. **Half-edge deliberately not built**: the geodesic solver runs on the voxel grid, not the mesh graph, and the only consumer of adjacency is validation. Normals deferred until something needs them.)*
 - [x] **P1-2** Mesh validation *(2026-08-29 — watertightness, boundary/non-manifold edges, degenerate triangles, duplicate vertices, components, bounds/diagonal. 22 tests including a real 1761-vertex human mesh. Scale *detection* deliberately not implemented: the solver normalises by the diagonal anyway, so unit-guessing is a UI concern — the raw diagonal is reported instead of an invented enum.)*
-- [ ] **P1-3** Sparse voxelisation with interior/exterior classification (robust on non-watertight input)
-  - **Hard requirement discovered in P1-2:** a real human mesh has **61 disconnected components, 26 boundary edges, 1 non-manifold edge, and is not watertight**. Voxelise all components into one shared grid so spatially-nested islands (eyes inside a head) connect in voxel space. Measured, not assumed — see `docs/algorithms/geodesic-voxel-binding.md`.
+- [x] **P1-3** Sparse voxelisation with interior/exterior classification *(2026-08-29)*
+  - Conservative triangle-AABB rasterisation (Akenine-Möller 13-axis SAT), then a 6-connected exterior flood fill from the padded grid boundary; interior is whatever neither reaches.
+  - **The 61-component requirement is met:** all components share one grid, so nested islands connect in voxel space. Tested directly with a small cube fully inside a large one — surfaces disconnected, interiors joined.
+  - **`DEFAULT_RESOLUTION = 256`, measured not guessed.** The deciding metric is interior/surface ratio: 0.08 at res 32 (shell-dominated, nothing for the geodesic field to traverse) vs 2.69 at 256. Full sweep in `docs/algorithms/geodesic-voxel-binding.md`.
+  - **Physical validation:** interior volume at 256 scales to **56 litres** for a 1.75 m human. A 60 kg person displaces ~60 L.
+  - Non-watertight input (26 boundary edges) does **not** leak — conservative rasterisation seals sub-voxel holes. A face-sized hole does leak, and that limit is tested both ways.
+  - **Axis-aligned geometry needed three separate fixes** before the shell sealed: the rasterisation AABB excluded the voxel containing a boundary face, the overlap test had no epsilon, and world-space rasterisation lost precision far from the origin. A plain cube had no shell at all at resolutions 13/18/20 before this. Regression sweep: 1476 cases (scale × offset × rotation × resolution).
 - [ ] **P1-4** Geodesic distance field over voxel interior, per bone, `rayon`-parallel
 - [ ] **P1-5** Weight assignment from geodesic falloff, k≤4 bones/vertex
   - **Never leave a vertex unweighted.** Islands still isolated after voxelisation must fall back to nearest-bone and be flagged in the report, or eyes and teeth detach and float.

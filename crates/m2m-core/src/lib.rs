@@ -13,6 +13,7 @@
 
 pub mod mesh;
 pub mod skinning;
+pub mod voxel;
 
 /// Errors produced by core geometry and solver operations.
 #[derive(Debug, thiserror::Error)]

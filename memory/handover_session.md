@@ -5,6 +5,103 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 005 — 2026-08-29
+
+**Ended:** 2026-08-29 18:43:54
+**Focus:** P1-3 sparse voxelisation — first piece of the geodesic pipeline
+
+### Completed
+**P1-3.** Conservative triangle-AABB rasterisation (Akenine-Möller 13-axis SAT),
+then a 6-connected exterior flood fill from the padded grid boundary; interior
+is whatever neither reaches. 33 tests total across the crate.
+
+### DEFAULT_RESOLUTION = 256, measured not guessed
+Release-build sweep on the real character fixture:
+
+| resolution | surface | interior | interior/surface | volume | time | memory |
+|---|---|---|---|---|---|---|
+| 32 | 795 | 66 | 0.08 | 0.0011 | 0.3 ms | 9 KB |
+| 128 | 13357 | 15228 | 1.14 | 0.0039 | 4 ms | 421 KB |
+| **256** | 54559 | 146692 | **2.69** | **0.0047** | **24 ms** | **3.1 MB** |
+| 384 | 124137 | 525375 | 4.23 | 0.0050 | 79 ms | 10.3 MB |
+
+**The interior/surface ratio is the deciding metric**, not raw counts. Below
+~128 the grid is shell-dominated — thin limbs are entirely surface with no
+interior between them, so the P1-4 geodesic field would have almost nothing to
+propagate through. My first instinct was to read the low 1.1% fill at res 32 as
+a bug; sweeping showed it is the documented thin-feature limit instead.
+
+### Physical validation, not just internal consistency
+Interior volume at 256 is 0.0047 units³. The figure is 0.764 units tall, so a
+1.75 m human implies 2.29 m/unit and a volume scale of 12.0 → **56 litres**. A
+60 kg person displaces roughly 60 L. This is now a test assertion: it checks the
+pipeline against physical reality rather than against itself.
+
+### The 61-component requirement is met
+All components share one grid, so spatially-nested islands connect in voxel
+space even though their surfaces never touch. Tested directly: a small cube
+fully inside a large one validates as 2 surface components, and the inner
+cube's centre classifies as Interior.
+
+### Leak behaviour, tested both ways
+The real mesh is **not** watertight (26 boundary edges, 1 non-manifold) and
+still encloses volume at every resolution — conservative rasterisation seals
+holes smaller than a voxel. A synthetic box with a whole face removed leaks
+completely (interior 0). Both are asserted, so the boundary of the method's
+robustness is pinned rather than assumed.
+
+### The worst bug so far, and why my tests missed it
+Code review flagged that an axis-aligned cube might not rasterise. Verified it:
+**a plain unit cube produced NO SHELL AT ALL at resolutions 13, 18 and 20, and
+leaked completely at 16 more.** My tests used 8/16/24/32 and passed by luck —
+those give power-of-two voxel sizes.
+
+Organic geometry hides this entirely, which is why the real-mesh test was green:
+a character never lands exactly on a voxel plane. A cube's faces do,
+*systematically*, because the grid origin is derived from the mesh bounds. So
+"conservative rasterisation seals the shell" was false for every box, prop,
+flat sole, or ground plane — and I had written it into the docs as established.
+
+Three independent causes, all required:
+1. **The rasterisation AABB excluded the voxel actually containing the face.**
+   `coord_of` and the box centre round independently: at resolution 20 the voxel
+   size is 0.050000001, `coord_of(0.0)` returns voxel 1 whose box starts at
+   2e-9, and the face at x=0 really sits in voxel 0 — never tested. This was the
+   primary cause and the review had *not* diagnosed it; I found it by printing
+   the actual coordinates rather than trusting the diagnosis.
+2. **No epsilon in the overlap test**, so exact touching came down to one ulp.
+   Voxel boxes are now tested very slightly enlarged (1e-3 of a voxel).
+3. **World-space rasterisation lost precision** for a small model far from the
+   origin. Found by sweeping: only the (scale 0.01, offset 123.456) combination
+   failed — f32's ulp at 123 is ~1e-5, just 30x below that voxel size.
+   Rasterisation now runs in grid-local coordinates, so precision depends on the
+   model's own extent rather than where it sits in the artist's scene.
+
+Regression test sweeps 3 scales x 4 offsets x 3 rotations x 41 resolutions =
+**1476 cases, all sealed**. Padding also went 1 -> 2, since the AABB widening
+can consume a single layer and leave the flood fill no seed.
+
+Real-mesh numbers barely moved (surface +50, interior -20), which confirms the
+bug was specific to axis-aligned geometry.
+
+### Also from review
+Scale-relative degenerate-axis floor (was an absolute 1e-20, which on a
+sub-1e-5-scale mesh would make every axis "degenerate" and inflate the shell to
+the whole AABB); `checked_mul` on the voxel count (a large resolution wrapped
+usize and then panicked out of bounds); triangle-normal tested first since it
+rejects the most candidates.
+
+### Repeated mistake
+Wrote `!(longest > 0.0)` again — the exact clippy pattern I fixed in `mesh.rs`
+last session. Fixing an instance is not the same as learning the rule.
+
+### Next session starts at
+**P1-4** — geodesic distance field over the voxel interior, per bone,
+`rayon`-parallel. The grid API it needs (`index`, `state`, `center`,
+`coord_of`, `dims`) is already in place.
+
+---
+
 ## Session 004 — 2026-08-29
 
 **Ended:** 2026-08-29 18:18:53

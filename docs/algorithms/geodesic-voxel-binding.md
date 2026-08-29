@@ -163,11 +163,61 @@ must be designed for in P1-4/P1-5, not patched later:
 3. Invariant 4 in `memory/test.md` §3 (every vertex sums to 1.0) is what
    catches a regression here.
 
+## Measured: voxelisation (P1-3, implemented)
+
+Sweeping resolution on a real character (8691 verts, extent 0.81 × 0.76 × 0.15),
+release build, Apple M4:
+
+| resolution | surface | interior | interior/surface | volume | time | memory |
+|---|---|---|---|---|---|---|
+| 32 | 800 | 66 | 0.08 | 0.00108 | ~3 ms | 15 KB |
+| 64 | 3224 | 1268 | 0.39 | 0.00259 | ~4 ms | 80 KB |
+| 128 | 13370 | 15226 | 1.14 | 0.00389 | 8 ms | 490 KB |
+| 192 | 30416 | 58354 | 1.92 | 0.00442 | 16 ms | 1.5 MB |
+| **256** | 54608 | 146672 | **2.69** | **0.00469** | **30 ms** | **3.4 MB** |
+| 384 | 124286 | 525292 | 4.23 | 0.00497 | 85 ms | 10.9 MB |
+
+**The interior/surface ratio is the number that matters**, not the raw counts.
+Below ~128 the grid is shell-dominated: thin limbs are entirely surface with no
+interior between them, and the geodesic field would have almost nothing to
+propagate through. 256 is the default — interior comfortably ahead of surface,
+within ~6% of the converged volume, ~30 ms and 3.4 MB.
+
+**Physical validation.** At 256 the interior volume is 0.00469 units³. The figure
+is 0.764 units tall, so a 1.75 m human implies 2.29 m/unit and a volume scale of
+12.0 → **56 litres**. A 60 kg person displaces roughly 60 litres. The voxeliser
+reproduces real body volume, which is a stronger check than any internal
+consistency assertion.
+
+**Leak behaviour confirmed.** This mesh is *not* watertight (26 boundary edges,
+1 non-manifold edge) and still encloses volume at every resolution tested,
+because conservative rasterisation seals holes smaller than a voxel. A synthetic
+box with a whole face removed does leak completely — that boundary is tested
+both ways.
+
+**Sealing an axis-aligned mesh took three separate fixes**, and the first
+implementation failed badly without them — a plain unit cube produced *no shell
+at all* at resolutions 13, 18 and 20, and leaked at 16 more. Organic geometry
+hid this completely, because it never lands exactly on a voxel plane; a cube's
+faces do, systematically, because the grid origin derives from the mesh bounds.
+
+1. The rasterisation AABB excluded the voxel actually containing a boundary
+   face — `coord_of` and the box centre round independently, so at resolution
+   20 the face at x=0 fell in voxel 0 while `coord_of` reported voxel 1. The
+   range is now widened by one voxel.
+2. The overlap test had no epsilon, so exact touching was decided by a single
+   ulp. Voxel boxes are now tested very slightly enlarged (1e-3 of a voxel).
+3. Rasterisation ran in world space, losing precision for a small model far
+   from the origin. It now runs in grid-local coordinates.
+
+The regression sweep covers 3 scales × 4 offsets × 3 rotations × 41
+resolutions = 1476 cases, all sealed.
+
 ## Parameters
 
 | Name | Range | Default | Visible effect |
 |---|---|---|---|
-| voxel resolution | 64–512 per longest axis | 256 | detail captured vs memory and time |
+| voxel resolution | 64–512 per longest axis | **256** (measured, above) | detail captured vs memory and time |
 | falloff exponent | 1.0–4.0 | TBD from paper | how sharply influence fades from a bone |
 | max influences | 1–4 | 4 | smoothness vs GPU cost |
 | bone radius scale | 0.5–2.0 | 1.0 | how much volume a bone claims |
