@@ -5,6 +5,80 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 009 — 2026-08-30
+
+**Ended:** 2026-08-30 02:05:11
+**Focus:** P1-8 A/B across all nine templates, and the P1-9 decision it gates
+
+### Result: every template improves on both metrics
+
+| template | verts | weightable bones | single-influence % | mean influences | raw mean | ms |
+|---|---|---|---|---|---|---|
+| human | 7399 | 52 | 86.8 → **9.5** | 1.13 → **2.46** | 3.66 | 289 |
+| fox | 1222 | 38 | 49.1 → **3.7** | 1.51 → **2.89** | 3.96 | 281 |
+| bird | 1852 | 47 | 60.6 → **8.2** | 1.39 → **2.83** | 3.96 | 115 |
+| horse | 2146 | 44 | 55.2 → **2.7** | 1.45 → **2.73** | 3.97 | 333 |
+| fish | 3526 | 25 | 67.4 → **10.1** | 1.33 → **2.84** | 3.93 | 198 |
+| dragon | 2561 | 76 | 73.0 → **23.7** | 1.27 → **2.34** | 3.51 | 111 |
+| kaiju | 1571 | 45 | 47.9 → **4.6** | 1.52 → **2.96** | 3.97 | 204 |
+| snake | 995 | 24 | 19.0 → **3.3** | 1.81 → **3.15** | 3.98 | 13 |
+| spider | 924 | 43 | 58.4 → **15.5** | 1.42 → **2.24** | 3.98 | 141 |
+
+0 fallback vertices anywhere. **P1-9 follows:** the three legacy correctors are
+not ported, because the defect they patch no longer exists.
+
+### The A/B needed the root/leaf mask to be honest
+The legacy solver excludes the root and leaf bones by name. Without the same
+exclusion the geodesic solver would be free to weight bones the legacy one never
+considered, and the comparison would flatter it. The rig fixture format now
+carries a per-bone flag byte, so the mask is data rather than a naming
+convention in `m2m-core`.
+
+### Code review — 8 findings, all resolved
+The high one broke the comparison: **my leaf/root flags did not match the legacy
+skip set**. Legacy is `name === 'root'`, or childless **and** named `leaf`/`tip`
+(`Utilities.is_leaf_bone`). I used a structural rule — "no Bone child", "no Bone
+parent" — which looks equivalent and is not. It excluded 8 `wing_feather_*_2_*`
+bones on the bird that are childless but not name-marked, so the bird A/B ran
+39 bones against legacy's 47. Fixed to the exact predicate; bird went 39 → 47
+weightable and its result *improved* (11.1% → 8.2%), so my version had been
+pessimistic there rather than flattering — but it was not comparable either way.
+
+Also: the `LEGACY` table was rounded to whole percent, moving the pass bar by up
+to half a point (bird 60.637 → 61.0), now exact and with the total bone count
+asserted so a fixture cannot be paired with the wrong rig; an unfalsifiable
+`mean_raw >= mean` assertion removed and the raw figure actually printed, since
+it is the like-for-like one the comment claimed; and `real_mesh`'s human A/B was
+still running an all-true mask against the same legacy numbers — the two now
+agree at 9.5% and 2.46.
+
+### I miscounted, and caught it by filtering
+First run reported unreachable bones on five templates — bird 2, horse 2,
+fish 6, dragon 8, spider 8. Alarming for exactly the creature types this project
+exists to serve. Filtering to **weightable** bones only: bird 0, horse 0,
+dragon 0, spider 0, fish 2. The rest were leaf bones, which legitimately sit
+outside the mesh because they exist only to orient their parent.
+
+The real case is genuine: **`rig-shark.glb`'s `back_fin_2_l/r` bones sit outside
+`model-shark.glb`** — indices 13 and 17, a mirrored pair at x = ±0.451,
+z = −1.83. I first called these "pectoral fin" bones, inferring from the
+mirrored x without checking the names; review caught it. Several fin *tip* bones
+are outside too, but those are leaves the mask already excludes. Pinned by
+**index**, not by count — a count would still pass if these two became reachable
+while two others died.
+
+### Mutation-tested before committing, per last session's lesson
+Regressed the solver to rigid single-bone assignment and confirmed the A/B fails
+with per-template diagnostics ("human: mean influences 1.00 did not beat legacy
+1.13"), then confirmed it passes when restored. The guard is real, not assumed.
+
+### Next session starts at
+**P1-10** (optional biharmonic refinement, gated on R-3) or **P1-11**
+(benchmark against the `test.md` §6 budgets). P1-11 is the more useful next
+step — the A/B measured quality, not yet resource usage against budget.
+
+---
+
 ## Session 008 — 2026-08-30
 
 **Ended:** 2026-08-30 01:50:57

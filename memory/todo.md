@@ -66,8 +66,27 @@
   - All 8 covered, on synthetic geometry, the real 7399-vertex character, **and** randomised `proptest` generators over scale/offset/rotation/resolution/falloff/bone-count.
   - **Invariants 7 and 8 needed splitting into an exact half and a converging half.** Bone *assignment* is exactly scale-invariant and exactly mirror-symmetric (0 mismatches over 480 random poses). Weight *values* only converge, because the geodesic path is a chain of discrete voxel steps. Both errors halve per resolution doubling — first-order, so discretisation rather than bias — and the tests assert **convergence**, not a fixed tolerance.
   - `proptest` earned its place immediately: it found a scale-invariance failure the fixed-fixture test could not reach and shrank it to a minimal case (base 0.05, factor 26.0).
-- [ ] **P1-8** A/B against legacy on all 9 templates; record verdict per template in `handover_session.md`
-- [ ] **P1-9** **Delete** `ArmWeightCorrector`, `HeadWeightCorrector`, `ExtremityWeightCorrector` once A/B proves they are unnecessary. If they are still needed, the geodesic solver is wrong — fix the solver, don't port the patches.
+- [x] **P1-8** A/B against legacy on all 9 templates *(2026-08-30)* — **every template improves on both metrics**, verdicts below. Pinned as a test (`crates/m2m-core/tests/template_ab.rs`) that fails per-template if the solver regresses; mutation-verified by regressing the solver to rigid assignment.
+
+| template | verts | weightable bones | single-influence % | mean influences | raw mean | ms |
+|---|---|---|---|---|---|---|
+| human | 7399 | 52 | 86.8 → **9.5** | 1.13 → **2.46** | 3.66 | 289 |
+| fox | 1222 | 38 | 49.1 → **3.7** | 1.51 → **2.89** | 3.96 | 281 |
+| bird | 1852 | 47 | 60.6 → **8.2** | 1.39 → **2.83** | 3.96 | 115 |
+| horse | 2146 | 44 | 55.2 → **2.7** | 1.45 → **2.73** | 3.97 | 333 |
+| fish | 3526 | 25 | 67.4 → **10.1** | 1.33 → **2.84** | 3.93 | 198 |
+| dragon | 2561 | 76 | 73.0 → **23.7** | 1.27 → **2.34** | 3.51 | 111 |
+| kaiju | 1571 | 45 | 47.9 → **4.6** | 1.52 → **2.96** | 3.97 | 204 |
+| snake | 995 | 24 | 19.0 → **3.3** | 1.81 → **3.15** | 3.98 | 13 |
+| spider | 924 | 43 | 58.4 → **15.5** | 1.42 → **2.24** | 3.98 | 141 |
+
+  - 0 fallback vertices on every template — no vertex needed the Euclidean guess.
+  - **The bone mask had to reproduce the legacy skip set exactly** (`name === 'root'`, or childless *and* named `leaf`/`tip`) or the comparison is not like-for-like. A structural definition ("no Bone child") looked equivalent and was not: it excluded 8 `wing_feather_*` bones on the bird that legacy weights, giving 39 bones against legacy's 47.
+  - The `raw mean` column counts any non-zero influence, the threshold the legacy baseline used, so it is the directly comparable figure; the `mean influences` column counts influences above 1% and is the honest one.
+  - Dragon (23.7%) and spider (15.5%) improve least; both are the busiest rigs relative to their vertex count (76 bones / 2561 verts, 43 / 924). Worth revisiting at P4-4.
+- [x] **P1-9** The three legacy weight correctors are **not ported**, and P1-8 is the justification *(2026-08-30)*
+  - They are not deleted from `legacy/` — that tree must stay runnable as the A/B baseline (`test.md` §9). The decision is that no equivalent exists in `m2m-core` and none will be added.
+  - They existed to patch the Euclidean nearest-bone failure: `ArmWeightCorrector` for arms near the ribcage, `ExtremityWeightCorrector` for fingers grabbing knuckles, `HeadWeightCorrector` for the head/neck boundary, plus `WeightSmoother` for the seams single-bone assignment leaves. Geodesic distance removes the cause, so there is nothing for them to fix — every template improves without any per-body-part correction.
 - [ ] **P1-10** Optional biharmonic refinement pass (gated on R-3)
 - [ ] **P1-11** Benchmark vs. budgets in `test.md` §6; optimise per `instruction.md` §5 ordering
 
@@ -134,6 +153,10 @@ between the two. Four distinct problems:
 ## Changed requirements
 
 *(none yet — strike through and explain here when scope changes)*
+
+## Asset issues found (not solver bugs)
+
+- **`rig-shark.glb`'s `back_fin_2_l/r` bones sit outside `model-shark.glb`.** Indices 13 and 17, a mirrored pair at x = ±0.451, z = −1.83. Found by `unreachable_bones()` during P1-8 and pinned as an expected value in the A/B so a *new* unreachable bone anywhere fails the test. Harmless in the app — the user fits the skeleton before binding — but the shipped template does not fit its own model there.
 
 ## Blocked / needs user input
 

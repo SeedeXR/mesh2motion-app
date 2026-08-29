@@ -6,37 +6,14 @@
 //! `legacy/static/test-files/human-small.glb`, exported by
 //! `legacy/bench/dump-fixtures.ts`.
 
-use m2m_core::mesh::Mesh;
+#[path = "fixture_support.rs"]
+mod fixture_support;
 
-/// `[u32 vertexCount][u32 indexCount][f32 positions...][u32 indices...]`, LE.
-fn load_fixture(bytes: &[u8]) -> Mesh {
-    assert!(bytes.len() >= 8, "fixture truncated");
-    let vertex_count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-    let index_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-
-    let pos_bytes = 8 + vertex_count * 3 * 4;
-    let idx_bytes = pos_bytes + index_count * 4;
-    assert_eq!(
-        bytes.len(),
-        idx_bytes,
-        "fixture size does not match its header"
-    );
-
-    let positions: Vec<f32> = bytes[8..pos_bytes]
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    let indices: Vec<u32> = bytes[pos_bytes..idx_bytes]
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-
-    Mesh::from_flat(&positions, &indices).expect("fixture is a valid mesh")
-}
+use fixture_support::{load_mesh, load_rig};
 
 #[test]
 fn validates_a_real_human_mesh() {
-    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/human-small.bin"));
 
     assert_eq!(mesh.vertex_count(), 8691);
     assert_eq!(mesh.triangle_count(), 13721);
@@ -99,7 +76,7 @@ fn welding_is_stable_across_the_epsilon_plateau() {
     // component count moved with small epsilon changes, every weight solve
     // would depend on an arbitrary constant. See DEFAULT_WELD_EPSILON_RATIO
     // for the full sweep this pins.
-    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/human-small.bin"));
     let (lo, hi) = mesh.bounds().expect("non-empty");
     let diagonal = (hi - lo).length();
 
@@ -136,7 +113,7 @@ fn welding_is_stable_across_the_epsilon_plateau() {
 fn validation_is_deterministic() {
     // The weld map walks a HashMap; if iteration order leaked into the result,
     // every downstream golden test would be flaky.
-    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/human-small.bin"));
     let a = mesh.validate(1e-4);
     let b = mesh.validate(1e-4);
     assert_eq!(a, b);
@@ -146,7 +123,7 @@ fn validation_is_deterministic() {
 fn voxelises_a_real_non_watertight_mesh() {
     use m2m_core::voxel::{VoxelGrid, DEFAULT_RESOLUTION};
 
-    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/human-small.bin"));
     let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
     let s = grid.stats();
     let vs = grid.voxel_size();
@@ -191,35 +168,6 @@ fn voxelises_a_real_non_watertight_mesh() {
     );
 }
 
-/// `[u32 boneCount][f32 head.xyz, tail.xyz per bone]`, LE.
-fn load_rig(bytes: &[u8]) -> Vec<m2m_core::geodesic::BoneSegment> {
-    use glam::Vec3;
-    use m2m_core::geodesic::BoneSegment;
-
-    assert!(bytes.len() >= 4, "rig fixture truncated");
-    let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-    let needed = count
-        .checked_mul(24)
-        .and_then(|n| n.checked_add(4))
-        .expect("rig header overflows");
-    assert_eq!(
-        bytes.len(),
-        needed,
-        "rig fixture size does not match header"
-    );
-
-    let f: Vec<f32> = bytes[4..]
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    f.chunks_exact(6)
-        .map(|b| BoneSegment {
-            head: Vec3::new(b[0], b[1], b[2]),
-            tail: Vec3::new(b[3], b[4], b[5]),
-        })
-        .collect()
-}
-
 #[test]
 fn geodesic_field_on_a_real_character() {
     use m2m_core::geodesic::GeodesicField;
@@ -228,8 +176,8 @@ fn geodesic_field_on_a_real_character() {
     // The template model rig-human.glb was authored for. human-small.glb is a
     // scaled-down test asset — the rig is 2.19x its size — so pairing them puts
     // every bone outside the mesh. See mismatched_rig_reports_every_bone_outside.
-    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
-    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/template-human-mesh.bin"));
+    let bones = load_rig(include_bytes!("fixtures/template-human-rig.bin")).bones;
     assert_eq!(bones.len(), 66);
 
     let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
@@ -284,8 +232,8 @@ fn mismatched_rig_reports_every_bone_outside() {
     // mistake, and the solver must say so rather than silently returning a rig
     // with dead limbs. human-small is 2.19x smaller than the template rig, so
     // essentially every bone lands outside it.
-    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
-    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/human-small.bin"));
+    let bones = load_rig(include_bytes!("fixtures/template-human-rig.bin")).bones;
     let grid = VoxelGrid::build(&mesh, 128).expect("grid");
     let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
 
@@ -298,7 +246,7 @@ fn mismatched_rig_reports_every_bone_outside() {
     // The complementary half, so this distinguishes "correctly detects a
     // mismatch" from "detects nothing ever". A totally broken solver — empty
     // graph, no seeds, no relaxation — would satisfy the assertion above.
-    let template = load_fixture(include_bytes!("fixtures/human-template.bin"));
+    let template = load_mesh(include_bytes!("fixtures/template-human-mesh.bin"));
     let matched_grid = VoxelGrid::build(&template, 128).expect("grid");
     let matched = GeodesicField::compute(&template, &matched_grid, &bones).expect("field");
     assert!(
@@ -332,8 +280,8 @@ fn geodesic_disagrees_with_euclidean_where_it_matters() {
     // Measured on the template human, a T-POSE model where limbs are spread
     // apart — the case most favourable to Euclidean. An A-pose model, where
     // arms hang beside the ribcage, is expected to be worse (objective O8).
-    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
-    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let mesh = load_mesh(include_bytes!("fixtures/template-human-mesh.bin"));
+    let bones = load_rig(include_bytes!("fixtures/template-human-rig.bin")).bones;
     let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
     let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
 
@@ -417,9 +365,14 @@ fn full_pipeline_beats_the_legacy_baseline() {
     const LEGACY_SINGLE_INFLUENCE_PCT: f32 = 87.0;
     const LEGACY_MEAN_INFLUENCES: f32 = 1.132;
 
-    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
-    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
-    let allowed = vec![true; bones.len()];
+    let mesh = load_mesh(include_bytes!("fixtures/template-human-mesh.bin"));
+    // The same bone mask template_ab uses. Without it this test compares
+    // against the same legacy figures with a different bone set — letting
+    // weight land on the root and the 13 leaf bones the legacy solver never
+    // touches — so the two human A/Bs could disagree.
+    let rig = load_rig(include_bytes!("fixtures/template-human-rig.bin"));
+    let bones = rig.bones;
+    let allowed = rig.weightable;
 
     let t = std::time::Instant::now();
     let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
