@@ -1,0 +1,12 @@
+[package]
+name = "m2m-io"
+description = "FBX, glTF and GLB reading and writing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+m2m-core = { path = "../m2m-core" }
+thiserror.workspace = true
+glam.workspace = true

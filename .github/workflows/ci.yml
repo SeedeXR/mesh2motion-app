@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  arch-gate:
+    name: Architecture boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: m2m-core must stay pure
+        run: |
+          # m2m-core is the crate we benchmark and unit-test with no window and
+          # no Tauri runtime. If it grows an I/O or Tauri dependency that stops
+          # being true. See memory/architecture.md §2.
+          if grep -rnE '^\s*use\s+(tauri|std::fs|std::net)' crates/m2m-core/src/; then
+            echo "::error::m2m-core must not depend on tauri, filesystem or network"
+            exit 1
+          fi
+          echo "m2m-core boundary intact"
+      - name: Library crates must forbid unsafe
+        run: |
+          for c in m2m-core m2m-io m2m-rig m2m-bridge; do
+            grep -q '#!\[forbid(unsafe_code)\]' "crates/$c/src/lib.rs" \
+              || { echo "::error::$c is missing #![forbid(unsafe_code)]"; exit 1; }
+          done
+          echo "unsafe forbidden in all library crates"
+
+  rust:
+    name: Rust ${{ matrix.job }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [test, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        if: matrix.job == 'test'
+        run: cargo test --workspace --verbose
+      - name: Clippy
+        if: matrix.job == 'lint'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Format
+        if: matrix.job == 'lint'
+        run: cargo fmt --check
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npx vite build
+
+  legacy:
+    name: Legacy reference suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: legacy
+        run: npm ci
+      - name: Test
+        # legacy/ is the A/B baseline for the new solver (memory/test.md §9),
+        # so it must keep working, not just keep existing.
+        working-directory: legacy
+        run: npx vitest run
+
+  bundle:
+    name: App bundle
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build app
+        run: npx tauri build --bundles app
+      - name: Check size budget
+        run: |
+          # Budget from memory/test.md §6.
+          BYTES=$(du -sk target/release/bundle/macos/Mesh2Motion.app | cut -f1)
+          MB=$((BYTES / 1024))
+          echo "bundle: ${MB} MB (budget 40 MB)"
+          [ "$MB" -le 40 ] || { echo "::error::bundle ${MB} MB exceeds 40 MB budget"; exit 1; }

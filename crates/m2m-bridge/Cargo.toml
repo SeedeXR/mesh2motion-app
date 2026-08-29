@@ -1,0 +1,12 @@
+[package]
+name = "m2m-bridge"
+description = "Blender DCC bridge: headless and live round-tripping."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+m2m-io = { path = "../m2m-io" }
+thiserror.workspace = true
+glam.workspace = true

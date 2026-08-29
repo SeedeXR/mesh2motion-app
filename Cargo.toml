@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/m2m-core",
+    "crates/m2m-io",
+    "crates/m2m-rig",
+    "crates/m2m-bridge",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/SeedeXR/mesh2motion-app"
+
+[workspace.dependencies]
+glam = { version = "0.30", features = ["bytemuck"] }
+rayon = "1.10"
+thiserror = "2"
+bytemuck = { version = "1", features = ["derive"] }
+tracing = "0.1"
+
+[profile.dev]
+# Full debug info is the main target/ bloat source; free disk is ~34 GB.
+# See memory/session_start.md §5.
+debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.bench]
+inherits = "release"
+debug = "line-tables-only"

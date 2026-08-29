@@ -1,0 +1,148 @@
+/* Application shell layout. See memory/design.md §5. */
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 200px 1fr 280px;
+  grid-template-rows: 28px 1fr 24px;
+  grid-template-areas:
+    "title  title     title"
+    "rail   viewport  inspector"
+    "status status    status";
+  height: 100%;
+}
+
+/* Native overlay title bar needs a drag region of its own. */
+.titlebar {
+  grid-area: title;
+  -webkit-app-region: drag;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.rail {
+  grid-area: rail;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  overflow-y: auto;
+}
+
+.rail h2,
+.inspector h2 {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  margin: 0 0 var(--s-2);
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.step:hover:not(:disabled) { background: var(--bg-3); color: var(--fg-0); }
+.step[aria-current="step"] { background: var(--accent-dim); color: var(--fg-0); }
+.step:disabled { color: var(--fg-dis); cursor: not-allowed; }
+.step:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.step-num {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--bg-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.step[aria-current="step"] .step-num { background: var(--accent); color: var(--bg-0); }
+
+.viewport {
+  grid-area: viewport;
+  background: var(--viewport);
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-width: 640px;
+}
+
+.viewport canvas { display: block; width: 100%; height: 100%; }
+
+.viewport-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--s-3);
+  color: var(--fg-2);
+  text-align: center;
+}
+
+/* design.md §5 — the guidance strip is permanent, not a dismissible tip */
+.guidance {
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+}
+
+.guidance strong { color: var(--fg-0); font-weight: 600; }
+.guidance p { margin: var(--s-1) 0 0; color: var(--fg-1); }
+
+.inspector {
+  grid-area: inspector;
+  background: var(--bg-1);
+  border-left: 1px solid var(--border);
+  padding: var(--s-3);
+  overflow-y: auto;
+}
+
+.status {
+  grid-area: status;
+  background: var(--bg-1);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: 0 var(--s-3);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.status .spacer { margin-left: auto; }

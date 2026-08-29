@@ -1,0 +1,13 @@
+[package]
+name = "m2m-core"
+description = "Pure geometry and skinning solver. No I/O, no Tauri, no rendering."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+bytemuck.workspace = true

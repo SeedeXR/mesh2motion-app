@@ -1,0 +1,81 @@
+/* Design tokens — single source of truth. See memory/design.md §2.
+   No component may hardcode a colour; every value comes from here. */
+
+:root {
+  /* surface */
+  --bg-0: #0d0f12;
+  --bg-1: #14171c;
+  --bg-2: #1c2027;
+  --bg-3: #262b34;
+  --viewport: #0a0c0f;
+
+  /* line */
+  --border: #2a3038;
+  --border-soft: #21262d;
+  --focus-ring: #4a9eff;
+
+  /* text */
+  --fg-0: #e8eaed;
+  --fg-1: #a8b0ba;
+  --fg-2: #6b7684;
+  --fg-dis: #454d59;
+
+  /* accent */
+  --accent: #4a9eff;
+  --accent-hi: #6bb0ff;
+  --accent-dim: #1e3a5f;
+
+  /* semantic */
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+  --info: #58a6ff;
+
+  /* rig domain */
+  --bone: #ffb454;
+  --bone-sel: #ffd899;
+  --joint: #ff8c42;
+  --weight-lo: #2b3a67;
+  --weight-hi: #ff4757;
+  --mirror-axis: #b57edc;
+
+  /* type */
+  --font: "Asta Sans", "42dot Sans", -apple-system, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-2xl: 24px;
+  --lh-tight: 1.25;
+  --lh-body: 1.5;
+
+  /* space — 4px base */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow: 0 4px 16px rgb(0 0 0 / 0.4);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+/* design.md §10 — motion is opt-out, not opt-in */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
