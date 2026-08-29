@@ -3,7 +3,8 @@ import './ui/shell.css'
 
 import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, type StepDef } from './state/steps'
-import { buildInfo, isDesktop } from './ipc'
+import { buildInfo, isDesktop, reportStartup } from './ipc'
+import { detectBackend } from './viewport/backend'
 
 /** Index of the step the user is currently on. */
 // ponytail: nothing advances activeStep yet — each step gains its own completion
@@ -96,16 +97,23 @@ async function showEnvironment(): Promise<void> {
   const el = document.querySelector<HTMLSpanElement>('#env')
   if (el === null) return
 
+  const backend = await detectBackend()
+
+  // document.fonts.check() is only meaningful once loading has settled.
+  await document.fonts.ready
+  const fontLoaded = document.fonts.check('400 13px "Asta Sans"')
+
   if (!isDesktop()) {
-    el.textContent = 'browser · no native core'
+    el.textContent = `browser · ${backend} · no native core`
     return
   }
   try {
     const info = await buildInfo()
-    el.textContent = `v${info.version} · ${info.target} · native core ready`
+    await reportStartup(`render ${backend}, font ${fontLoaded ? 'ok' : 'MISSING'}`)
+    el.textContent = `v${info.version} · ${info.target} · ${backend} · native core ready`
   } catch (err) {
     el.textContent = 'native core unavailable'
-    console.error('build_info failed', err)
+    console.error('ipc failed', err)
   }
 }
 

@@ -21,6 +21,17 @@ pub struct BuildInfo {
     pub target: &'static str,
 }
 
+/// Records what the webview resolved at startup: render backend and whether
+/// the vendored font loaded.
+///
+/// Logged rather than merely displayed. A performance report is far less
+/// useful without knowing whether the viewport ran on WebGPU or WebGL2, and a
+/// font that silently failed to load is a visual regression nobody reports.
+#[tauri::command]
+fn report_startup(diagnostics: String) {
+    println!("[m2m] startup: {diagnostics}");
+}
+
 #[tauri::command]
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -37,7 +48,7 @@ fn build_info() -> BuildInfo {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![build_info])
+        .invoke_handler(tauri::generate_handler![build_info, report_startup])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");
 }

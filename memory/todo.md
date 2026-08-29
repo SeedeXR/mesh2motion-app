@@ -23,9 +23,9 @@
   - [ ] **Blocked:** the SonarQube *server* needs Docker running. Docker CLI is at `/usr/local/bin/docker` but the daemon is not running (verified 2026-08-29). Start Docker Desktop, or supply SonarCloud credentials.
 - [x] **P0-7** CI: `.github/workflows/ci.yml` — rust-test, rust-lint, arch-gate, frontend, build. **Verify green via `gh run watch`.** *(2026-08-29 — 6 jobs; arch-gate, frontend, legacy suite green; macOS jobs pending)*
 - [x] **P0-8** `.cargo/config.toml` with `debug = "line-tables-only"`; `.gitignore` for `target/`, `dist/`, `node_modules/` *(2026-08-29)*
-- [ ] **P0-9** Vendor Asta Sans (OFL) + Lucide; implement `design.md` tokens as `app/src/ui/tokens.css`
+- [x] **P0-9** Vendor Asta Sans (OFL) + Lucide; implement `design.md` tokens as `app/src/ui/tokens.css` *(2026-08-29 — subset upstream 5.5 MB TTF to Latin, **28.4 KB woff2**, variable axis preserved; OFL.txt vendored alongside. Load verified in the running app: `font ok`.)*
 - [ ] **P0-10** `bench/` harness with criterion; capture **legacy baselines** for all 9 templates before any solver work
-- [ ] **P0-11** Verify empirically whether WebGPU is available in this WKWebView; record result in `architecture.md` (A1 assumed WebGL2 fallback is acceptable — confirm, don't assume)
+- [x] **P0-11** Verify empirically whether WebGPU is available in this WKWebView; record result in `architecture.md` *(2026-08-29 — **WebGPU confirmed available**, better than the assumed WebGL2 fallback. Adapter requested inside the shipped app. Recorded as ADR A1a; backend now detected at runtime and shown in the status bar.)*
 
 ## R — Research spikes (write `docs/research/<topic>.md` before implementing)
 

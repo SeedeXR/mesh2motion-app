@@ -1,7 +1,8 @@
 # Architecture
 
 **Decision (2026-08-29, user-confirmed): Rust compute core + Three.js viewport in
-the Tauri webview.** All heavy math is native; the viewport keeps Three.js so the
+the Tauri webview.** Verified on the reference machine: the webview resolves to
+**WebGPU**, so the viewport is Metal-backed without a native renderer (ADR A1a). All heavy math is native; the viewport keeps Three.js so the
 ~3,000 LOC of working gizmo/picking/skeleton-helper code survives the port. The
 renderer stays swappable — nothing in `m2m-core` knows what draws it.
 
@@ -165,6 +166,7 @@ Blender with the companion add-on, for artist round-tripping).
 | # | Date | Decision | Rationale |
 |---|---|---|---|
 | A1 | 2026-08-29 | Rust core + Three.js viewport (not full wgpu) | preserves ~3k LOC of working interaction code; renderer stays swappable; fastest path to usable |
+| A1a | 2026-08-29 | **Verified: WKWebView on macOS 26.6.2 resolves to WebGPU**, not the assumed WebGL2 fallback | measured by requesting a real adapter inside the shipped app (`[m2m] render backend: webgpu`). The viewport therefore reaches Metal through WebGPU with no native renderer, which strengthens A1 rather than weakening it. The backend is detected at runtime and shown in the status bar — never assumed per-machine. |
 | A2 | 2026-08-29 | Geodesic voxel binding as default solver | removes the Euclidean failure mode that forced 3 per-body-part correctors; robust on non-watertight meshes |
 | A3 | 2026-08-29 | Port the legacy FBX parser to Rust rather than use `fbxcel` | verified: `fbxcel` is binary-only, read-only, no ASCII, no export; `fbxcel-dom` is v0.0.6 |
 | A4 | 2026-08-29 | Drop hand-rolled `Quat`/`Vec3`/`Transform`, use `glam` | 1,300 LOC deleted; `glam` is SIMD-optimised and battle-tested |

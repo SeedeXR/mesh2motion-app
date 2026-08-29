@@ -1,3 +1,16 @@
+/* Asta Sans (formerly 42dot Sans), SIL OFL 1.1 — assets/fonts/OFL.txt.
+   Renamed Feb 2026 and removed from Google Fonts, so it is vendored rather
+   than linked: a desktop app must not depend on a font CDN.
+   Subset to Latin + punctuation, 5.5 MB -> 28 KB. The upstream file carries
+   full Hangul coverage this app does not use. Variable axis is preserved. */
+@font-face {
+  font-family: "Asta Sans";
+  src: url("../../../assets/fonts/AstaSans-Variable.woff2") format("woff2-variations");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Design tokens — single source of truth. See memory/design.md §2.
    No component may hardcode a colour; every value comes from here. */
 

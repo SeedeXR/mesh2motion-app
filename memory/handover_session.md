@@ -5,6 +5,41 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 002 — 2026-08-29
+
+**Ended:** 2026-08-29 17:00:00
+**Focus:** P0-11 WebGPU verification, P0-9 font vendoring
+
+### Completed
+- **P0-11** — **WebGPU confirmed available** in this WKWebView (macOS 26.6.2). Measured by requesting a real adapter inside the shipped app, not by feature-sniffing `navigator.gpu`. This is *better* than ADR A1 assumed (WebGL2 fallback): the viewport reaches Metal through WebGPU with no native renderer. Recorded as **ADR A1a**.
+- **P0-9** — Asta Sans vendored. Upstream is a 5.5 MB variable TTF with full Hangul coverage; subset to Latin + punctuation gives **28.4 KB woff2** (99.5% smaller) with the 300–800 weight axis intact. `OFL.txt` vendored alongside. No CDN dependency.
+
+### Added
+- `app/src/viewport/backend.ts` — render backend detection, probing for a real adapter
+- `report_startup` Tauri command — logs render backend + font load status at launch. A font that silently fails to load is a visual regression nobody reports; now it is in the log.
+
+### Verified (observed)
+- `[m2m] startup: render webgpu, font ok` — read from the shipped binary's stdout
+- `cargo test` 9 passed · clippy clean · fmt clean · tsc clean · vite build ok
+
+### Note on review discipline
+This diff (~60 lines of wiring) got a self-review rather than the full `/code-review`
+agent pass: renamed `report_backend` → `report_startup` because the parameter had
+grown into a composite diagnostic string and the old name no longer described it.
+Full agent review is warranted for the next substantial diff (P0-10 / P1).
+
+### Incident
+A full-screen `screencapture` intended for the app window instead captured an
+unrelated browser window containing the user's private messages. The file was
+deleted immediately. **Do not use full-screen capture** — capture a specific
+window id, or verify programmatically via the app's stdout as this session did.
+
+### Next session starts at
+**P0-10** — capture legacy solver benchmarks for all 9 templates. Must land
+before any P1 solver work or the A/B comparison has no baseline.
+
+---
+
 ## Session 001 — 2026-08-29
 
 **Started:** 2026-08-29 15:52:11
