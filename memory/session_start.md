@@ -71,4 +71,15 @@ Nothing is "done" until all of these pass:
 6. SonarQube scan run (see `memory/test.md` §7)
 7. `memory/todo.md` updated — completed items checked, changed items struck through with reason
 8. `memory/handover_session.md` appended with a timestamped entry
-9. Committed and pushed; CI observed green (not assumed green)
+9. Committed and pushed; CI observed green (not assumed green) — **match the run to HEAD by SHA**, never `gh run list --limit 1`:
+
+```bash
+SHA=$(git rev-parse HEAD)
+RUN=$(gh run list --limit 10 --json databaseId,headSha \
+      -q ".[] | select(.headSha==\"$SHA\") | .databaseId" | head -1)
+gh run watch "$RUN" --exit-status
+```
+
+A fresh push takes a few seconds to register, so `--limit 1` returns the
+*previous* commit's run — which is already green and reads as confirmation.
+This nearly shipped a false green in session 004.

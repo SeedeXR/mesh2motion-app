@@ -92,6 +92,13 @@ The strongest review yet; three findings were serious.
 **Lesson:** every one of my own measured claims this session was wrong in the
 same direction — measured on a fraction of the data and stated as if whole.
 
+### Process bug fixed: false-green CI
+`gh run list --limit 1` returned the **previous** commit's run — already green —
+because a fresh push takes a few seconds to register. I nearly recorded that as
+this commit's CI result. `session_start.md` §6 now requires matching the run to
+HEAD by SHA. Actual run for 8a78fa27 is 33260571138: all 6 jobs green, verified
+against the SHA.
+
 ### Next session starts at
 **P1-3** — sparse voxelisation with interior/exterior classification, carrying
 the 61-component requirement above.
