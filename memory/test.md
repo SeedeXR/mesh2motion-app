@@ -50,6 +50,7 @@ must keep passing:
 - `fox-model-gltf-missing-texture.zip`, `fox-model-missing-gltf.zip` — missing resources
 - `m2m-custom-animation-wrong-bone-count.glb`, `m2m-wrong-bone-names.glb`, `m2m-valid-but-no-animation-data.glb`
 - `mixamo-original-rig.fbx` — real Mixamo FBX
+- `bone-correction-tests/human-a-pose.glb` — **A-pose human.** Must solve as cleanly as the T-pose default (objective O8) and is the regression guard for arm-to-ribcage weight bleed. A T-pose clip retargeted onto this bind must not drift the arms.
 - `references/human_based_fbx_mixamo_animations/*.fbx` — 7 clips, round-trip corpus
 
 Additionally required: truncated files, zero-byte files, wrong magic bytes,

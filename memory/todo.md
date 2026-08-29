@@ -82,6 +82,23 @@
 - [ ] **P3-12** Accessibility pass — keyboard, contrast, reduced-motion, ARIA (`design.md` §10)
 - [ ] **P3-13** New creature templates from R-5 assets
 
+### P3-P — Pose-agnostic humans: A-pose **and** T-pose *(added 2026-08-29, user requirement)*
+
+Today A-pose is a workaround, not support: `human-a-pose.glb` is a test file
+special-cased into the model list (`legacy/src/lib/DOMUtilities.ts:445-450`),
+`ArmWeightCorrector` + the arm-plane-offset slider exist *because* A-pose arms
+hang near the ribcage, and `ArmExtensionControl` is a manual percentage nudge
+between the two. Four distinct problems:
+
+- [ ] **P3-P1** *Weights* — A-pose arms running close to the ribcage. **Already solved by the geodesic solver** (P1-4/P1-5): the arm-to-ribcage confusion is precisely the Euclidean failure mode, since geodesically the ribcage is a long way up the arm and down the torso. No new algorithm; add `human-a-pose.glb` to the P1-7 invariant suite and the P1-8 A/B so the claim is proven, not assumed.
+  - **Blocked on headless skeleton fitting.** Attempted 2026-08-29 and backed out: the benchmark applies the template rig with no fitting step, but `rig-human.glb` is a T-pose rig (`hand_l` at world x=0.75) while `human-a-pose.glb` has arms down (mesh x spans ±0.62 vs the T-pose mesh's ±0.97). Benchmarking that pair measures a rig/mesh mismatch, not A-pose rigging.
+  - **The aggregate metrics cannot detect this defect anyway** — measured: A-pose and T-pose score 85% vs 87% single-influence and 1.151 vs 1.132 mean influences, essentially identical. The defect is about *which* bone claims a vertex, not how many influences it has. P1-8 needs a targeted metric (torso vertices whose dominant bone is in the arm chain, measured against the **fitted** skeleton). A first attempt at this was removed for measuring the wrong thing.
+- [ ] **P3-P2** *Pose detection* — classify an incoming humanoid mesh as A-pose, T-pose, or something else, from the shoulder→wrist vector angle against the horizontal. Report it in the UI; never silently guess.
+- [ ] **P3-P3** *Skeleton fitting for either pose* — the human template must land correctly on both. Either ship two rest variants, or (better) fit the template then rotate the arm chain to match the detected pose, so one template covers the continuum including the in-between poses artists actually model.
+- [ ] **P3-P4** *Retargeting across a pose mismatch* — **the real technical meat.** A clip authored on a T-pose rig applied to an A-pose bind needs the rest-pose delta applied per bone, or the arms sit wrong for the whole clip. `RetargetUtils.capture_bone_rest_transforms` already recovers rest transforms from `boneInverses`, so the machinery exists; the retargeter must compose `source_rest⁻¹ · target_rest` per bone instead of assuming a shared rest pose. This is what makes Mixamo clips work on an A-pose character.
+- [ ] **P3-P5** Re-evaluate `ArmExtensionControl` once P3-P4 lands — a manual arm-raise percentage is a symptom of the missing rest-pose delta, and may be deletable. Keep it as an artist override only if it still earns its place.
+- [ ] **P3-P6** Extend the same treatment to non-human templates where a natural rest-pose ambiguity exists (birds: wings folded vs spread; quadrupeds: standing vs splayed).
+
 ## P4 — Bridge, performance, release
 
 - [ ] **P4-1** `m2m-bridge` headless: spawn Blender, JSON-RPC over stdio

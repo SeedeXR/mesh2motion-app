@@ -24,8 +24,20 @@ import { SkeletonType } from '../src/lib/enums/SkeletonType.js'
 const ROOT = resolve(__dirname, '..')
 const RUNS = 3
 
-/** SkeletonType.Fish ships as rig-shark.glb — the enum and the asset differ. */
-const TEMPLATES: ReadonlyArray<{ type: SkeletonType, rig: string, model: string }> = [
+/**
+ * SkeletonType.Fish ships as rig-shark.glb — the enum and the asset differ.
+ *
+ * NOT LISTED: human-a-pose. Objective O8 needs an A-pose baseline, but this
+ * harness applies the template rig to the mesh with no fitting step, and
+ * rig-human.glb is a T-pose rig (hand_l sits at world x=0.75) while
+ * human-a-pose.glb has its arms down (mesh x spans ±0.62 against the T-pose
+ * mesh's ±0.97). Benchmarking that pair measures a mismatched rig against a
+ * mesh, not A-pose rigging, and would read as a valid baseline while being
+ * meaningless. Add it once headless skeleton fitting exists — see todo P3-P1.
+ */
+const TEMPLATES: ReadonlyArray<{
+  type: SkeletonType, rig: string, model: string, modelPath?: string, label?: string
+}> = [
   { type: SkeletonType.Human, rig: 'rig-human', model: 'model-human' },
   { type: SkeletonType.Fox, rig: 'rig-fox', model: 'model-fox' },
   { type: SkeletonType.Bird, rig: 'rig-bird', model: 'model-bird' },
@@ -148,10 +160,12 @@ describe('legacy solver baseline', () => {
     const results: Baseline[] = []
 
     for (const t of TEMPLATES) {
-      const label = `${t.type} (${t.model})`
+      const label = `${t.label ?? t.type} (${t.model})`
       try {
         const rig = await loadGlbHeadless(resolve(ROOT, `static/rigs/${t.rig}.glb`))
-        const model = await loadGlbHeadless(resolve(ROOT, `static/models/${t.model}.glb`))
+        const model = await loadGlbHeadless(
+          resolve(ROOT, t.modelPath ?? `static/models/${t.model}.glb`)
+        )
         const geometries = allGeometries(model)
         if (geometries.length === 0) throw new Error('no mesh geometry found')
 
@@ -192,7 +206,7 @@ describe('legacy solver baseline', () => {
 
         timings.sort((a, b) => a - b)
         results.push({
-          template: t.type,
+          template: t.label ?? t.type,
           vertices,
           bones,
           medianMs: Number((timings[Math.floor(timings.length / 2)] ?? 0).toFixed(1)),
@@ -205,7 +219,7 @@ describe('legacy solver baseline', () => {
         console.log(`  ok   ${label}`)
       } catch (err) {
         results.push({
-          template: t.type,
+          template: t.label ?? t.type,
           vertices: 0, bones: 0, meshes: 0, medianMs: 0, minMs: 0, maxMs: 0, heapDeltaMb: 0,
           unnormalised: -1, singleInfluence: -1, zeroInfluence: -1, meanInfluences: -1,
           dominantBoneHash: '', error: err instanceof Error ? err.message : String(err)

@@ -58,6 +58,37 @@ is correct** by parsing all 18 GLB assets, and found six more:
 - jsdom breaks GLB loading — `ArrayBuffer` identity fails across realms. Benchmarks run in the `node` environment.
 - SonarQube credentials are local-only; token is not committed.
 
+### New requirement from user: A-pose **and** T-pose humans
+Recorded as objective **O8** and roadmap section **P3-P**. Investigated the
+current state first: A-pose today is a workaround, not support —
+`human-a-pose.glb` is a *test file* special-cased into the model dropdown
+(`legacy/src/lib/DOMUtilities.ts:445-450`), `ArmWeightCorrector` + the
+arm-plane-offset slider exist precisely because A-pose arms hang near the
+ribcage, and `ArmExtensionControl` is a manual percentage nudge between poses.
+
+Decomposes into four problems, only one of which the current plan already
+solves: weights (geodesic solver handles it natively), pose detection,
+pose-aware skeleton fitting, and — the real work — retargeting across a pose
+mismatch, which needs `source_rest⁻¹ · target_rest` per bone rather than
+assuming a shared rest pose. `RetargetUtils.capture_bone_rest_transforms`
+already recovers what that needs.
+
+### Attempted and backed out: A-pose baseline
+Added `human-a-pose` to the benchmark, then removed it. The harness applies the
+template rig with **no fitting step**, and `rig-human.glb` is a T-pose rig
+(`hand_l` at world x=0.75) while the A-pose mesh has arms down (x spans ±0.62
+vs the T-pose mesh's ±0.97). That row measured a rig/mesh mismatch while
+reading like a valid baseline — worse than having no row.
+
+Also built and removed an `armBleed` metric. Two findings worth keeping:
+1. **The aggregate influence metrics cannot detect the A-pose defect.** Measured:
+   85% vs 87% single-influence, 1.151 vs 1.132 mean influences — essentially
+   identical. The defect is *which* bone claims a vertex, not how many
+   influences it has. P1-8 needs a targeted metric.
+2. The metric returned 0 because |x| < shoulder-x is a narrow torso column that
+   A-pose arms never enter. Shipping it would have given a confident,
+   meaningless zero.
+
 ### Next session starts at
 **R-2** — geodesic voxel binding algorithm doc (`docs/algorithms/`), then **P1-1**
 (mesh representation) to begin the solver.

@@ -39,6 +39,7 @@ Every new creature type needs new correctors. That does not scale.
 | O5 | Blender DCC bridge | live send/fetch rig + animation to a running Blender |
 | O6 | Performance | 50k-vertex rig ≤ 3 s, ≤ 1.5 GB peak, 0% idle CPU |
 | O7 | Dark-themed, guided UX | Lucide icons, 42dot/Asta Sans, per-step instruction panel |
+| O8 | **Pose-agnostic humans** | the same model rigs correctly whether authored in A-pose or T-pose, and T-pose-authored clips retarget onto an A-pose bind without arm drift |
 
 ## Deliverables
 
