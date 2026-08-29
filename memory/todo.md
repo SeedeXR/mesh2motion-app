@@ -62,10 +62,10 @@
   - **Measured against the legacy baseline on the same model and rig: single-influence vertices 87% → 9.0%, mean influences 1.13 → 3.66.**
   - **Never leave a vertex unweighted.** Islands still isolated after voxelisation must fall back to nearest-bone and be flagged in the report, or eyes and teeth detach and float.
 - [x] **P1-6** Normalisation + root/leaf pruning *(2026-08-30 — normalisation is part of the falloff pass. Pruning is a caller-supplied boolean mask rather than name inspection: `m2m-core` must not carry a naming convention. The legacy invariant is preserved by whoever builds the mask.)*
-- [~] **P1-7** Property tests for all 8 invariants in `test.md` §3
-  - [x] 1 sum to 1.0 · 2 no NaN/inf/negative · 3 ≤4 influences · 4 masked bones get 0 · 5 indices in range · 6 determinism · 7 scale invariance — all asserted on synthetic geometry **and** on the real 7399-vertex character
-  - [ ] 8 mirror symmetry — not yet covered
-  - [ ] `proptest` generators, rather than fixed fixtures
+- [x] **P1-7** Property tests for all 8 invariants in `test.md` §3 *(2026-08-30)*
+  - All 8 covered, on synthetic geometry, the real 7399-vertex character, **and** randomised `proptest` generators over scale/offset/rotation/resolution/falloff/bone-count.
+  - **Invariants 7 and 8 needed splitting into an exact half and a converging half.** Bone *assignment* is exactly scale-invariant and exactly mirror-symmetric (0 mismatches over 480 random poses). Weight *values* only converge, because the geodesic path is a chain of discrete voxel steps. Both errors halve per resolution doubling — first-order, so discretisation rather than bias — and the tests assert **convergence**, not a fixed tolerance.
+  - `proptest` earned its place immediately: it found a scale-invariance failure the fixed-fixture test could not reach and shrank it to a minimal case (base 0.05, factor 26.0).
 - [ ] **P1-8** A/B against legacy on all 9 templates; record verdict per template in `handover_session.md`
 - [ ] **P1-9** **Delete** `ArmWeightCorrector`, `HeadWeightCorrector`, `ExtremityWeightCorrector` once A/B proves they are unnecessary. If they are still needed, the geodesic solver is wrong — fix the solver, don't port the patches.
 - [ ] **P1-10** Optional biharmonic refinement pass (gated on R-3)

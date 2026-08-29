@@ -277,14 +277,57 @@ model and rig as the legacy baseline in `bench/baselines/legacy-solver.json`:
 
 | | legacy | geodesic | change |
 |---|---|---|---|
-| single-influence vertices | **87%** | **9.0%** | 10x fewer |
-| mean influences per vertex | **1.13** | **3.66** | 3.2x |
+| single-influence vertices | **87%** | **9.6%** | 9x fewer |
+| mean influences per vertex | **1.13** | **2.58** | 2.3x |
 | vertices needing fallback | — | 0 | |
-| full solve | — | 308 ms | |
+| full solve | — | 322 ms | |
 
 Smooth deformation needs 2-4 influences near a joint. The legacy solver averages
 1.13, which is why it carries a smoothing pass at all; blending the nearest few
 bones by geodesic falloff produces smooth boundaries directly.
+
+**These count influences above 1% of a vertex's weight, not merely non-zero.**
+Counting anything above zero flatters the result: the falloff leaves a fourth
+influence on nearly every vertex, but its median value is 0.001 — invisible in
+deformation. At threshold zero the mean reads 3.66, which is the figure
+directly comparable to the legacy baseline's 1.13 (measured at 1e-6), but 2.58
+is the number that describes how the mesh actually deforms.
+
+### Discretisation limits, measured
+
+Two invariants hold **exactly** for bone assignment and only **converge** for
+weight values, because the geodesic path is a chain of discrete voxel steps:
+
+| invariant | exact part | converging part |
+|---|---|---|
+| 7, scale | which bones influence a vertex — 0 mismatches at every resolution tried | weight values, median error 0.034 at res 24 falling to 0.005 at res 192 |
+| 8, mirror | bone sets on a symmetric rig — 0 mismatches | weight values, worst 0.018 at res 24 falling to 0.0018 at res 192 |
+
+### Why the Dijkstra front is seeded at zero
+
+Seeding each voxel with its true distance to the bone segment is
+algorithmically sound and more accurate near the bone. It was tried and
+**reverted**: it bakes the grid's sub-voxel misalignment into the field, and a
+vertex and its mirror sit at different offsets within their voxels. Measured
+worst mirror-symmetry error, zero-seed against distance-seed:
+
+| res | zero-seed | distance-seed |
+|---|---|---|
+| 24 | 0.0182 | 0.0326 |
+| 48 | 0.0080 | 0.0177 |
+| 96 | 0.0037 | 0.0093 |
+| 192 | 0.0018 | 0.0047 |
+
+2.5x worse at every resolution, for no measurable gain elsewhere. Zero-seeding
+is symmetric by construction, and on a symmetric human rig that matters more
+than sub-voxel accuracy at the bone: one arm deforming differently from the
+other is visible, half a voxel is not.
+
+Both halve with each doubling of resolution — first-order convergence, the
+signature of discretisation rather than a systematic bias. At
+[`DEFAULT_RESOLUTION`] both are under 1%. The tests assert the *convergence*
+rather than a fixed tolerance, which is what makes them a guard against bias
+instead of against a magic number.
 
 ### Falloff
 

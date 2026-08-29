@@ -11,3 +11,10 @@ glam.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 bytemuck.workspace = true
+
+[dev-dependencies]
+# Dev-only, so it does not touch the 40 MB binary budget. Earns its place over
+# the hand-rolled parameter sweeps elsewhere in this crate by SHRINKING: a
+# failing geometry case minimised to its smallest form is far cheaper to debug
+# than whichever random configuration happened to trip it.
+proptest = { version = "1", default-features = false, features = ["std"] }

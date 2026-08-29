@@ -5,6 +5,66 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 008 — 2026-08-30
+
+**Ended:** 2026-08-30 01:50:57
+**Focus:** P1-7 — finish the invariant suite
+
+### Completed
+**P1-7.** All 8 invariants covered across synthetic geometry, the real 7399-vertex
+character, and randomised `proptest` generators. 65 tests.
+
+### Invariants 7 and 8 needed splitting
+Bone **assignment** is exactly scale-invariant and exactly mirror-symmetric —
+0 mismatches at every resolution tried. Weight **values** only converge, because
+the geodesic path is a chain of discrete voxel steps.
+
+Both errors halve per resolution doubling — first-order, which is the signature
+of discretisation rather than a systematic bias. The tests assert **convergence**
+rather than a fixed tolerance, which is what makes them a guard against bias
+instead of against a magic number.
+
+### proptest earned its place immediately
+Found a scale-invariance failure the fixed-fixture test could not reach, and
+**shrank it to a minimal case** (base 0.05, factor 26.0). That is the capability
+the hand-rolled parameter sweeps elsewhere in this crate do not have.
+
+### The review mutation-tested my work, and it was right
+It reverted each production change in a scratch tree and re-ran the suite. Three
+findings, all confirmed by re-measuring:
+
+1. **My seed-distance change made mirror symmetry 2.5x WORSE.** I justified it
+   as improving scale invariance and never measured its effect on symmetry.
+   Zero-seeding is symmetric *by construction*; distance-seeding bakes sub-voxel
+   misalignment into the field. Measured 0.0182 -> 0.0326 at res 24, and the
+   same ratio at every resolution. **Reverted**, with the numbers recorded in
+   the code so nobody re-tries it blind.
+2. **My documented table was stale** — it held the pre-change numbers, so
+   `assert!(fine < 0.01)` was passing on 0.00925 with a 7.5% margin, not the
+   2.7x the comment implied.
+3. **Neither production change was pinned by any test.** Reverting both left
+   every one of ~500 new lines of test passing. Worse: I had loosened a
+   tolerance 100x (1e-3 -> 0.1) in the same diff, and *that* is what absorbed
+   the change. Loosening a tolerance and adding the code it was loosened for, in
+   one commit, hides exactly this.
+
+Also reverted the voxel dims snapping: safe, but the deterministic sweep is
+bit-identical with it removed, so it was doing nothing.
+
+### Lesson
+Twice now the harness has been the thing at fault rather than the code — session
+007's NaN-blind guard, and this session's tests that could not detect the
+removal of what they were written to justify. **A test added alongside a change
+must be checked against the change's absence.** Worth doing by hand on anything
+non-trivial rather than waiting for a reviewer to mutation-test it.
+
+### Next session starts at
+**P1-8** — A/B against the legacy solver on all 9 templates, not just the human,
+recording a verdict per template. That is the gate for P1-9, deleting the three
+legacy weight correctors.
+
+---
+
 ## Session 007 — 2026-08-30
 
 **Ended:** 2026-08-30 01:17:25
