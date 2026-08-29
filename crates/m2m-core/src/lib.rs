@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod geodesic;
 pub mod mesh;
 pub mod skinning;
 pub mod voxel;

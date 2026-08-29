@@ -190,3 +190,214 @@ fn voxelises_a_real_non_watertight_mesh() {
         "voxelised body volume {litres:.1} L is not a plausible human"
     );
 }
+
+/// `[u32 boneCount][f32 head.xyz, tail.xyz per bone]`, LE.
+fn load_rig(bytes: &[u8]) -> Vec<m2m_core::geodesic::BoneSegment> {
+    use glam::Vec3;
+    use m2m_core::geodesic::BoneSegment;
+
+    assert!(bytes.len() >= 4, "rig fixture truncated");
+    let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+    let needed = count
+        .checked_mul(24)
+        .and_then(|n| n.checked_add(4))
+        .expect("rig header overflows");
+    assert_eq!(
+        bytes.len(),
+        needed,
+        "rig fixture size does not match header"
+    );
+
+    let f: Vec<f32> = bytes[4..]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    f.chunks_exact(6)
+        .map(|b| BoneSegment {
+            head: Vec3::new(b[0], b[1], b[2]),
+            tail: Vec3::new(b[3], b[4], b[5]),
+        })
+        .collect()
+}
+
+#[test]
+fn geodesic_field_on_a_real_character() {
+    use m2m_core::geodesic::GeodesicField;
+    use m2m_core::voxel::{VoxelGrid, DEFAULT_RESOLUTION};
+
+    // The template model rig-human.glb was authored for. human-small.glb is a
+    // scaled-down test asset — the rig is 2.19x its size — so pairing them puts
+    // every bone outside the mesh. See mismatched_rig_reports_every_bone_outside.
+    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
+    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    assert_eq!(bones.len(), 66);
+
+    let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
+
+    let t = std::time::Instant::now();
+    let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
+    let elapsed = t.elapsed();
+
+    let unreachable_bones = field.unreachable_bones();
+    let stranded = field.unreachable_vertices();
+    eprintln!(
+        "geodesic: {} verts x {} bones in {:?}  ({} unreachable bones, {} stranded verts)",
+        field.vertex_count(),
+        field.bone_count(),
+        elapsed,
+        unreachable_bones.len(),
+        stranded.len()
+    );
+
+    // Most bones must reach the mesh. A template rig fitted to its own model
+    // should have essentially all of them inside.
+    assert!(
+        unreachable_bones.len() < bones.len() / 4,
+        "{} of {} bones reached nothing",
+        unreachable_bones.len(),
+        bones.len()
+    );
+
+    assert!(
+        stranded.is_empty(),
+        "template rig should reach every vertex"
+    );
+
+    // A loose ceiling, not a benchmark. Measured ~190 ms in release and ~420 ms
+    // under the test harness; 10 s catches the plausible regression (an
+    // accidental full-grid graph, or losing the parallelism) without being
+    // flaky on a loaded machine. Debug builds are far slower, hence the gate.
+    if !cfg!(debug_assertions) {
+        assert!(
+            elapsed.as_secs_f32() < 10.0,
+            "geodesic solve took {elapsed:?}, expected well under 10 s"
+        );
+    }
+}
+
+#[test]
+fn mismatched_rig_reports_every_bone_outside() {
+    use m2m_core::geodesic::GeodesicField;
+    use m2m_core::voxel::VoxelGrid;
+
+    // A rig that does not fit its mesh is the single most common rigging
+    // mistake, and the solver must say so rather than silently returning a rig
+    // with dead limbs. human-small is 2.19x smaller than the template rig, so
+    // essentially every bone lands outside it.
+    let mesh = load_fixture(include_bytes!("fixtures/human-small.bin"));
+    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let grid = VoxelGrid::build(&mesh, 128).expect("grid");
+    let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
+
+    assert!(
+        field.unreachable_bones().len() > bones.len() * 3 / 4,
+        "expected most bones reported outside, got {}",
+        field.unreachable_bones().len()
+    );
+
+    // The complementary half, so this distinguishes "correctly detects a
+    // mismatch" from "detects nothing ever". A totally broken solver — empty
+    // graph, no seeds, no relaxation — would satisfy the assertion above.
+    let template = load_fixture(include_bytes!("fixtures/human-template.bin"));
+    let matched_grid = VoxelGrid::build(&template, 128).expect("grid");
+    let matched = GeodesicField::compute(&template, &matched_grid, &bones).expect("field");
+    assert!(
+        matched.unreachable_bones().is_empty(),
+        "the matched rig should reach every bone, got {} unreachable",
+        matched.unreachable_bones().len()
+    );
+}
+
+/// Distance from a point to a line segment.
+fn point_to_segment(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3) -> f32 {
+    let ab = b - a;
+    let len_sq = ab.length_squared();
+    let t = if len_sq > 0.0 {
+        ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    p.distance(a + ab * t)
+}
+
+#[test]
+fn geodesic_disagrees_with_euclidean_where_it_matters() {
+    use m2m_core::geodesic::GeodesicField;
+    use m2m_core::voxel::{VoxelGrid, DEFAULT_RESOLUTION};
+
+    // The measurement that justifies replacing the legacy solver. For every
+    // vertex, compare the bone Euclidean distance picks (what
+    // WeightCalculator.ts:71-80 does) against the bone geodesic distance picks.
+    //
+    // Measured on the template human, a T-POSE model where limbs are spread
+    // apart — the case most favourable to Euclidean. An A-pose model, where
+    // arms hang beside the ribcage, is expected to be worse (objective O8).
+    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
+    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
+    let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
+
+    let mut differ = 0usize;
+    let mut compared = 0usize;
+    let mut worst_ratio = 0.0f32;
+
+    for v in 0..mesh.vertex_count() {
+        // Skip vertices no bone reached. Their row is all infinite, so `min_by`
+        // returns the last bone rather than failing, which would count as a
+        // disagreement and inflate the headline number with vertices where
+        // geodesic distance carried no information at all.
+        if !field.vertex_row(v).iter().any(|d| d.is_finite()) {
+            continue;
+        }
+        compared += 1;
+        let p = mesh.positions[v];
+        let euclid = (0..bones.len())
+            .min_by(|&a, &b| {
+                point_to_segment(p, bones[a].head, bones[a].tail)
+                    .partial_cmp(&point_to_segment(p, bones[b].head, bones[b].tail))
+                    .expect("finite distances")
+            })
+            .expect("at least one bone");
+        let geo = (0..bones.len())
+            .min_by(|&a, &b| {
+                field
+                    .distance(v, a)
+                    .partial_cmp(&field.distance(v, b))
+                    .expect("finite distances")
+            })
+            .expect("at least one bone");
+
+        if euclid != geo {
+            differ += 1;
+        }
+
+        let straight = point_to_segment(p, bones[euclid].head, bones[euclid].tail);
+        let through = field.distance(v, euclid);
+        if straight > 1e-6 && through.is_finite() {
+            worst_ratio = worst_ratio.max(through / straight);
+        }
+    }
+
+    assert!(
+        compared > mesh.vertex_count() * 9 / 10,
+        "too many stranded vertices to draw a conclusion"
+    );
+    let pct = 100.0 * differ as f32 / compared as f32;
+    eprintln!(
+        "euclidean vs geodesic: dominant bone differs on {differ}/{compared} reachable \
+         ({pct:.1}%), worst path ratio {worst_ratio:.1}x"
+    );
+
+    // Measured 14.6% and 19.4x. Pinned loosely — the point is that the two
+    // metrics disagree substantially, and a change that collapsed the
+    // difference would mean geodesic distance had stopped being geodesic.
+    assert!(
+        pct > 8.0,
+        "only {pct:.1}% of vertices changed bone; is the field leaking?"
+    );
+    assert!(
+        worst_ratio > 5.0,
+        "worst path ratio {worst_ratio:.1}x is too low to be measuring \
+         travel through the mesh"
+    );
+}

@@ -5,6 +5,84 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 006 — 2026-08-29
+
+**Ended:** 2026-08-29 19:15:03
+**Focus:** P1-4 geodesic distance field — the core of the whole solver
+
+### Completed
+**P1-4.** Dijkstra over a compact graph of non-exterior voxels, 26-connected
+with true Euclidean step lengths, one bone per `rayon` task. 46 tests.
+
+### Memory was the design constraint
+A distance field per bone over the whole grid is 66 x 3.4M x 4 = **900 MB**,
+past the budget. Two things avoid it: only non-exterior voxels participate
+(201k of 3.4M, a 17x reduction — the exterior is what would have dominated),
+and only distances **at vertices** are retained. Result: **1.9 MB**, and
+**190 ms** for 7399 verts x 66 bones at resolution 256.
+
+Surface voxels are included in the graph, not just interior ones — vertices sit
+on the surface, so excluding them would strand every vertex.
+
+### The measurement that justifies the project
+For each vertex, the bone Euclidean distance picks (what
+`WeightCalculator.ts:71-80` does) vs the bone geodesic distance picks:
+
+| | |
+|---|---|
+| dominant bone changes | **1080 of 7399 (14.6%)** |
+| path ratio p50 / p90 / p99 | 1.06 / 1.51 / 3.33 |
+| **worst** | **19.4x** |
+
+One vertex in seven is assigned to a different bone. The 19.4x case is "hand
+near the hip" exactly: the Euclidean-nearest bone is nineteen times further
+away measured through the body. **And this is a T-pose model** — the case most
+favourable to Euclidean. A-pose should be worse, which is the quantitative
+basis for O8.
+
+### Fixture mismatch caught by the feature itself
+First run reported **65 of 66 bones unreachable**. Not a solver bug: I had
+paired `rig-human.glb` with `human-small.glb`, and the rig is **2.19x** larger —
+`human-small` is a scaled-down test asset. Checked the bounds rather than
+assuming either way. Exported `model-human.glb` as `human-template.bin`, the
+model the rig was actually authored for, and the matched pair reports 0
+unreachable bones and 0 stranded vertices.
+
+Pleasingly, this was `unreachable_bones()` working: "your skeleton is outside
+your mesh" is the most common rigging mistake and the UI must surface it. Kept
+as a deliberate test, now with the complementary half so it cannot pass
+vacuously.
+
+### Code review — 7 findings, all resolved
+- **Resolution floor.** Review argued surface voxels plus 26-connectivity let
+  paths leak across sub-voxel gaps, defeating the central claim. Measured it
+  myself: the threshold is ~1.5 voxels (leaks at 1.07, separates at 1.60), not
+  where the reviewer estimated, but the point stands. This is inherent to voxel
+  methods, so it is now documented with the measured table and pinned by a
+  test. At the default resolution on a 1.75 m human it is a ~1 cm floor: an
+  A-pose arm at 2-5 cm is fine, an arm touching the body is not.
+- **Stranded vertices inflated the headline statistic.** `min_by` over an
+  all-infinite row returns the last bone rather than failing, so unreachable
+  vertices counted as "dominant bone differs". The template has none so 14.6%
+  was honest, but on a model with islands the assertion could have passed on
+  noise alone. Now skipped and counted separately.
+- `Visit`'s derived `PartialEq` disagreed with its manual `Ord` — harmless for
+  `BinaryHeap`, silently wrong in a `BTreeSet`. Tie-broken on node index.
+- The seed-sampling comment claimed half-voxel spacing "cannot skip a voxel".
+  It cannot skip more than one voxel per axis, which is weaker; corrected, with
+  the exact alternative named.
+- The memory assertion was a tautology computed from the counts it printed, and
+  the measured timing was never asserted. Replaced with a loose 10 s ceiling.
+- The doc comment claimed the field was "scratch, reused per worker thread"; it
+  is allocated per bone and the transpose doubles peak. Comment corrected.
+
+### Next session starts at
+**P1-5** — weight assignment from geodesic falloff, k <= 4 bones per vertex,
+with the nearest-bone fallback for stranded vertices that P1-4's
+`unreachable_vertices()` now identifies.
+
+---
+
 ## Session 005 — 2026-08-29
 
 **Ended:** 2026-08-29 18:43:54

@@ -50,7 +50,13 @@
   - **Physical validation:** interior volume at 256 scales to **56 litres** for a 1.75 m human. A 60 kg person displaces ~60 L.
   - Non-watertight input (26 boundary edges) does **not** leak — conservative rasterisation seals sub-voxel holes. A face-sized hole does leak, and that limit is tested both ways.
   - **Axis-aligned geometry needed three separate fixes** before the shell sealed: the rasterisation AABB excluded the voxel containing a boundary face, the overlap test had no epsilon, and world-space rasterisation lost precision far from the origin. A plain cube had no shell at all at resolutions 13/18/20 before this. Regression sweep: 1476 cases (scale × offset × rotation × resolution).
-- [ ] **P1-4** Geodesic distance field over voxel interior, per bone, `rayon`-parallel
+- [x] **P1-4** Geodesic distance field over voxel interior, per bone, `rayon`-parallel *(2026-08-29)*
+  - Dijkstra over a compact graph of non-exterior voxels, 26-connected with true Euclidean step lengths. Surface voxels are included — vertices sit on the surface, so excluding them would strand every vertex.
+  - **190 ms** for 7399 verts × 66 bones at resolution 256; **1.9 MB** retained.
+  - **Memory was the design constraint:** a per-bone field over the whole grid is 900 MB. Only non-exterior voxels participate (201k of 3.4M) and only vertex distances are retained; the field is per-thread scratch.
+  - **Measured payoff: the dominant bone changes for 14.6% of vertices vs Euclidean, worst path ratio 19.4×** — on a T-pose model, the case most favourable to Euclidean.
+  - `unreachable_bones()` and `unreachable_vertices()` surface the two failure modes (bone outside the mesh; island the grid never connected) instead of silently producing dead limbs.
+  - **Known limit, measured and pinned:** surfaces closer than ~1.5 voxels leak into each other, restoring the Euclidean shortcut. At the default resolution on a 1.75 m human that is a ~1 cm floor — fine for an A-pose arm at 2–5 cm, not for an arm actually touching the body.
 - [ ] **P1-5** Weight assignment from geodesic falloff, k≤4 bones/vertex
   - **Never leave a vertex unweighted.** Islands still isolated after voxelisation must fall back to nearest-bone and be flagged in the report, or eyes and teeth detach and float.
 - [ ] **P1-6** Normalisation + root/leaf pruning (preserve legacy invariant: root and leaf bones get 0)

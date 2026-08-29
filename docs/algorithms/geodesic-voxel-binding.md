@@ -213,6 +213,63 @@ faces do, systematically, because the grid origin derives from the mesh bounds.
 The regression sweep covers 3 scales × 4 offsets × 3 rotations × 41
 resolutions = 1476 cases, all sealed.
 
+## Measured: geodesic field (P1-4, implemented)
+
+Template human, 7399 verts, 66-bone rig, resolution 256, release build on M4:
+
+| | |
+|---|---|
+| compute time | **190 ms** (66 bones, `rayon`-parallel) |
+| retained memory | 7399 × 66 × 4 = **1.9 MB** |
+| unreachable bones | 0 |
+| stranded vertices | 0 |
+
+Memory is the design constraint. A distance field per bone over the whole grid
+would be 66 × 3.4 M × 4 = **900 MB**, past the budget. Two things avoid it:
+only non-exterior voxels participate (201 k of 3.4 M, a 17× reduction), and only
+distances *at vertices* are retained — the field itself is per-thread scratch.
+
+### How much this actually changes the result
+
+For every vertex, the bone Euclidean distance picks (what the legacy
+`WeightCalculator.ts:71-80` does) versus the bone geodesic distance picks:
+
+| | |
+|---|---|
+| vertices whose dominant bone changes | **1080 of 7399 (14.6%)** |
+| geodesic/Euclidean path ratio, p50 | 1.06 |
+| p90 | 1.51 |
+| p99 | 3.33 |
+| **worst** | **19.4×** |
+
+One vertex in seven is assigned to a different bone. The 19.4× worst case is
+the "hand near the hip" failure directly: the Euclidean-nearest bone is
+nineteen times further away when measured through the body.
+
+**And this is a T-pose model**, where limbs are spread — the case most
+favourable to Euclidean distance. An A-pose model, arms hanging beside the
+ribcage, should be worse, which is the quantitative basis for objective O8.
+
+### Resolution floor — the limit of that claim
+
+Two surfaces closer than about **1.5 voxels** land in adjacent voxels, and the
+path leaks between them, restoring the Euclidean shortcut. Measured on two
+disconnected boxes at resolution 32 (voxel 0.094):
+
+| gap | in voxels | result |
+|---|---|---|
+| 0.05 | 0.53 | leaks |
+| 0.10 | 1.07 | leaks |
+| 0.15 | 1.60 | separated |
+| 0.20+ | 2.13+ | separated |
+
+Inherent to voxel methods rather than a defect — a grid cannot resolve a gap it
+cannot represent. At the default resolution on a 1.75 m human the voxel is about
+7 mm, so the floor is roughly **1 cm**. An A-pose arm hangs 2–5 cm from the
+ribcage and is resolved comfortably; an arm actually touching the body is not,
+and arguably should not be. Raise the resolution for models with deliberately
+narrow clearances. Pinned by a test so the threshold cannot drift unnoticed.
+
 ## Parameters
 
 | Name | Range | Default | Visible effect |
