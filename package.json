@@ -8,8 +8,6 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "lint": "eslint app",
-    "test": "vitest run",
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build"

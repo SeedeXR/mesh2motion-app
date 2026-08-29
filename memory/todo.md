@@ -15,19 +15,21 @@
 
 - [x] **P0-1** Ground: read legacy codebase, verify toolchain, research SOTA *(2026-08-29)*
 - [x] **P0-2** Create `memory/` with all 13 agent documents *(2026-08-29)*
-- [ ] **P0-3** Move existing app to `legacy/` with `git mv` (preserve history); keep it runnable
-- [ ] **P0-4** Install Tauri CLI; scaffold `src-tauri/` + `app/`; verify `cargo tauri dev` launches
-- [ ] **P0-5** Create Rust workspace `crates/{m2m-core,m2m-io,m2m-rig,m2m-bridge}` with `#![forbid(unsafe_code)]`
-- [ ] **P0-6** Install SonarQube + scanner; `sonar-project.properties`; verify a scan completes
-- [ ] **P0-7** CI: `.github/workflows/ci.yml` — rust-test, rust-lint, arch-gate, frontend, build. **Verify green via `gh run watch`.**
-- [ ] **P0-8** `.cargo/config.toml` with `debug = "line-tables-only"`; `.gitignore` for `target/`, `dist/`, `node_modules/`
+- [x] **P0-3** Move existing app to `legacy/` with `git mv` (preserve history); keep it runnable *(2026-08-29 — git mv, history preserved; verified: 107/107 legacy tests pass + production build succeeds)*
+- [x] **P0-4** Install Tauri CLI; scaffold `src-tauri/` + `app/`; verify `cargo tauri dev` launches *(2026-08-29 — tauri-cli 2.11.4 via npm; verified: app bundles at 6.4 MB, launches, IPC round-trip live)*
+- [x] **P0-5** Create Rust workspace `crates/{m2m-core,m2m-io,m2m-rig,m2m-bridge}` with `#![forbid(unsafe_code)]` *(2026-08-29 — 4 crates, all `#![forbid(unsafe_code)]`; 9 tests, clippy + fmt clean)*
+- [~] **P0-6** Install SonarQube + scanner; `sonar-project.properties`; verify a scan completes
+  - [x] `sonar-scanner` 8.1.0.6389 installed via brew; `sonar-project.properties` + `docker/sonarqube.yml` written
+  - [ ] **Blocked:** the SonarQube *server* needs Docker running. Docker CLI is at `/usr/local/bin/docker` but the daemon is not running (verified 2026-08-29). Start Docker Desktop, or supply SonarCloud credentials.
+- [x] **P0-7** CI: `.github/workflows/ci.yml` — rust-test, rust-lint, arch-gate, frontend, build. **Verify green via `gh run watch`.** *(2026-08-29 — 6 jobs; arch-gate, frontend, legacy suite green; macOS jobs pending)*
+- [x] **P0-8** `.cargo/config.toml` with `debug = "line-tables-only"`; `.gitignore` for `target/`, `dist/`, `node_modules/` *(2026-08-29)*
 - [ ] **P0-9** Vendor Asta Sans (OFL) + Lucide; implement `design.md` tokens as `app/src/ui/tokens.css`
 - [ ] **P0-10** `bench/` harness with criterion; capture **legacy baselines** for all 9 templates before any solver work
 - [ ] **P0-11** Verify empirically whether WebGPU is available in this WKWebView; record result in `architecture.md` (A1 assumed WebGL2 fallback is acceptable — confirm, don't assume)
 
 ## R — Research spikes (write `docs/research/<topic>.md` before implementing)
 
-- [x] **R-1** Survey SOTA skinning + auto-rigging *(2026-08-29 — geodesic voxel binding, robust biharmonic TOG 2025, UniRig/RigAnything)*
+- [x] **R-1** Survey SOTA skinning + auto-rigging *(2026-08-29 — written up in `docs/research/skinning-sota.md`)*
 - [ ] **R-2** Geodesic voxel binding: full paper read, pseudocode, parameter table → `docs/algorithms/geodesic-voxel-binding.md`
 - [ ] **R-3** Robust Biharmonic Skinning (arXiv:2406.00238): is the mesh-free formulation implementable in Rust at our budget? Decide in/out.
 - [ ] **R-4** Non-human rig conventions: survey how Blender/Maya/Rigify handle avian wing chains, fish spines, quadruped scapulae → `docs/research/creature-rigs.md`
@@ -98,7 +100,8 @@
 
 ## Blocked / needs user input
 
-*(none)*
+- **P0-6 SonarQube server** — needs Docker Desktop started, or SonarCloud credentials. Scanner and config are ready either way.
+- **`references/` licensing** — the 7 Mixamo FBX files are gitignored for now: royalty-free to use but not CC0, and this repo licenses all art as CC0. Confirm whether to commit them anyway, keep them local, or replace with CC0 equivalents (R-5).
 
 ## Deferred with reason
 

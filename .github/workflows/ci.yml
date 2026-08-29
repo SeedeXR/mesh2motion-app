@@ -14,13 +14,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: m2m-core must stay pure
         run: |
           # m2m-core is the crate we benchmark and unit-test with no window and
-          # no Tauri runtime. If it grows an I/O or Tauri dependency that stops
-          # being true. See memory/architecture.md §2.
-          if grep -rnE '^\s*use\s+(tauri|std::fs|std::net)' crates/m2m-core/src/; then
-            echo "::error::m2m-core must not depend on tauri, filesystem or network"
+          # no Tauri runtime. See memory/architecture.md §2.
+          #
+          # The real breach vector is a Cargo.toml dependency, not a use
+          # statement, so check the resolved dependency tree — that catches
+          # transitive arrivals too.
+          TREE=$(cargo tree -p m2m-core --edges normal --prefix none | sort -u)
+          if echo "$TREE" | grep -qE '^(tauri|reqwest|tokio|hyper|ureq) '; then
+            echo "::error::m2m-core gained a runtime/IO dependency:"
+            echo "$TREE" | grep -E '^(tauri|reqwest|tokio|hyper|ureq) '
+            exit 1
+          fi
+          # Belt and braces: direct filesystem/network use in the source.
+          if grep -rnE '(^|[^a-zA-Z_:])std::(fs|net|process)::' crates/m2m-core/src/; then
+            echo "::error::m2m-core must not touch the filesystem, network or subprocesses"
             exit 1
           fi
           echo "m2m-core boundary intact"
@@ -103,8 +114,10 @@ jobs:
         run: npx tauri build --bundles app
       - name: Check size budget
         run: |
-          # Budget from memory/test.md §6.
-          BYTES=$(du -sk target/release/bundle/macos/Mesh2Motion.app | cut -f1)
-          MB=$((BYTES / 1024))
-          echo "bundle: ${MB} MB (budget 40 MB)"
-          [ "$MB" -le 40 ] || { echo "::error::bundle ${MB} MB exceeds 40 MB budget"; exit 1; }
+          # Budget from memory/test.md §6. Compare in KB so the integer divide
+          # cannot floor a 40.9 MB bundle down to a passing "40".
+          KB=$(du -sk target/release/bundle/macos/Mesh2Motion.app | cut -f1)
+          LIMIT_KB=$((40 * 1024))
+          echo "bundle: ${KB} KB (budget ${LIMIT_KB} KB)"
+          [ "$KB" -le "$LIMIT_KB" ] \
+            || { echo "::error::bundle ${KB} KB exceeds ${LIMIT_KB} KB budget"; exit 1; }

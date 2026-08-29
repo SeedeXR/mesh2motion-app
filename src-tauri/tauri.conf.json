@@ -15,12 +15,13 @@
         "title": "Mesh2Motion",
         "width": 1440,
         "height": 900,
-        "minWidth": 1024,
+        "minWidth": 1120,
         "minHeight": 700,
         "resizable": true,
         "theme": "Dark",
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "label": "main"
       }
     ],
     "security": {
@@ -29,8 +30,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
-    "icon": ["icons/icon.icns"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.icns"
+    ],
     "macOS": {
       "minimumSystemVersion": "12.0"
     }

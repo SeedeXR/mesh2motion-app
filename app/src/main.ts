@@ -6,6 +6,9 @@ import { STEPS, type StepDef } from './state/steps'
 import { buildInfo, isDesktop } from './ipc'
 
 /** Index of the step the user is currently on. */
+// ponytail: nothing advances activeStep yet — each step gains its own completion
+// gate in P3-6. Backwards navigation works; forwards is deliberately absent
+// rather than fake.
 let activeStep = 0
 
 function renderRail(): string {
@@ -78,7 +81,7 @@ function render(): void {
   app.querySelectorAll<HTMLButtonElement>('.step').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = Number(btn.dataset['step'])
-      if (Number.isInteger(next) && next <= activeStep) {
+      if (Number.isInteger(next)) {
         activeStep = next
         render()
       }

@@ -25,7 +25,7 @@ pub struct BuildInfo {
 fn build_info() -> BuildInfo {
     BuildInfo {
         version: env!("CARGO_PKG_VERSION"),
-        target: std::env::consts::ARCH,
+        target: env!("M2M_TARGET"),
     }
 }
 
