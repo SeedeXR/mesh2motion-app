@@ -119,13 +119,49 @@ kept inside the 1.5 GB budget in `memory/test.md` §6.
 |---|---|---|
 | non-watertight | interior classification degrades locally, solve completes | P1-7 |
 | self-intersecting | unaffected; voxels are occupancy, not topology | P1-7 |
-| disconnected components | each component solves; bones in no component get 0 | P1-7 |
+| disconnected components | **see below — this is the big one** | P1-7 |
 | zero-area / degenerate triangles | skipped at rasterisation | P1-2 |
 | thin features (fingers, fins, primaries) | **risk: missed below the voxel size** — needs adaptive resolution | P1-3 |
 | mesh in cm vs m | scale-invariant after normalising grid to the bounding box | P1-7 invariant 7 |
 
 The thin-feature case is the known weakness and the one to measure early: bird
 primaries and fish fins are exactly the creatures this project exists to serve.
+
+### Disconnected components are the normal case, not an edge case
+
+Measured on `legacy/static/test-files/human-small.glb` — all 3 meshes merged
+with world transforms baked, 8691 verts / 13721 tris — at the default weld
+epsilon:
+
+| | |
+|---|---|
+| connected components | **61** |
+| duplicate (seam-split) vertices | 1698 |
+| boundary edges (open surface) | 26 |
+| non-manifold edges | 1 |
+| watertight | **no** |
+
+A character is eyes, teeth, tongue, lashes and clothing as well as a body. The
+count is not an artefact of the weld epsilon: it holds at 61 across 1e-7 to
+1e-5 of the diagonal, reads 116 unwelded, and only collapses once welding
+starts fusing distinct surfaces — by 1e-3 it has turned 2890 of 13721 real
+faces into slivers.
+
+**Consequence for the solver.** Geodesic distance cannot propagate between
+disconnected islands, so a naive implementation gives every vertex of the eyes
+and teeth **zero weight from every bone** — they would detach and float. This
+must be designed for in P1-4/P1-5, not patched later:
+
+1. Voxelise all components into one shared grid. Islands that are spatially
+   nested inside the body (eyes inside the head) become connected in voxel
+   space even though they are disconnected as surfaces — which is the correct
+   answer, and a further reason the method is voxel-based rather than
+   surface-based.
+2. For islands that remain isolated after voxelisation, fall back to the
+   nearest bone by Euclidean distance and record it in the mesh report so the
+   UI can flag it. Never leave a vertex unweighted.
+3. Invariant 4 in `memory/test.md` §3 (every vertex sums to 1.0) is what
+   catches a regression here.
 
 ## Parameters
 

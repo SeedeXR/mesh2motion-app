@@ -5,6 +5,99 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 004 — 2026-08-29
+
+**Ended:** 2026-08-29 18:18:53
+**Focus:** P1-1 mesh representation, P1-2 mesh validation — first real solver code
+
+### Completed
+- **P1-1** mesh representation · **P1-2** mesh validation. 22 tests (19 unit + 3 integration), clippy and fmt clean.
+
+### Ladder decisions (things deliberately NOT built)
+- **No half-edge structure**, despite P1-1 naming one. Geodesic voxel binding runs on the voxel grid, not the mesh graph; the only consumer of adjacency is validation, which needs an edge→face count, not a half-edge. Building one would have been speculative.
+- **No scale detection**, despite P1-2 naming it. The solver normalises by the bounding-box diagonal anyway (invariant 7), so guessing units is a UI concern. The raw diagonal is reported instead of an invented `ScaleHint` enum with thresholds I could not justify.
+- **No normals** until something needs them.
+- Hand-rolled 20-line union-find rather than a crate — ladder rung 5.
+
+### The finding that matters: real meshes are not one island
+`legacy/static/test-files/human-small.glb` — all 3 meshes merged with world
+transforms baked, 8691 verts / 13721 tris — exported to a binary fixture so
+`m2m-core` can be tested on real geometry without an I/O dependency (it does no
+I/O by design, and `m2m-io` does not exist until P2):
+
+| | |
+|---|---|
+| connected components | **61** |
+| duplicate (seam-split) vertices | 1698 |
+| boundary edges | 26 |
+| non-manifold edges | 1 |
+| watertight | **no** |
+
+I asserted "a human body should be one island" and it failed. It was the
+assertion that was wrong. A character is eyes, teeth, tongue, lashes and
+clothing as well as a body.
+
+Verified it is not an epsilon artefact by sweeping: **116** components unwelded,
+a **stable band of 61** from 1e-7 to 1e-5 of the diagonal, 59 at 1e-4, and
+collapse beyond that. `DEFAULT_WELD_EPSILON_RATIO` is the log-centre of that
+band, **1e-6**, with a test pinning the band so the default cannot drift onto a
+slope. The sharpest over-welding signal turned out to be the degenerate-triangle
+count: at 1e-3, welding has collapsed **2890 of 13721 real faces** into slivers.
+
+**Consequence for P1-3/P1-5, recorded in the algorithm doc and todo:** geodesic
+distance cannot propagate between disconnected islands, so a naive
+implementation gives eyes and teeth **zero weight from every bone** and they
+detach. All components must voxelise into one shared grid (spatially-nested
+islands then connect in voxel space — another reason the method is voxel-based),
+and anything still isolated must fall back to nearest-bone and be flagged.
+Never leave a vertex unweighted.
+
+### Bug found by the tests
+`weld_map` overflowed on a denormal epsilon: `1.0/f32::MIN_POSITIVE` saturates
+every cell coordinate to `i64::MAX`, and the 27-cell neighbour scan then
+overflowed adding 1. Fixed with an early exit for non-finite/non-positive
+epsilon plus saturating offsets. Also corrected a test whose premise was wrong:
+*exactly* coincident vertices weld at any positive epsilon because their
+distance is exactly zero — only a disabled epsilon skips welding.
+
+### Code review — 9 findings, all resolved
+The strongest review yet; three findings were serious.
+- **HIGH** the degeneracy test `area2 <= f32::EPSILON` was an **absolute**
+  threshold on a scale-dependent quantity (cross-product magnitude, mesh-units
+  squared). The reviewer measured only ~20x margin on the fixture: re-exporting
+  the same model at 1/5 scale would have flagged real faces as degenerate and
+  moved both the component and boundary-edge counts. Now relative to the
+  squared diagonal, with a scale-invariance test across 1e-2 .. 1e3.
+- **MED** degenerate faces were dropped from edge counting entirely, so one
+  decimation sliver in a closed mesh made its neighbours' shared edges look
+  used once — phantom holes, and `is_watertight()` false for a mesh with none.
+  Fixed by splitting the two cases: a face with a **repeated corner** is not a
+  face and is excluded from topology; a **sliver** (distinct corners, no area)
+  is reported but keeps its edges.
+- **MED** my `DEFAULT_WELD_EPSILON_RATIO` justification was **circular**. The
+  fixture's duplicates are bit-exact, so every epsilon gave the same answer;
+  the "36 components below the plateau" data point came from the *disabled*
+  path, not from a too-small epsilon. Re-derived honestly on the full model,
+  where a real band does exist, and the constant moved 1e-5 -> 1e-6 because
+  1e-5 sat at its upper edge.
+- **MED** `dump-fixtures.ts` took the first mesh and ignored world transforms —
+  the same trap `model-shark` set earlier. It now asserts and merges: the
+  fixture went from **1761 verts (20% of the model) to 8691**, and every number
+  above changed as a result. Documented weld semantics as
+  representative-based and order-dependent rather than the transitive "within
+  epsilon" the doc had claimed; guarded subnormal epsilon (finite, positive,
+  but `1.0/eps` is infinity); checked arithmetic in the fixture parser;
+  replaced a vacuous assertion with the real degenerate count.
+
+**Lesson:** every one of my own measured claims this session was wrong in the
+same direction — measured on a fraction of the data and stated as if whole.
+
+### Next session starts at
+**P1-3** — sparse voxelisation with interior/exterior classification, carrying
+the 61-component requirement above.
+
+---
+
 ## Session 003 — 2026-08-29
 
 **Ended:** 2026-08-29 17:30:08

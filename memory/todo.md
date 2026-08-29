@@ -41,11 +41,13 @@
 
 ## P1 — Core algorithms (`m2m-core`)
 
-- [ ] **P1-1** Mesh representation: SoA vertex buffers, half-edge adjacency, robust normals
-- [ ] **P1-2** Mesh validation: watertightness, degenerate tris, duplicate verts, disconnected islands, scale detection
+- [x] **P1-1** Mesh representation *(2026-08-29 — SoA positions + indices, vertex welding with a 27-cell spatial hash, edge adjacency, union-find components. **Half-edge deliberately not built**: the geodesic solver runs on the voxel grid, not the mesh graph, and the only consumer of adjacency is validation. Normals deferred until something needs them.)*
+- [x] **P1-2** Mesh validation *(2026-08-29 — watertightness, boundary/non-manifold edges, degenerate triangles, duplicate vertices, components, bounds/diagonal. 22 tests including a real 1761-vertex human mesh. Scale *detection* deliberately not implemented: the solver normalises by the diagonal anyway, so unit-guessing is a UI concern — the raw diagonal is reported instead of an invented enum.)*
 - [ ] **P1-3** Sparse voxelisation with interior/exterior classification (robust on non-watertight input)
+  - **Hard requirement discovered in P1-2:** a real human mesh has **61 disconnected components, 26 boundary edges, 1 non-manifold edge, and is not watertight**. Voxelise all components into one shared grid so spatially-nested islands (eyes inside a head) connect in voxel space. Measured, not assumed — see `docs/algorithms/geodesic-voxel-binding.md`.
 - [ ] **P1-4** Geodesic distance field over voxel interior, per bone, `rayon`-parallel
 - [ ] **P1-5** Weight assignment from geodesic falloff, k≤4 bones/vertex
+  - **Never leave a vertex unweighted.** Islands still isolated after voxelisation must fall back to nearest-bone and be flagged in the report, or eyes and teeth detach and float.
 - [ ] **P1-6** Normalisation + root/leaf pruning (preserve legacy invariant: root and leaf bones get 0)
 - [ ] **P1-7** Property tests for all 8 invariants in `test.md` §3 — including determinism under `rayon`
 - [ ] **P1-8** A/B against legacy on all 9 templates; record verdict per template in `handover_session.md`
