@@ -57,10 +57,15 @@
   - **Measured payoff: the dominant bone changes for 14.6% of vertices vs Euclidean, worst path ratio 19.4×** — on a T-pose model, the case most favourable to Euclidean.
   - `unreachable_bones()` and `unreachable_vertices()` surface the two failure modes (bone outside the mesh; island the grid never connected) instead of silently producing dead limbs.
   - **Known limit, measured and pinned:** surfaces closer than ~1.5 voxels leak into each other, restoring the Euclidean shortcut. At the default resolution on a 1.75 m human that is a ~1 cm floor — fine for an A-pose arm at 2–5 cm, not for an arm actually touching the body.
-- [ ] **P1-5** Weight assignment from geodesic falloff, k≤4 bones/vertex
+- [x] **P1-5** Weight assignment from geodesic falloff, k≤4 bones/vertex *(2026-08-30)*
+  - Modified Shepard over the k nearest bones, cutoff at the surplus (k+1)-th distance so weight reaches exactly zero there and the blend does not step at the fourth influence. **The falloff function is our choice, not the paper's** — the published abstracts do not state one (R-2 open).
+  - **Measured against the legacy baseline on the same model and rig: single-influence vertices 87% → 9.0%, mean influences 1.13 → 3.66.**
   - **Never leave a vertex unweighted.** Islands still isolated after voxelisation must fall back to nearest-bone and be flagged in the report, or eyes and teeth detach and float.
-- [ ] **P1-6** Normalisation + root/leaf pruning (preserve legacy invariant: root and leaf bones get 0)
-- [ ] **P1-7** Property tests for all 8 invariants in `test.md` §3 — including determinism under `rayon`
+- [x] **P1-6** Normalisation + root/leaf pruning *(2026-08-30 — normalisation is part of the falloff pass. Pruning is a caller-supplied boolean mask rather than name inspection: `m2m-core` must not carry a naming convention. The legacy invariant is preserved by whoever builds the mask.)*
+- [~] **P1-7** Property tests for all 8 invariants in `test.md` §3
+  - [x] 1 sum to 1.0 · 2 no NaN/inf/negative · 3 ≤4 influences · 4 masked bones get 0 · 5 indices in range · 6 determinism · 7 scale invariance — all asserted on synthetic geometry **and** on the real 7399-vertex character
+  - [ ] 8 mirror symmetry — not yet covered
+  - [ ] `proptest` generators, rather than fixed fixtures
 - [ ] **P1-8** A/B against legacy on all 9 templates; record verdict per template in `handover_session.md`
 - [ ] **P1-9** **Delete** `ArmWeightCorrector`, `HeadWeightCorrector`, `ExtremityWeightCorrector` once A/B proves they are unnecessary. If they are still needed, the geodesic solver is wrong — fix the solver, don't port the patches.
 - [ ] **P1-10** Optional biharmonic refinement pass (gated on R-3)

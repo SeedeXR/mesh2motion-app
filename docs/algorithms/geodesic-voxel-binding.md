@@ -270,6 +270,45 @@ ribcage and is resolved comfortably; an arm actually touching the body is not,
 and arguably should not be. Raise the resolution for models with deliberately
 narrow clearances. Pinned by a test so the threshold cannot drift unnoticed.
 
+## Measured: full pipeline (P1-5/P1-6, implemented)
+
+Template human, 7399 verts, 66-bone rig, resolution 256, release build. Same
+model and rig as the legacy baseline in `bench/baselines/legacy-solver.json`:
+
+| | legacy | geodesic | change |
+|---|---|---|---|
+| single-influence vertices | **87%** | **9.0%** | 10x fewer |
+| mean influences per vertex | **1.13** | **3.66** | 3.2x |
+| vertices needing fallback | — | 0 | |
+| full solve | — | 308 ms | |
+
+Smooth deformation needs 2-4 influences near a joint. The legacy solver averages
+1.13, which is why it carries a smoothing pass at all; blending the nearest few
+bones by geodesic falloff produces smooth boundaries directly.
+
+### Falloff
+
+The published abstracts do not state the weighting function (see the unverified
+table above), so this is **our choice, not the paper's**: modified Shepard over
+the k nearest bones, with the cutoff at the surplus (k+1)-th distance.
+
+```text
+w_i = (1/d_i - 1/d_cut)^p ,  normalised,  w = 0 where d_i >= d_cut
+```
+
+Weight reaches exactly zero at the cutoff, so a bone entering or leaving the top
+four does not step the result — without that the blend seams at the fourth
+influence. `p` (default 2.0) is the artist-facing sharpness control: higher
+concentrates weight on the nearest bone and stiffens joints.
+
+### Root and leaf bones
+
+`m2m-core` takes a boolean mask of which bones may hold weight rather than
+inspecting names. The legacy invariant — the root carries only the global
+transform, leaf bones only orient their parent, so neither may hold weight —
+is preserved by the caller supplying that mask. Encoding a naming convention
+in the geometry layer would be the wrong place for it.
+
 ## Parameters
 
 | Name | Range | Default | Visible effect |

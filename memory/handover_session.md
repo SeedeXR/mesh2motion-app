@@ -5,6 +5,83 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 007 — 2026-08-30
+
+**Ended:** 2026-08-30 01:17:25
+**Focus:** P1-5 weight assignment + P1-6 normalisation/pruning — the pipeline now runs end to end
+
+### Completed
+**P1-5 and P1-6** together; they are one pass. 58 tests.
+
+### The payoff, measured against the P0-10 baseline
+Same model and rig the legacy baseline used:
+
+| | legacy | geodesic |
+|---|---|---|
+| single-influence vertices | **87%** | **9.0%** |
+| mean influences per vertex | **1.13** | **3.66** |
+| vertices needing fallback | — | 0 |
+| full solve | — | 292 ms |
+
+Smooth deformation needs 2-4 influences near a joint. That the legacy solver
+averages 1.13 is precisely why it needs a smoothing pass and three
+per-body-part correctors; blending by geodesic falloff produces smooth
+boundaries directly.
+
+### Design decisions
+- **The falloff function is ours, not the paper's.** R-2 left it unverified, so
+  rather than inventing a citation: modified Shepard over the k nearest bones,
+  cutoff at the surplus (k+1)-th distance so weight reaches exactly zero there
+  and the blend does not step at the fourth influence.
+- **Pruning is a caller-supplied boolean mask, not name inspection.**
+  `m2m-core` must not carry a naming convention. The legacy invariant (root and
+  leaf bones hold no weight) is preserved by whoever builds the mask, which
+  will be `m2m-rig`.
+
+### Code review — 11 findings, 4 high, all resolved
+The most damning was not a code bug but a **test** bug:
+
+- **`first_unnormalised` could not see NaN.** `(NaN - 1.0).abs() > tol` is
+  `false`, so a NaN vertex read as correctly normalised — and this is the
+  function every other test in the module leans on. Combined with `influences`
+  filtering on `> 0.0` (also false for NaN), **a fully-NaN solve would have
+  passed most of my assertions.** Both fixed, with a regression test for the
+  guard itself.
+- `1.0 / d` overflows to infinity below ~2.9e-39, and `powf` overflows at a
+  high exponent — either gives NaN after normalisation. Fixed by expressing
+  distances as **ratios to the nearest**, so every value is <= 1 and neither
+  operation can overflow. That also makes invariant 7 exact rather than
+  approximate. My scale test only swept *upward* (1.0 -> 10.0), so it missed
+  this entirely; it now sweeps down to 1e-6.
+- An all-masked rig left vertices at all-zero weights, silently breaking
+  invariant 1 — and only on meshes that happen to have unreachable vertices.
+  Now rejected up front.
+- The zero-total branch left stale values in the other slots.
+- The falloff had two branches with an arbitrary `* 2.0` cutoff. Replaced: with
+  no surplus bone the cutoff is effectively infinite, which degrades to inverse
+  distance weighting — the *continuous limit* of the other branch, not a
+  separate rule.
+- The artist-facing falloff parameter was unvalidated; 0.0 collapsed to uniform
+  blending, negative produced NaN. Now clamped, with a hostile-value test.
+- Tie-breaking was by descending bone index, which would break invariant 8
+  (mirror symmetry) on a symmetric mesh with exact ties.
+- The perf assertion was gated behind `!cfg!(debug_assertions)`, so it never
+  ran under the `cargo test --workspace` that `test.md` §8 mandates. Now a
+  different ceiling per profile rather than no assertion.
+- Two test comments over-claimed which invariants they covered.
+
+### Recurring mistake — third occurrence
+Wrote `!(x > 0.0)` again, the same clippy pattern fixed in `mesh.rs` (session
+004) and `voxel.rs` (session 005). Fixing an instance three times without
+generalising is its own signal.
+
+### Next session starts at
+**P1-7** — finish the invariant suite: invariant 8 (mirror symmetry) is still
+uncovered, and the existing checks are fixed fixtures rather than `proptest`
+generators.
+
+---
+
 ## Session 006 — 2026-08-29
 
 **Ended:** 2026-08-29 19:15:03

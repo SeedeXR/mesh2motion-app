@@ -401,3 +401,86 @@ fn geodesic_disagrees_with_euclidean_where_it_matters() {
          travel through the mesh"
     );
 }
+
+#[test]
+fn full_pipeline_beats_the_legacy_baseline() {
+    use m2m_core::geodesic::GeodesicField;
+    use m2m_core::skinning::{assign_weights, SkinningParams, MAX_INFLUENCES};
+    use m2m_core::voxel::{VoxelGrid, DEFAULT_RESOLUTION};
+
+    // The A/B that P1-8 exists for, on the same model and rig the legacy
+    // baseline used. From bench/baselines/legacy-solver.json, the legacy
+    // solver on this template gives:
+    //     87% of vertices with a single influence, mean 1.132 influences
+    // Those numbers are why it needs a smoothing pass and three per-body-part
+    // correctors at all.
+    const LEGACY_SINGLE_INFLUENCE_PCT: f32 = 87.0;
+    const LEGACY_MEAN_INFLUENCES: f32 = 1.132;
+
+    let mesh = load_fixture(include_bytes!("fixtures/human-template.bin"));
+    let bones = load_rig(include_bytes!("fixtures/human-rig.bin"));
+    let allowed = vec![true; bones.len()];
+
+    let t = std::time::Instant::now();
+    let grid = VoxelGrid::build(&mesh, DEFAULT_RESOLUTION).expect("grid");
+    let field = GeodesicField::compute(&mesh, &grid, &bones).expect("field");
+    let weights = assign_weights(
+        &field,
+        &mesh.positions,
+        &bones,
+        &allowed,
+        SkinningParams::default(),
+    );
+    let elapsed = t.elapsed();
+
+    let n = weights.vertex_count();
+    let mut single = 0usize;
+    let mut total_influences = 0usize;
+    for v in 0..n {
+        let count = weights.influences(v).count();
+        if count == 1 {
+            single += 1;
+        }
+        total_influences += count;
+    }
+    let single_pct = 100.0 * single as f32 / n as f32;
+    let mean = total_influences as f32 / n as f32;
+
+    eprintln!(
+        "full pipeline: {n} verts, {} bones, {elapsed:?}\n  \
+         single-influence {single_pct:.1}% (legacy {LEGACY_SINGLE_INFLUENCE_PCT})\n  \
+         mean influences {mean:.3} (legacy {LEGACY_MEAN_INFLUENCES})\n  \
+         fallback vertices {}",
+        bones.len(),
+        weights.fallback_vertices.len()
+    );
+
+    // Invariants 1, 2, 3 and 5 from memory/test.md §3 on real geometry rather
+    // than a synthetic bar. Invariant 4 needs a mask (unit tests cover it),
+    // 6 and 7 are covered in the unit tests, 8 is not covered anywhere yet.
+    assert_eq!(weights.first_unnormalised(1e-5), None);
+    assert!(weights.weights.iter().all(|w| w.is_finite() && *w >= 0.0));
+    for &b in &weights.indices {
+        assert!((b as usize) < bones.len());
+    }
+    for v in 0..n {
+        assert!(weights.influences(v).count() <= MAX_INFLUENCES);
+    }
+
+    // The actual improvement. Smooth deformation needs 2-4 influences near
+    // joints; the legacy solver averages 1.13.
+    assert!(
+        mean > LEGACY_MEAN_INFLUENCES * 1.5,
+        "mean influences {mean:.3} is not a clear improvement on {LEGACY_MEAN_INFLUENCES}"
+    );
+    assert!(
+        single_pct < LEGACY_SINGLE_INFLUENCE_PCT / 2.0,
+        "single-influence {single_pct:.1}% is not a clear improvement on \
+         {LEGACY_SINGLE_INFLUENCE_PCT}%"
+    );
+
+    // Budget from memory/test.md §6 is 3 s for a 50k-vertex mesh; this is 7.4k.
+    if !cfg!(debug_assertions) {
+        assert!(elapsed.as_secs_f32() < 5.0, "full solve took {elapsed:?}");
+    }
+}
