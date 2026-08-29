@@ -33,7 +33,10 @@
 - [~] **R-2** Geodesic voxel binding: full paper read, pseudocode, parameter table → `docs/algorithms/geodesic-voxel-binding.md`
   - [x] Design doc written: pipeline, robustness table, complexity, parameters, rejected alternatives, verified quotes from the published abstracts
   - [ ] **Full paper still unread.** Four things are deliberately marked unverified and must NOT be guessed: the geodesic propagation algorithm (Dijkstra / fast marching / flood fill), the exact weight falloff function, interior classification for open surfaces, and the reported timings. The authors' project page `delasa.net/voxelization/` is dead (domain resold). Get the SCA 2013 paper via ACM DOI 10.1145/2485895.2485919, and the 2014 IEEE TVCG extended version for degenerate geometry.
-- [ ] **R-3** Robust Biharmonic Skinning (arXiv:2406.00238): is the mesh-free formulation implementable in Rust at our budget? Decide in/out.
+- [x] **R-3** Robust Biharmonic Skinning (arXiv:2406.00238) — **decided OUT** *(2026-08-30, `docs/research/robust-biharmonic-decision.md`)*
+  - Read the full text rather than the abstract, which is what the earlier survey entry was based on. Implementation is PyTorch + custom CUDA + **OptiX/OWL/Warp** — all NVIDIA-only, on a project targeting Apple Silicon. Reported **71.74 s** on Bunny against a 3 s budget.
+  - The robustness it buys (non-watertight, self-intersecting, triangle soup) is what voxelisation already gives us — measured in P1-3, where the reference character is not watertight and solves without incident.
+  - Steal-worthy idea recorded for P3: it folds artist weight painting into the optimisation as Dirichlet boundary conditions rather than post-processing it.
 - [ ] **R-4** Non-human rig conventions: survey how Blender/Maya/Rigify handle avian wing chains, fish spines, quadruped scapulae → `docs/research/creature-rigs.md`
 - [ ] **R-5** Source CC0/CC-BY rigged reference creatures to expand the template library. **Record provenance + licence per asset.**
 - [ ] **R-6** FBX 7.4/7.5 binary write format — spec gaps, since no Rust writer exists
@@ -87,8 +90,20 @@
 - [x] **P1-9** The three legacy weight correctors are **not ported**, and P1-8 is the justification *(2026-08-30)*
   - They are not deleted from `legacy/` — that tree must stay runnable as the A/B baseline (`test.md` §9). The decision is that no equivalent exists in `m2m-core` and none will be added.
   - They existed to patch the Euclidean nearest-bone failure: `ArmWeightCorrector` for arms near the ribcage, `ExtremityWeightCorrector` for fingers grabbing knuckles, `HeadWeightCorrector` for the head/neck boundary, plus `WeightSmoother` for the seams single-bone assignment leaves. Geodesic distance removes the cause, so there is nothing for them to fix — every template improves without any per-body-part correction.
-- [ ] **P1-10** Optional biharmonic refinement pass (gated on R-3)
-- [ ] **P1-11** Benchmark vs. budgets in `test.md` §6; optimise per `instruction.md` §5 ordering
+- [x] **P1-10** ~~Optional biharmonic refinement pass~~ — **not built**, R-3 decided the method out *(2026-08-30)*
+  - **Reason for the change:** the gating research resolved against it on platform (NVIDIA-only stack) and budget (10–25× over). A second solver is not free — two weighting paths to test, benchmark and keep correct — and nothing yet says the geodesic weights are insufficient. Revisit if artists report quality problems, or if a Metal implementation of the visibility kernel lands inside budget.
+- [x] **P1-11** Benchmark vs. budgets in `test.md` §6 *(2026-08-30)* — **comfortably inside, no optimisation needed**
+
+| vertices | voxelise | geodesic | weights | total | peak heap |
+|---|---|---|---|---|---|
+| 7,399 | 30 ms | 255 ms | 3 ms | **288 ms** | **30 MB** |
+| **48,670** | 37 ms | 253 ms | 18 ms | **307 ms** | **44 MB** |
+| 213,754 | 57 ms | 340 ms | 76 ms | **474 ms** | **129 MB** |
+
+  - Budget is 3 s / 1.5 GB at 50k vertices. Measured on the 48,670-vertex row: **307 ms / 44 MB** — about **10× under time and 34× under memory**. The budget was written before any measurement; it is conservative, not tight.
+  - **Resolution is the dominant cost, not mesh density.** Solve time barely moves from 7k to 214k vertices because the geodesic Dijkstra runs over the voxel grid, whose size depends only on resolution. Resolution is cubic: 7 ms at res 64, 39 at 128, 131 at 192, 295 at 256, 1004 at 384 — doubling resolution costs ~8×. This is what the P3 resolution control must communicate.
+  - Peak **heap** measured with a tracking allocator, not process RSS. RSS never shrinks, so in a multi-test binary it reports everything that ran before — the mistake the legacy benchmark made in session 003.
+  - `instruction.md` §5 optimisation ordering deliberately **not** applied: there is nothing to optimise against. Revisit if the resolution control lets users past 384.
 
 ## P2 — I/O (`m2m-io`)
 

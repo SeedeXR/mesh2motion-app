@@ -5,6 +5,104 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 010 — 2026-08-30
+
+**Ended:** 2026-08-30 02:25:28
+**Focus:** R-3 decision (closing P1-10), and P1-11 budget benchmarking
+
+### R-3: Robust Biharmonic Skinning is OUT
+Read the **full text** this time, not the abstract the earlier survey entry was
+based on. Appendix A settles it: the implementation is PyTorch plus custom CUDA
+kernels plus **OptiX, OWL and NVIDIA Warp** — all NVIDIA-only, on a project
+targeting Apple Silicon. Reported **71.74 s** on Bunny (against BBW's 18.32 min,
+so a real 15x speedup, but our budget is 3 s).
+
+The ray tracing is not incidental: the kernel is
+`k_rt(x, xi) = V(x ↔ xi) · exp(-‖x-xi‖²/2σ²)`, tracing a ray between every
+candidate point pair to test visibility. That visibility term *is* the
+robustness. Reimplementing it on Metal would be redoing the paper's central
+contribution, not adopting it.
+
+And the robustness it buys is what we already have: the paper's motivating
+failure is tetrahedralisation on non-watertight input — it quotes Blender's
+"Bone Heat Weighting: Failed to find solution" — and P1-3 measured our reference
+character as *not* watertight (26 boundary edges, 61 components) solving without
+incident.
+
+**P1-10 struck through as a result.** One idea kept for P3: the paper folds
+artist weight painting into the optimisation as Dirichlet boundary conditions
+rather than post-processing it.
+
+### P1-11: comfortably inside budget
+
+| vertices | voxelise | geodesic | weights | total | peak heap |
+|---|---|---|---|---|---|
+| 7,399 | 30 ms | 255 ms | 3 ms | **288 ms** | **30 MB** |
+| **48,670** | 37 ms | 253 ms | 18 ms | **307 ms** | **44 MB** |
+| 213,754 | 57 ms | 340 ms | 76 ms | **474 ms** | **129 MB** |
+
+Budget is 3 s / 1.5 GB at 50k. Measured 307 ms / 44 MB on the 48,670-vertex row — **10x under time,
+34x under memory**. `instruction.md` §5's optimisation ordering is deliberately
+not applied: there is nothing to optimise against.
+
+### The finding that matters for the UI
+**Resolution is the dominant cost, not mesh density.** Solve time barely moves
+from 7k to 214k vertices, because the geodesic Dijkstra runs over the voxel
+grid, sized only by resolution. Resolution is cubic — 7 ms at 64, 39 at 128,
+131 at 192, 295 at 256, 1004 at 384. Doubling resolution costs ~8x. A denser
+mesh is nearly free; a finer grid is not. The P3 resolution control has to say so.
+
+### Code review — 12 findings, 2 high, all resolved
+Both high ones were mine, and both were errors of the kind this loop keeps
+surfacing: a claim stated more confidently than the evidence supported.
+
+1. **The budget test never measured a ~50k mesh.** My subdivision is `V + 3T`,
+   not `4V` — it welds nothing — so the sequence is 7399 → **48670** → **213754**,
+   not the "~29k → ~118k" my own docstring claimed. A `>= 50_000` gate then
+   rejected 48670 by 1330 vertices and asserted on a mesh **4.3× larger** than
+   the budget describes. Now picks the measurement closest to 50k, and the
+   docstring states the real growth factor.
+2. **I wrote that the authors do not state they will release code. They do** —
+   "We will release the code upon acceptance", and it has since been accepted.
+   I had it exactly backwards in a decision document, on one of the three
+   conditions listed for reopening the decision.
+
+Also corrected in the R-3 doc: I compared 71.74 s against the **3 s fast-path**
+budget when `test.md` §6 has a **12 s high-quality** row whose note literally
+reads "biharmonic refinement" — which is what P1-10 reserved this method as. The
+honest multiple is ~6×, not 10–25×. The decision still stands, but on
+**platform** rather than speed. Also: the 32.2 s mesh is *Gear*, not "filigree"
+(I took that from a nearby caption); Warp does run on macOS CPU-only so the
+blanket "no macOS implementation" was wrong for one of four libraries; the
+paper's own timing table is not uniformly like-for-like ("unable to match the
+internal mesh density in three cases"); and attributing the robustness to the
+visibility term was my inference, where the paper attributes it to being
+mesh-free.
+
+In the allocator: no `realloc` override meant every `Vec` growth became
+alloc + copy + dealloc, inflating both the timing and the transient peak it
+asserts on — the 7399-vertex peak fell 39 MB → 29.7 MB once fixed. Plus cache-line
+padding on the counters, the measurement lock extended over fixture loading and
+subdivision, and a discarded warm-up call so rayon pool spin-up is not in the
+denominator of the resolution ratio.
+
+### Measurement bug caught in my own harness
+The tracking allocator is process-global and `cargo test` runs tests
+concurrently, so two measurements in flight corrupt one counter. Not
+hypothetical: the 7399-vertex peak read **66.7 MB** with both tests in parallel
+against **39.3 MB** measured alone. Serialised with a mutex, then verified by
+running twice and checking the peaks reproduce exactly (39.1/39.3, 44.5/44.5,
+128.9/128.9).
+
+Also mutation-tested the budget assertion by tightening it to 1 MB and
+confirming it fails with the real figure.
+
+### Next session starts at
+**P2-1** — porting the FBX binary reader, the first piece of `m2m-io`. P1 is
+complete.
+
+---
+
 ## Session 009 — 2026-08-30
 
 **Ended:** 2026-08-30 02:05:11

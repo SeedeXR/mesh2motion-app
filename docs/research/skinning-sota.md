@@ -78,15 +78,16 @@ and explicitly robust on open surfaces and triangle soup. It also supports artis
 weight painting *during* optimisation, which fits the "leave the calibration knob"
 principle in `philosophy.md`.
 
-**Not chosen yet, for one honest reason:** it depends on hardware ray-tracing. The
-M4 does have a hardware RT unit, so it is viable on the target machine, but it
-would mean a Metal ray-tracing implementation — materially more work than the voxel
-approach and a much larger surface to get wrong. **R-3 decides in or out.** The
-sensible sequencing is geodesic voxel binding first (it removes the actual defect),
-then evaluate this as the "high quality" mode.
+**R-3 resolved it: OUT.** The full text was read on 2026-08-30 — see
+`docs/research/robust-biharmonic-decision.md`. In short: the implementation is
+PyTorch plus custom CUDA plus **OptiX/OWL/Warp**, all NVIDIA-only, on a project
+targeting Apple Silicon; and it reports **71.74 s** on Bunny against a 3 s
+budget. The robustness it buys — surviving non-watertight and self-intersecting
+input — is what voxelisation already gives us, measured in P1-3.
 
-**Unverified:** the abstract page did not carry speed or quality numbers against
-BBW. Do not quote performance figures for this method until the full PDF is read.
+Worth stealing regardless: the paper folds artist weight painting into the
+optimisation as Dirichlet boundary conditions rather than applying it as a
+post-process. Recorded for the P3 weight-painting work.
 
 ### 4. SkinCells: Sparse Skinning using Voronoi Cells
 Larionov et al. — Computer Graphics Forum 2025. Noted, not yet evaluated.
