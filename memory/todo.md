@@ -18,19 +18,21 @@
 - [x] **P0-3** Move existing app to `legacy/` with `git mv` (preserve history); keep it runnable *(2026-08-29 — git mv, history preserved; verified: 107/107 legacy tests pass + production build succeeds)*
 - [x] **P0-4** Install Tauri CLI; scaffold `src-tauri/` + `app/`; verify `cargo tauri dev` launches *(2026-08-29 — tauri-cli 2.11.4 via npm; verified: app bundles at 6.4 MB, launches, IPC round-trip live)*
 - [x] **P0-5** Create Rust workspace `crates/{m2m-core,m2m-io,m2m-rig,m2m-bridge}` with `#![forbid(unsafe_code)]` *(2026-08-29 — 4 crates, all `#![forbid(unsafe_code)]`; 9 tests, clippy + fmt clean)*
-- [~] **P0-6** Install SonarQube + scanner; `sonar-project.properties`; verify a scan completes
-  - [x] `sonar-scanner` 8.1.0.6389 installed via brew; `sonar-project.properties` + `docker/sonarqube.yml` written
-  - [ ] **Blocked:** the SonarQube *server* needs Docker running. Docker CLI is at `/usr/local/bin/docker` but the daemon is not running (verified 2026-08-29). Start Docker Desktop, or supply SonarCloud credentials.
+- [x] **P0-6** Install SonarQube + scanner; `sonar-project.properties`; verify a scan completes *(2026-08-29 — SonarQube 26.8.0 community running in Docker; scan completed, **quality gate OK, 0 issues**. Note: Community Edition has no Rust analyser, so Rust quality is gated by `clippy -D warnings` in CI; Sonar covers the TypeScript frontend only.)*
 - [x] **P0-7** CI: `.github/workflows/ci.yml` — rust-test, rust-lint, arch-gate, frontend, build. **Verify green via `gh run watch`.** *(2026-08-29 — 6 jobs; arch-gate, frontend, legacy suite green; macOS jobs pending)*
 - [x] **P0-8** `.cargo/config.toml` with `debug = "line-tables-only"`; `.gitignore` for `target/`, `dist/`, `node_modules/` *(2026-08-29)*
 - [x] **P0-9** Vendor Asta Sans (OFL) + Lucide; implement `design.md` tokens as `app/src/ui/tokens.css` *(2026-08-29 — subset upstream 5.5 MB TTF to Latin, **28.4 KB woff2**, variable axis preserved; OFL.txt vendored alongside. Load verified in the running app: `font ok`.)*
-- [ ] **P0-10** `bench/` harness with criterion; capture **legacy baselines** for all 9 templates before any solver work
+- [x] **P0-10** `bench/` harness; capture **legacy baselines** for all 9 templates before any solver work *(2026-08-29 — all 9 captured to `bench/baselines/legacy-solver.json`. Criterion harness for the Rust side still to come with P1-1.)*
+  - Headline: **68% of 22196 vertices carry only ONE bone influence** (human worst at 87%), mean 1.13–1.81 against a GPU limit of 4. This is the rigid-assignment signature the geodesic solver must move.
+  - 0 unnormalised vertices across all templates — an invariant P1 must preserve.
 - [x] **P0-11** Verify empirically whether WebGPU is available in this WKWebView; record result in `architecture.md` *(2026-08-29 — **WebGPU confirmed available**, better than the assumed WebGL2 fallback. Adapter requested inside the shipped app. Recorded as ADR A1a; backend now detected at runtime and shown in the status bar.)*
 
 ## R — Research spikes (write `docs/research/<topic>.md` before implementing)
 
 - [x] **R-1** Survey SOTA skinning + auto-rigging *(2026-08-29 — written up in `docs/research/skinning-sota.md`)*
-- [ ] **R-2** Geodesic voxel binding: full paper read, pseudocode, parameter table → `docs/algorithms/geodesic-voxel-binding.md`
+- [~] **R-2** Geodesic voxel binding: full paper read, pseudocode, parameter table → `docs/algorithms/geodesic-voxel-binding.md`
+  - [x] Design doc written: pipeline, robustness table, complexity, parameters, rejected alternatives, verified quotes from the published abstracts
+  - [ ] **Full paper still unread.** Four things are deliberately marked unverified and must NOT be guessed: the geodesic propagation algorithm (Dijkstra / fast marching / flood fill), the exact weight falloff function, interior classification for open surfaces, and the reported timings. The authors' project page `delasa.net/voxelization/` is dead (domain resold). Get the SCA 2013 paper via ACM DOI 10.1145/2485895.2485919, and the 2014 IEEE TVCG extended version for degenerate geometry.
 - [ ] **R-3** Robust Biharmonic Skinning (arXiv:2406.00238): is the mesh-free formulation implementable in Rust at our budget? Decide in/out.
 - [ ] **R-4** Non-human rig conventions: survey how Blender/Maya/Rigify handle avian wing chains, fish spines, quadruped scapulae → `docs/research/creature-rigs.md`
 - [ ] **R-5** Source CC0/CC-BY rigged reference creatures to expand the template library. **Record provenance + licence per asset.**
@@ -100,7 +102,6 @@
 
 ## Blocked / needs user input
 
-- **P0-6 SonarQube server** — needs Docker Desktop started, or SonarCloud credentials. Scanner and config are ready either way.
 - **`references/` licensing** — the 7 Mixamo FBX files are gitignored for now: royalty-free to use but not CC0, and this repo licenses all art as CC0. Confirm whether to commit them anyway, keep them local, or replace with CC0 equivalents (R-5).
 
 ## Deferred with reason

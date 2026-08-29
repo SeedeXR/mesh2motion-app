@@ -5,6 +5,65 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 003 — 2026-08-29
+
+**Ended:** 2026-08-29 17:30:08
+**Focus:** P0-6 SonarQube (unblocked), P0-10 legacy solver baselines
+
+### Completed
+- **P0-6** — Docker went live, so SonarQube 26.8.0 community is running via `docker/sonarqube.yml`. Scan completed: **quality gate OK, 0 issues**. Community Edition has no Rust analyser, so Rust stays gated by `clippy -D warnings`; Sonar covers the TypeScript frontend.
+- **P0-10** — legacy solver baselines captured for all 9 templates → `bench/baselines/legacy-solver.json`.
+
+### The baseline number that matters
+**68% of 22196 vertices carry only ONE bone influence.** Mean influences per vertex range 1.13 (human) to 1.81 (snake), against a GPU limit of 4. Smooth deformation needs 2-4 influences near joints, so this is the rigid-assignment defect quantified — and it is the metric P1-8's A/B must move. Human is worst at 87%.
+
+Also: **0 unnormalised vertices** across all templates. The legacy normaliser is correct and P1 must preserve that.
+
+### Built
+- `legacy/bench/glb-headless.ts` — loads GLB in Node by stripping textures from the JSON chunk and rewriting the container. GLTFLoader parses geometry and skeletons fine headlessly, but material loading reaches for canvas/ImageBitmap decoding Node lacks. Stripping the JSON keeps this independent of GLTFLoader internals.
+- `legacy/bench/solver-baseline.ts` + `vitest.bench.config.ts` + `npm run bench`. Deliberately a **separate** vitest config so benchmarks never run in the legacy CI job.
+
+### Two bugs I found in my own harness before committing
+Both would have produced confident, wrong baselines:
+1. **`firstGeometry()` took only the first mesh.** `model-shark` ships as two meshes (1948 + 1578 verts), so the fish baseline silently measured 55% of the geometry and reported it as the whole model. Now solves every mesh.
+2. **`peakRssMb` measured cumulative process RSS, not per-solve cost.** The tell was the numbers increasing monotonically regardless of mesh size — a 924-vertex spider "used" more than a 7399-vertex human. `global.gc()` is a no-op without `--expose-gc`. Now measures `heapUsed` delta with a forced collection, and the figures scale with vertex count as they should.
+
+**Lesson:** the harness passed green in 317 ms and I nearly accepted it. The instinct that saved it was checking whether the *numbers were physically plausible*, not whether the test passed. Benchmarks need their output sanity-checked, not just their exit code.
+
+### Code review — 10 findings, all resolved
+The agent independently found both bugs above (deducing from the committed JSON
+that the artifact came from a fixed version), confirmed the **GLB binary rewrite
+is correct** by parsing all 18 GLB assets, and found six more:
+- **MED** the benchmark caught every exception, reported green, and overwrote
+  `legacy-solver.json` with error rows — destroying the artifact it exists to
+  protect. Now throws and writes nothing on failure. *Verified by pointing a
+  template at a missing rig: run fails loudly, baseline preserved.*
+- **MED** `global.gc?.()` was always a no-op without `--expose-gc`; the npm
+  script now passes it.
+- **LOW** `nonZero <= 1` counted **unweighted** vertices as single-influence,
+  inflating the exact metric P1's A/B keys on. Now `=== 1`, with
+  `zeroInfluence` tracked separately (currently 0 across all templates).
+- **LOW** empty weights gave `0/0` → `NaN` → `null` in JSON, reading like a
+  real measurement; and `hashDominantBones` returned the bare FNV seed, which
+  looks like a legitimate fingerprint. Both guarded.
+- **LOW** median indexed by the `RUNS` constant rather than the array length.
+- **LOW** `stripTextures` missed texture slots nested in material extensions
+  (`KHR_materials_specular`, `_clearcoat`, `_sheen`). Not triggered by today's
+  assets — the reviewer checked — but any re-export with a clearcoat or
+  specular-colour map would have broken the bench. Now recurses.
+- **LOW** only the GLB magic was validated, so a truncated file reached
+  `JSON.parse` on binary. Chunk type and length are now checked.
+
+### Notes
+- jsdom breaks GLB loading — `ArrayBuffer` identity fails across realms. Benchmarks run in the `node` environment.
+- SonarQube credentials are local-only; token is not committed.
+
+### Next session starts at
+**R-2** — geodesic voxel binding algorithm doc (`docs/algorithms/`), then **P1-1**
+(mesh representation) to begin the solver.
+
+---
+
 ## Session 002 — 2026-08-29
 
 **Ended:** 2026-08-29 17:00:00
