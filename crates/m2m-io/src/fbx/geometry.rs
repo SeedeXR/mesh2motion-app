@@ -132,6 +132,11 @@ pub struct GeometryReport {
 /// A triangulated mesh with its per-corner attributes.
 #[derive(Debug, Clone, Default)]
 pub struct MeshGeometry {
+    /// The Geometry object this was parsed from.
+    ///
+    /// Carried so a skin can confirm it is binding to the mesh it was painted
+    /// on; vertex counts alone do not identify a mesh.
+    pub id: i64,
     /// Positions, three floats per expanded vertex.
     pub positions: Vec<f32>,
     /// Triangle indices into the expanded vertices.
@@ -393,6 +398,7 @@ pub fn parse(object: &Object, pre_transform: GeometricTransform) -> Result<MeshG
     let vertex_count = vertices.len() / 3;
 
     let mut out = MeshGeometry {
+        id: object.id,
         source_vertex_count: vertex_count,
         ..Default::default()
     };

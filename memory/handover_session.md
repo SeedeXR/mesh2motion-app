@@ -1020,3 +1020,66 @@ WKWebView — currently assumed WebGL2 fallback, unverified), and **R-2**
 ### Notes
 - `legacy/` is a **test dependency**, not dead code — it is the A/B baseline for P1-8. Do not delete it.
 - Capture legacy benchmarks (**P0-10**) *before* touching the solver, or the A/B comparison has no baseline.
+
+---
+
+## Session 016 — 2026-08-30 — P2-4b: FBX skin clusters
+
+**Done.** `crates/m2m-io/src/fbx/skin.rs` + 20 tests in `crates/m2m-io/tests/fbx_skin.rs`.
+Workspace: 138 tests green, clippy `-D warnings` clean, fmt clean, `tsc`/`vite build`
+clean, legacy vitest 107/107.
+
+### What it does
+Reads FBX skin deformers — per-bone vertex indices, weights, bind matrices — and
+remaps FBX's per-original-vertex weights onto the per-corner expanded geometry from
+P2-4a via `vertex_source`. Measured on the reference rig: 129 clusters over 2 skins,
+26,745 index/weight pairs, 0 unweighted corners, 0 over the influence limit.
+
+### Two things worth remembering
+- **The reference Mixamo rig stores only ~1.08 influences per vertex** — 94% of
+  Beta_Surface corners are single-bone (max 3; Beta_Joints maxes at 2). Confirmed two
+  independent ways. Do **not** treat Mixamo's own weights as a blending quality bar
+  to beat; they are barely blended. Relevant to how P3 retargeting is evaluated.
+- **40 of 129 clusters have no `Indexes` node at all**, every one a finger bone. A
+  bone can be bound while influencing nothing. Pinned by a test, because a change that
+  started dropping them would shift every later bone index.
+
+### Bind matrix — deliberate divergence from the legacy
+Legacy uses `inverse(TransformLink)` and supplies the mesh transform separately as
+three.js's `bindMatrix` from the rebuilt scene graph. This port folds them into
+`inverse(TransformLink) * Transform` — same composition, but from what the exporter
+recorded rather than from reconstructing the graph identically. All 129 clusters carry
+a non-identity `Transform` (worst deviation 179.9), so this is not cosmetic.
+
+### Process note — the mutation discipline earned its keep this session
+23 mutations run. **Four survived on the first attempt, and none of them was a
+redundant test:**
+- Two guards were redundant *for the input I picked*, so either could be deleted with
+  tests green. Needed a case that discriminates them.
+- One assertion read through `influences()`, which filters zero-weight slots — so it
+  literally could not observe the defect it claimed to cover. Had to assert on raw slots.
+- One branch (non-finite matrix) had no coverage at all; the determinant check cannot
+  catch it because `NaN == 0.0` is false.
+
+I also wrote a test whose comment overclaimed what it pinned, and shipped a review
+brief asserting "each SkinReport field has a test that fails without it" — two fields
+had none. **Verify the claim before making it, including about my own tests.**
+
+### Review findings: 9, all real, all fixed
+Every one was a quiet partial success — `Ok` returned with deformation wrong or
+missing. Detail in `memory/todo.md` under P2-4b. The most dangerous was an index/weight
+desync that a corrupt file triggers trivially and that reported itself as a benign
+ragged array. I found that one independently while reviewing my own diff; the
+subagent confirmed it with the same conclusion.
+
+`unweighted_vertices` was **deleted rather than fixed** — it counted source vertices
+while `fallback_vertices` listed corners, so the two disagreed ~6x for the same event.
+
+### Wrong turn worth not repeating
+I ran `npx vitest run` from the repo root and reported 7 legacy failures. CI runs it
+with `working-directory: legacy`, against legacy's own `node_modules`. Run it the way
+CI does before concluding anything is broken: `cd legacy && npx vitest run`.
+
+### Next
+P2-3 part B (Models and the bone hierarchy) — the last piece of `FBXTreeParser` — then
+P2-5 `AnimationParser`. `references/` licensing is still an open question for the user.

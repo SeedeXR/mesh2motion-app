@@ -91,7 +91,18 @@ Not currently installed (verified 2026-08-29). Install as `todo.md` P0-6.
 ```bash
 brew install sonar-scanner          # scanner
 docker compose -f docker/sonarqube.yml up -d   # local server
-sonar-scanner -Dsonar.projectKey=mesh2motion-app
+sonar-scanner -Dsonar.projectKey=mesh2motion-app -Dsonar.token="$SONAR_TOKEN"
+
+# BLOCKED since session 016 (2026-08-30): the scanner needs a token, the one
+# used on 2026-08-29 was passed on the command line and never persisted, and
+# the container's admin password is not admin/admin any more and is recorded
+# nowhere. Minting a new token needs the password from the user, or an admin
+# reset inside the container (destructive, so not done unasked).
+#
+# This did NOT gate session 016's commit: Community Edition has no Rust
+# analyser, and that change was entirely Rust, so the scan could not have
+# produced a finding about it either way. It DOES gate any session that
+# touches the TypeScript frontend -- resolve it before then.
 ```
 
 Quality gate: no new bugs, no new vulnerabilities, no new code smells above Minor,
