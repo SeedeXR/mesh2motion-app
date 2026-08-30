@@ -1083,3 +1083,89 @@ CI does before concluding anything is broken: `cd legacy && npx vitest run`.
 ### Next
 P2-3 part B (Models and the bone hierarchy) — the last piece of `FBXTreeParser` — then
 P2-5 `AnimationParser`. `references/` licensing is still an open question for the user.
+
+---
+
+## Session 017 — 2026-08-30 — P2-3B: Models and the bone hierarchy
+
+**Done.** `crates/m2m-io/src/fbx/transform.rs` (FBX transform pipeline) and
+`model.rs` (Models, hierarchy, world matrices), 14 tests across
+`tests/fbx_transform.rs` and `tests/fbx_model.rs`. Workspace: 152 tests green,
+clippy `-D warnings` clean, fmt clean, legacy vitest 107/107, tsc + vite build clean.
+
+### The method that made this work: differential fixtures
+Two new dumpers run the **legacy's own code** headless and record its output:
+- `legacy/bench/dump-transform-fixtures.ts` — 49 `generateTransform` cases.
+- `legacy/bench/dump-model-fixtures.ts` — the whole rig hierarchy via `FBXLoader`.
+
+`FBXLoader.parse()` is synchronous and pure JS, so it runs under the bench vitest
+config with no WebGL. **Use this for the animation port too** — it is the only way
+to catch convention errors that produce plausible-looking wrong output.
+
+Worst deviation: 8.5e-14 local, 2.0e-13 world on a ~165-unit rig. f64 rounding.
+
+### Two conventions that are invisible without a differential test
+- three.js Euler order strings are the **reverse** of FBX extrinsic integers:
+  FBX order 0 → three.js `'ZYX'`.
+- three.js composes `'XYZ'` as the literal product `Rx·Ry·Rz` (read from
+  `three.core.js`, not assumed).
+
+Invert either and the rig still rotates smoothly, still inverts, and is wrong.
+
+### Corpus measurement drove the scope (8 files, 522 Models)
+520 `LimbNode`, 2 `Mesh`. `Lcl_Translation` 520, `PreRotation` 440,
+`Lcl_Rotation` 274, `Lcl_Scaling` 63 — **all 1.0**. `InheritType` 67 (values 1
+and 2 only). **Zero files carry `PostRotation`, pivots, offsets or `RotationOrder`.**
+
+Because every scale is 1.0, **all three `InheritType` modes agree on this rig** —
+which is why four mutations survived and needed synthetic non-uniformly-scaled
+parents to kill. Measure before assuming a real file exercises a branch.
+
+### A trap worth remembering about the legacy graph
+`buildSkeleton` makes a **separate `Bone` per skeleton** for a Model shared
+between skins, and nests the second inside the first. The rig has 132 nodes for
+67 Model ids. Only the outer Bone carries `userData.transformData`. My first
+dumper took "first node with this id" and would have exported an identity local
+matrix for every shared bone — the hips wrong by the full 104.27 cm. The
+duplicate-consistency assertion I put in the dumper is what caught it; keep that
+habit when flattening a three.js graph.
+
+### Mutations: 23 run
+All killed except two proven no-ops — adjacent pure-translation matrices commute
+(`T(a)·T(b) = T(a+b)`), verified numerically as exactly 0 difference rather than
+argued. Four others survived the first pass and each exposed a real gap, not a
+redundant test (see the InheritType note above).
+
+Also: my own vacuity guard caught me asserting "≥5 models branch" without
+measuring — it is 4 (Hips, Spine2, and each hand with 5 fingers).
+
+### Known gaps, deliberate, recorded in todo.md as P2-3 B-follow-up
+- **`BindPose` rest-pose override** for bones with no skin cluster. Measured: 0
+  of 65 bones qualify on this rig, so it is a no-op here. Needs cluster
+  knowledge; belongs with the rig layer.
+- **`UpAxis == 2` Z-up rotation.** Corpus is all `UpAxis == 1`. Belongs at the
+  importer level.
+
+Neither is dropped silently — both are written down with their measurements.
+
+### Review: 4 findings, 3 real and fixed, 1 stale
+- **`Root` subclass was not a bone.** Legacy: `case 'LimbNode': case 'Root'`. The
+  corpus is all `LimbNode`, so nothing measured could see it; a Max Biped export
+  would have lost its root joint silently.
+- **`InheritType::from_fbx` fallback was wrong.** Legacy sends everything that is
+  not 0 or 1 into `Rrs`; this sent it to `RrSs`.
+- **Shear — deliberate divergence, now documented.** The legacy round-trips every
+  local matrix through position/quaternion/scale, which cannot represent shear
+  (measured: a sheared matrix changes by 0.39 through three.js r185's
+  `applyMatrix4` + `updateWorldMatrix`). FBX genuinely produces shear under a
+  non-uniformly scaled ancestor. This port keeps it. **The fixture test only
+  agrees to 8.5e-14 because every scale in the rig is 1.0** — regenerate from a
+  scaled rig and it will fail, correctly.
+- The `ancestors` step-limit finding was **stale**: the guard landed before the
+  review reported. Always re-check a finding against the current file.
+
+### Next
+P2-5 `AnimationParser` (783 LOC). The fixture-dumper approach applies directly:
+dump the legacy's parsed `AnimationClip` tracks and diff. `model.rs` keeps each
+node's raw `TransformData`, which the animation layer needs as the base to apply
+curves onto.

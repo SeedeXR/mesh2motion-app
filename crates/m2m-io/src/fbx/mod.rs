@@ -35,9 +35,11 @@
 pub mod binary;
 pub mod dom;
 pub mod geometry;
+pub mod model;
 pub mod reader;
 pub mod skin;
 pub mod text;
+pub mod transform;
 
 /// Errors produced while reading an FBX file.
 ///
