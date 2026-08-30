@@ -80,6 +80,99 @@ pub enum FbxProperty {
     F64Array(Vec<f64>),
 }
 
+impl FbxProperty {
+    /// This property as an integer, whatever width it was stored at.
+    ///
+    /// ASCII FBX carries no type codes, so a reader cannot know whether `100`
+    /// was written as an `i32` or an `i64` — binary yields `I32`, ASCII yields
+    /// `I64` for the identical source line. Rather than guess a width, both
+    /// stay faithful to what they can know and consumers ask by meaning.
+    /// Returns `None` for a non-integral float.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::I16(v) => Some(i64::from(*v)),
+            Self::I32(v) => Some(i64::from(*v)),
+            Self::I64(v) => Some(*v),
+            Self::F32(v) if v.fract() == 0.0 => Some(*v as i64),
+            Self::F64(v) if v.fract() == 0.0 => Some(*v as i64),
+            Self::Bool(v) => Some(i64::from(*v)),
+            _ => None,
+        }
+    }
+
+    /// This property as a float, whatever width it was stored at.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::I16(v) => Some(f64::from(*v)),
+            Self::I32(v) => Some(f64::from(*v)),
+            Self::I64(v) => Some(*v as f64),
+            Self::F32(v) => Some(f64::from(*v)),
+            Self::F64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// This property as a string, if it is one.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Str(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// This property as a numeric array, whatever element type it was stored at.
+    ///
+    /// Binary distinguishes `I32Array` from `F64Array`; ASCII cannot, and yields
+    /// `F64Array` for both. Consumers that want numbers should ask for numbers.
+    pub fn as_f64_vec(&self) -> Option<Vec<f64>> {
+        match self {
+            Self::F64Array(v) => Some(v.clone()),
+            Self::F32Array(v) => Some(v.iter().map(|&x| f64::from(x)).collect()),
+            Self::I32Array(v) => Some(v.iter().map(|&x| f64::from(x)).collect()),
+            Self::I64Array(v) => Some(v.iter().map(|&x| x as f64).collect()),
+            _ => None,
+        }
+    }
+
+    /// This property as an integer array, whatever element type it was stored at.
+    ///
+    /// Returns `None` if any element is not integral.
+    pub fn as_i64_vec(&self) -> Option<Vec<i64>> {
+        match self {
+            Self::I32Array(v) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+            Self::I64Array(v) => Some(v.clone()),
+            Self::F32Array(v) => v
+                .iter()
+                .map(|&x| (x.fract() == 0.0).then_some(x as i64))
+                .collect(),
+            Self::F64Array(v) => v
+                .iter()
+                .map(|&x| (x.fract() == 0.0).then_some(x as i64))
+                .collect(),
+            _ => None,
+        }
+    }
+}
+
+/// Splits an FBX object name into its name and class.
+///
+/// The two formats encode this differently and neither is normalised in place,
+/// because collapsing them would discard the class:
+///
+/// - binary writes `"Bob\0\x01Geometry"` — name, separator, class
+/// - ASCII writes `"Geometry::Bob"` — class, separator, name
+///
+/// Returns `(name, class)`, with an empty class when there is no separator.
+pub fn split_object_name(raw: &str) -> (&str, &str) {
+    if let Some((name, class)) = raw.split_once('\u{0}') {
+        return (name, class.trim_start_matches('\u{1}'));
+    }
+    if let Some((class, name)) = raw.split_once("::") {
+        return (name, class);
+    }
+    (raw, "")
+}
+
 /// A node in the FBX tree.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FbxNode {

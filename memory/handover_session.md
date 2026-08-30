@@ -5,6 +5,52 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 012 — 2026-08-30
+
+**Ended:** 2026-08-30 03:18:43
+**Focus:** P2-2, the FBX ASCII reader
+
+### Result
+Produces the **same `FbxDocument`** as the binary reader, so the DOM layer in
+P2-3 never has to know which format a file arrived in. All 8 legacy test cases
+ported, plus truncation and depth guards. 29 tests in `m2m-io`.
+
+### Where the normalisation line sits
+The two formats express the same tree differently: binary puts a vertex array
+directly on its `Vertices` node, ASCII writes `Vertices: *9 { a: ... }` and
+hangs the numbers on a child. That is a **format** quirk, so the ASCII reader
+reconciles it by hoisting `a:` onto the parent.
+
+**Semantic** reshaping — `Properties70` flattening, `Connections` collection —
+stays in P2-3, matching the P2-1 decision. Each reader knows its own format's
+quirks; only the DOM layer knows what nodes mean. The legacy duplicates the
+semantic reshaping in both parsers; this does it once.
+
+### The ported tests are regression guards, not coverage
+The legacy `TextParser` carries three fixes over upstream three.js, each with a
+test. Mutation-testing confirmed two of them still bite:
+
+- **Un-anchoring the brace** reproduces the historical bug precisely: parsing
+  the sample document then yields **only `FBXHeaderExtension`**, because a `P:`
+  line containing `D:\Art\{Project}\char.fbx` reads as a block start, the
+  indent drifts, and every later node is silently discarded. That is the exact
+  quiet-partial-success failure mode the loop now watches for.
+- **Removing the document-level property path** loses `CreationTime` and
+  `Creator`, which sit outside any block; upstream dereferenced the absent node
+  and crashed.
+
+### No regex
+Leading tabs are counted directly rather than building `\t{N}` patterns per
+line. Simpler, no dependency, and it makes the end-of-line brace anchor an
+explicit condition rather than something emergent from a pattern.
+
+### Next session starts at
+**P2-3** — `FBXTreeParser`, 1620 LOC and the largest single port. It is also
+where the semantic reshaping deferred from both P2-1 and P2-2 now lives, so it
+carries more than a straight translation. Expect to split it across sessions.
+
+---
+
 ## Session 011 — 2026-08-30
 
 **Ended:** 2026-08-30 02:51:25

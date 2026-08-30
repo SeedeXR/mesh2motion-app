@@ -34,6 +34,7 @@
 
 pub mod binary;
 pub mod reader;
+pub mod text;
 
 /// Errors produced while reading an FBX file.
 ///
@@ -90,6 +91,15 @@ pub enum FbxError {
     /// document that looks whole but has sections missing.
     #[error("missing FBX footer; the file is probably truncated")]
     MissingFooter,
+
+    /// A value did not match the shape its context requires.
+    #[error("malformed {what}: {detail}")]
+    Malformed {
+        /// What was being read.
+        what: &'static str,
+        /// What was found instead.
+        detail: String,
+    },
 
     /// A node's declared end offset points backwards or past the file.
     #[error("node at {at} declares end offset {end}, which is not reachable")]
