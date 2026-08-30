@@ -35,6 +35,7 @@
 pub mod animation;
 pub mod binary;
 pub mod dom;
+pub mod encode;
 pub mod geometry;
 pub mod model;
 pub mod reader;

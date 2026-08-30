@@ -1410,8 +1410,26 @@ and found one uncharged amplifier I had missed: `Cursor::read_string` expands
 invalid UTF-8 to 3-byte U+FFFD, so an `S` property of L bytes retains 3L. That
 is 3x against deflate's 1032x and still bounded by file size — noted, not fixed.
 
+### Started P2-6(a): the binary encoder
+`crates/m2m-io/src/fbx/encode.rs`, the inverse of `binary::parse`, gated by
+`parse(encode(parse(bytes))) == parse(bytes)`. 133 m2m-io tests green.
+
+**Two findings from the round trip itself, both worth carrying forward:**
+
+1. **A round trip is necessary but not sufficient.** Four of eight mutations
+   survive it — the null record ending a child list, the top-level null record,
+   an uncompressed array's byte length, and the footer padding. Every one is a
+   conformance detail *our reader does not check*, so nothing would notice if
+   the encoder stopped writing them. Only a different reader can close those.
+2. **`FbxDocument` is a lossy view of object names.** Binary FBX stores
+   `Name\0\x01Class` and `read_string` truncates at the NUL, so a writer built
+   on the document emits names with no class suffix. Both parses truncate
+   identically, so the round trip passes; the loss is in the bytes. three.js
+   truncates too — Blender and Maya are unverified.
+
 ### Next
-P2-6, the FBX writer, using the differential method against
+P2-6(b): builders, and the legacy-loader acceptance gate, using the differential
+method against
 `@comfyorg/fbx-exporter-three`. Split it as (a) a binary **encoder**, the
 inverse of `binary::parse`, testable by round-tripping our own reader with no
 reference needed, then (b) **builders** from scene data, diffable against the

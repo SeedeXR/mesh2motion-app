@@ -255,7 +255,7 @@ impl FbxNode {
 }
 
 /// A parsed FBX binary file.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FbxDocument {
     /// Version from the header, e.g. 7700 for FBX 7.7.
     pub version: u32,
