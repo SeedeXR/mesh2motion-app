@@ -5,6 +5,56 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 014 — 2026-08-30
+
+**Ended:** 2026-08-30 04:48:57
+**Focus:** FBX mesh geometry (P2-4a)
+
+### First: fixed an overlap in my own planning
+Session 013 split P2-3 into parts A–D without checking P2-4's scope. Geometry
+and deformers live in `GeometryParser.ts`, not `FBXTreeParser.ts`, so B and D
+duplicated P2-4. Folded them in; P2-3 keeps only the DOM layer and the
+model/bone hierarchy.
+
+### Measured before choosing a triangulator
+The legacy triangulates with earcut over a projected tangent plane, which
+handles concave n-gons. Before porting that, I counted what the reference rig
+actually contains: **only triangles and quads** — 172 + 14,050 on Beta_Surface,
+1,400 + 9,720 on Beta_Joints, zero n-gons.
+
+So earcut is not needed. A quad splits along the diagonal whose two triangles
+both agree with the polygon's Newell normal — **exact** for a quad, not a
+heuristic — and anything larger is fanned and counted in the report so an
+approximation is never applied silently.
+
+Mutation-tested: replacing the rule with a naive fan makes the concave-quad test
+fail with *"triangles wound oppositely: -4 and 0.5 — the split went outside"*.
+
+### Results on the real rig
+Beta_Surface 14,232 verts → **28,272 triangles**; Beta_Joints 10,514 → **20,840**.
+Both derived from the measured polygon mix rather than asserted as a bound.
+Character height comes out at a plausible centimetre scale, and normals are unit
+length under **both** mapping types — the two meshes happen to use different
+ones (`ByPolygonVertex`/Direct and `ByVertice`/Direct), so one file covers both
+resolution paths.
+
+### The piece P2-4b will need
+`vertex_source` records the original FBX vertex behind each expanded corner.
+Vertices expand per polygon corner because normals and UVs are stored per
+corner, so skin weights — which are indexed by *original* vertex — cannot be
+bound without the mapping back. The legacy calls this `remapSkinIndices`.
+
+### An assertion of mine that was wrong
+I asserted the concave test quad had area 1.5. The parser returned 1.75, and an
+independent shoelace calculation confirmed **1.75** — my arithmetic, not the
+code. Worth noting because the failure looked at first like a triangulation bug.
+
+### Next session starts at
+**P2-4b** — skin clusters: per-bone vertex indices, weights, and bind
+transforms, bound through `vertex_source`.
+
+---
+
 ## Session 013 — 2026-08-30
 
 **Ended:** 2026-08-30 04:25:20

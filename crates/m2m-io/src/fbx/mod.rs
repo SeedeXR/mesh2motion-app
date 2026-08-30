@@ -34,6 +34,7 @@
 
 pub mod binary;
 pub mod dom;
+pub mod geometry;
 pub mod reader;
 pub mod text;
 
