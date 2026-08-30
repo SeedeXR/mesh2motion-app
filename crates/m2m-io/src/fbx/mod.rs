@@ -33,6 +33,7 @@
 //! extent would have to be retained.
 
 pub mod binary;
+pub mod dom;
 pub mod reader;
 pub mod text;
 

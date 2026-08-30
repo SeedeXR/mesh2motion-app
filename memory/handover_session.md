@@ -5,6 +5,50 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 013 — 2026-08-30
+
+**Ended:** 2026-08-30 04:25:20
+**Focus:** P2-3 part A — the FBX DOM layer
+
+### Scope decision, measured before deciding
+`FBXTreeParser.ts` is 1621 lines, and the todo treated that as the size of the
+port. Counting per method: **319 lines are textures and materials, 218 are
+lights and cameras**, and most of the 181-line `parseParameters` is material
+parameters — about **46%** of the method code. None of that belongs in
+`m2m-io`, which exists to read geometry and rigs; the viewport loads materials
+itself. The port is roughly 700 lines, not 1620. Recorded as a struck-through
+scope change with the numbers.
+
+### Landed: the DOM layer
+Connection graph, objects addressable by id, `Properties70` flattened into named
+typed values. This is the semantic reshaping both readers deliberately deferred
+— done **once** here, where the legacy does it twice (in
+`BinaryParser.parseSubNode` and again in `TextParser`).
+
+On the real rig: 642 objects — 67 Model, 131 Deformer (129 Cluster + 2 Skin),
+315 AnimationCurve, 2 Geometry, 2 Pose. `mixamorig:Hips` resolves with subclass
+`LimbNode` and `Lcl_Translation` Y = **104.3 cm**, a plausible hip height in the
+centimetres Mixamo exports — a physical check, not just a structural one.
+
+### The claim from the last two sessions, now actually asserted
+P2-1 and P2-2 both claimed the readers produce one shape. Session 012's review
+showed that claim was false and my test could not have caught it. So this
+session asserts it **directly**: the same document is built through both paths —
+ASCII text, and the node tree a binary file decodes to, with the name encoded
+the other way round and integers keeping their declared width — and the
+resulting models are compared for object identity, relationships and property
+values.
+
+Mutation-verified both ways: breaking `split_object_name` fails it on object
+identity, and swapping the connection direction fails the graph test with
+`geometry ... has parents []`.
+
+### Next session starts at
+**P2-3 part B** — Geometry: vertices, indices, normals, UVs. The DOM gives it
+`objects_of_kind("Geometry")` and the Model each one hangs off.
+
+---
+
 ## Session 012 — 2026-08-30
 
 **Ended:** 2026-08-30 03:18:43
