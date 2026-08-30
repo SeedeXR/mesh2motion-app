@@ -45,9 +45,62 @@ const MAX_DEPTH: usize = 256;
 
 /// Ceiling on a single decompressed property array.
 ///
-/// A zlib stream can expand enormously from a few bytes. 512 MB is far above
-/// any real vertex array and far below exhausting memory.
-const MAX_INFLATED_BYTES: usize = 512 * 1024 * 1024;
+/// A zlib stream can expand enormously from a few bytes. 256 MB is 32 million
+/// f64s — a mesh of tens of millions of triangles, far above any character rig
+/// and far below exhausting memory.
+const MAX_INFLATED_BYTES: usize = 256 * 1024 * 1024;
+
+/// Ceiling on everything one file may decompress, added together.
+///
+/// [`MAX_INFLATED_BYTES`] is per property, and the deflate-ratio guard only
+/// requires about 254 KB of compressed input per 256 MB array — so a 2 MB file
+/// can carry eight of them and retain 2 GB in the node tree while no single
+/// property ever exceeds its own limit. Every inflated array stays alive for
+/// the lifetime of the document, so the total is what actually bounds memory.
+///
+/// Note this bounds what is RETAINED. While the last array is decoded, its
+/// inflate buffer and the typed `Vec` built from it are both alive on top of
+/// everything already kept, so a file accepted at the limit peaks nearer twice
+/// this. Budget accordingly when judging what a desktop app survives.
+///
+/// The reference rig decompresses 1.5 MB in total, and this tool's stated
+/// priority is low memory use, so half a gigabyte is already generous: it is
+/// two orders of magnitude above any real rig while keeping a malicious file
+/// inside what a desktop app can survive.
+const MAX_INFLATED_BYTES_PER_FILE: usize = 512 * 1024 * 1024;
+
+/// Tracks what one file has decompressed so far.
+///
+/// Threaded by `&mut` rather than held in the `Cursor`: the cursor is a
+/// general byte reader shared with the ASCII path, and a deflate budget is a
+/// fact about this format, not about reading bytes.
+///
+/// # Why only inflation is charged
+///
+/// Deflate is the one path where output is not bounded by input. Every other
+/// allocation sized from a declared length — an uncompressed array, an `S`
+/// string, an `R` blob — calls `check_capacity` first, which rejects anything
+/// larger than the bytes actually remaining, and each then consumes what it
+/// read. So their total across a file cannot exceed the file's own size. A
+/// zlib stream has no such ceiling, which is why it is the only thing here
+/// that needs a running total.
+struct InflateBudget {
+    used: usize,
+}
+
+impl InflateBudget {
+    /// Charges `bytes` against the budget, or fails if it would be exceeded.
+    fn charge(&mut self, bytes: usize) -> Result<(), FbxError> {
+        self.used = self.used.saturating_add(bytes);
+        if self.used > MAX_INFLATED_BYTES_PER_FILE {
+            return Err(FbxError::InflateBudgetExceeded {
+                total: self.used,
+                limit: MAX_INFLATED_BYTES_PER_FILE,
+            });
+        }
+        Ok(())
+    }
+}
 
 /// A property value attached to an FBX node.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,9 +294,12 @@ pub fn parse(data: &[u8]) -> Result<FbxDocument, FbxError> {
         return Err(FbxError::UnsupportedVersion(version));
     }
 
+    // One budget for the whole file: every inflated array stays alive in the
+    // tree, so the total is what bounds memory, not any single property.
+    let mut budget = InflateBudget { used: 0 };
     let mut roots = Vec::new();
     while !at_footer(&cursor) {
-        match parse_node(&mut cursor, version, 0)? {
+        match parse_node(&mut cursor, version, 0, &mut budget)? {
             Some(node) => roots.push(node),
             // A zero end-offset marks the end of a node list.
             None => break,
@@ -292,6 +348,7 @@ fn parse_node(
     cursor: &mut Cursor<'_>,
     version: u32,
     depth: usize,
+    budget: &mut InflateBudget,
 ) -> Result<Option<FbxNode>, FbxError> {
     if depth > MAX_DEPTH {
         return Err(FbxError::TooDeep(MAX_DEPTH));
@@ -323,12 +380,12 @@ fn parse_node(
 
     let mut properties = Vec::new();
     for _ in 0..property_count {
-        properties.push(parse_property(cursor)?);
+        properties.push(parse_property(cursor, budget)?);
     }
 
     let mut children = Vec::new();
     while cursor.offset() < end_offset {
-        match parse_node(cursor, version, depth + 1)? {
+        match parse_node(cursor, version, depth + 1, budget)? {
             Some(child) => children.push(child),
             None => {
                 // A null record terminates the child list, and the original
@@ -405,7 +462,10 @@ fn read_array<T>(
 }
 
 /// Parses one property value.
-fn parse_property(cursor: &mut Cursor<'_>) -> Result<FbxProperty, FbxError> {
+fn parse_property(
+    cursor: &mut Cursor<'_>,
+    budget: &mut InflateBudget,
+) -> Result<FbxProperty, FbxError> {
     let at = cursor.offset();
     let type_code = cursor.read_u8()?;
 
@@ -426,13 +486,17 @@ fn parse_property(cursor: &mut Cursor<'_>) -> Result<FbxProperty, FbxError> {
             check_capacity(cursor, len, 1)?;
             Ok(FbxProperty::Raw(cursor.take(len)?.to_vec()))
         }
-        b'b' | b'c' | b'd' | b'f' | b'i' | b'l' => parse_array_property(cursor, type_code),
+        b'b' | b'c' | b'd' | b'f' | b'i' | b'l' => parse_array_property(cursor, type_code, budget),
         other => Err(FbxError::UnknownPropertyType(other as char, at)),
     }
 }
 
 /// Parses an array property, inflating it first if it is compressed.
-fn parse_array_property(cursor: &mut Cursor<'_>, type_code: u8) -> Result<FbxProperty, FbxError> {
+fn parse_array_property(
+    cursor: &mut Cursor<'_>,
+    type_code: u8,
+    budget: &mut InflateBudget,
+) -> Result<FbxProperty, FbxError> {
     let count = cursor.read_u32()? as usize;
     let encoding = cursor.read_u32()?;
     let compressed_len = cursor.read_u32()? as usize;
@@ -473,6 +537,9 @@ fn parse_array_property(cursor: &mut Cursor<'_>, type_code: u8) -> Result<FbxPro
     // inflates to exactly count * element_bytes, so this costs nothing on a
     // legitimate file while stopping a property that declares one element from
     // inflating half a gigabyte.
+    // Charged BEFORE inflating, so a file that would exceed the total is
+    // rejected without allocating the array that pushes it over.
+    budget.charge(expected)?;
     let inflated =
         miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, expected.max(1))
             .map_err(|e| FbxError::Inflate(format!("{e:?}")))?;

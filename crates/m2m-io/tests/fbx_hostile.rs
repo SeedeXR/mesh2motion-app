@@ -505,3 +505,199 @@ fn the_skinned_quad_seed_reaches_the_layers_it_was_added_for() {
     let (weights, _) = skins[0].bind(&mesh).expect("binds");
     assert_eq!(weights.indices.len(), mesh.vertex_count() * 4);
 }
+
+/// A binary FBX carrying `count` compressed `d` (f64) arrays, each declaring
+/// `elements` values, all inside one node.
+///
+/// Built with the same deflate implementation the reader inflates with, so a
+/// round trip cannot pass by accident of a different compressor.
+/// Elements per array in the budget fixtures.
+///
+/// The per-file ceiling is 512 MB and the per-property ceiling is 256 MB, so
+/// three arrays is the fewest that can exceed the total, and each must be over
+/// 170.67 MB. 171 MB is the smallest fixture that tests the real constants:
+/// two are inflated and retained (342 MB) before the third is refused.
+const BUDGET_ELEMENTS: usize = (171 * 1024 * 1024) / 8;
+
+/// The three-array fixtures, built once.
+///
+/// Measured cost of this file after sharing them: **0.9 s and 1.33 GB peak**,
+/// against 13.6 s and 1.69 GB when each test built its own. The remaining peak
+/// is inherent — two heavy tests run concurrently, and while an array is
+/// decoded its inflate buffer and the typed `Vec` built from it are both
+/// alive. Testing real 512 MB constants costs real memory; the alternative is
+/// making the ceilings injectable, which buys a config knob nothing in
+/// production would ever set.
+///
+/// Each `file_with_arrays` call allocates and deflates a whole 171 MB buffer.
+/// Several tests want the same bytes, and `cargo test` runs them concurrently,
+/// so building per test stacked the peaks — measured at 1.89 GB across the
+/// binary. Sharing them pays that cost once.
+fn budget_fixtures() -> &'static (Vec<u8>, Vec<u8>, Vec<u8>) {
+    static FIXTURES: std::sync::OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> = std::sync::OnceLock::new();
+    FIXTURES.get_or_init(|| {
+        (
+            file_with_arrays(2, BUDGET_ELEMENTS, false),
+            file_with_arrays(3, BUDGET_ELEMENTS, false),
+            file_with_arrays(3, BUDGET_ELEMENTS, true),
+        )
+    })
+}
+
+/// As above, but when `corrupt_last` the final array's payload is garbage that
+/// cannot inflate, while still declaring the same size.
+fn file_with_arrays(count: usize, elements: usize, corrupt_last: bool) -> Vec<u8> {
+    // Mostly zeros — the shape of the attack — but with a thousandth of the
+    // buffer made incompressible.
+    //
+    // All-zero input clears the 1032:1 deflate-ratio guard by only 0.24%
+    // (200 MB compresses to 203,705 bytes against a 203,212-byte floor). A
+    // miniz_oxide release that compressed zeros a quarter of a percent better
+    // would trip the ratio guard first, and these tests would fail claiming
+    // the BUDGET was too tight — blaming this code for a compressor change.
+    // Salting the buffer puts the ratio around 500:1, half the limit.
+    let mut raw = vec![0u8; elements * 8];
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    for slot in raw.iter_mut().step_by(1000) {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        *slot = seed as u8;
+    }
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+
+    // Same length, so the deflate-ratio guard still passes; just not zlib.
+    let garbage = vec![0x7fu8; compressed.len()];
+
+    let mut properties = Vec::new();
+    for i in 0..count {
+        let payload = if corrupt_last && i + 1 == count {
+            &garbage
+        } else {
+            &compressed
+        };
+        properties.push(b'd');
+        properties.extend((elements as u32).to_le_bytes());
+        properties.extend(1u32.to_le_bytes()); // encoding: deflate
+        properties.extend((payload.len() as u32).to_le_bytes());
+        properties.extend(payload);
+    }
+
+    const NAME: &[u8] = b"Objects";
+    let header = 4 + 4 + 4 + 1 + NAME.len();
+    let mut out = b"Kaydara FBX Binary  \x00\x1a\x00".to_vec();
+    out.extend(7400u32.to_le_bytes());
+    let end = out.len() + header + properties.len();
+    out.extend((end as u32).to_le_bytes());
+    out.extend((count as u32).to_le_bytes());
+    out.extend((properties.len() as u32).to_le_bytes());
+    out.push(NAME.len() as u8);
+    out.extend(NAME);
+    out.extend(properties);
+    out.extend([0u8; 13]); // end of the top-level node list
+    out
+}
+
+#[test]
+fn one_file_cannot_decompress_without_limit_even_if_no_single_array_does() {
+    // Review finding (P2-8b). The per-property ceiling is 256 MB and the
+    // deflate-ratio guard only requires ~250 KB of compressed input per array,
+    // so a small file could carry several arrays that each pass their own
+    // limit while the total retained in the node tree ran to gigabytes —
+    // every inflated array stays alive for the lifetime of the document.
+    //
+    // Two arrays are 342 MB and must still parse: the limit has to admit a
+    // legitimately large file, or it is just a smaller version of the bug.
+    let (ok, over, _) = budget_fixtures();
+    assert!(
+        ok.len() < 3_000_000,
+        "the fixture itself is {} bytes — the point is that it is small",
+        ok.len()
+    );
+    // The fixture has no footer, so the parse fails either way — but it must
+    // fail on the footer, having read both arrays, not on the budget.
+    if let Err(m2m_io::fbx::FbxError::InflateBudgetExceeded { .. }) = binary::parse(ok) {
+        panic!("342 MB across two arrays was rejected; the budget is too tight");
+    }
+
+    match binary::parse(over) {
+        Err(m2m_io::fbx::FbxError::InflateBudgetExceeded { total, limit }) => {
+            assert_eq!(limit, 512 * 1024 * 1024, "the per-file ceiling");
+            assert!(total > limit, "total {total} should exceed {limit}");
+        }
+        Err(other) => panic!("expected the per-file budget to fire, got {other}"),
+        Ok(_) => panic!("513 MB across three arrays parsed"),
+    }
+}
+
+/// One array declaring `elements` values but carrying a token payload.
+///
+/// The per-property ceiling is checked against the declared count before the
+/// ratio guard and before any inflate, so a test of that ceiling needs no real
+/// data — and building 300 MB of it cost 3.9 s and 318 MB for nothing.
+fn file_declaring_one_huge_array(elements: usize) -> Vec<u8> {
+    // 2 KB, not 16 bytes. The footer heuristic treats "within ~176 bytes of the
+    // end" as the footer, so a file small enough to satisfy that at its first
+    // node is never parsed at all — it fails as truncated before the ceiling
+    // this test is about is ever reached.
+    let payload = [0u8; 2048];
+    let mut properties = vec![b'd'];
+    properties.extend((elements as u32).to_le_bytes());
+    properties.extend(1u32.to_le_bytes());
+    properties.extend((payload.len() as u32).to_le_bytes());
+    properties.extend(&payload);
+
+    const NAME: &[u8] = b"Objects";
+    let header = 4 + 4 + 4 + 1 + NAME.len();
+    let mut out = b"Kaydara FBX Binary    ".to_vec();
+    out.extend(7400u32.to_le_bytes());
+    let end = out.len() + header + properties.len();
+    out.extend((end as u32).to_le_bytes());
+    out.extend(1u32.to_le_bytes());
+    out.extend((properties.len() as u32).to_le_bytes());
+    out.push(NAME.len() as u8);
+    out.extend(NAME);
+    out.extend(properties);
+    out.extend([0u8; 13]);
+    out
+}
+
+#[test]
+fn a_single_array_beyond_the_per_property_ceiling_is_still_rejected() {
+    // The per-file budget must not have replaced the per-property one: a lone
+    // array of 300 MB exceeds 256 MB on its own and never reaches the total.
+    let elements = 300 * 1024 * 1024 / 8;
+    let file = file_declaring_one_huge_array(elements);
+    match binary::parse(&file) {
+        Err(m2m_io::fbx::FbxError::ImplausibleLength { remaining, .. }) => {
+            assert_eq!(remaining, 256 * 1024 * 1024, "the per-property ceiling");
+        }
+        Err(other) => panic!("expected ImplausibleLength, got {other}"),
+        Ok(_) => panic!("a 300 MB array parsed"),
+    }
+}
+
+#[test]
+fn the_budget_is_charged_before_inflating_not_after() {
+    // Both orderings reject the file, so the difference is not in whether it
+    // fails but in WHAT fails first — and that is what decides whether the
+    // array that breaks the budget is allocated before being rejected.
+    //
+    // The last array here declares its size but carries garbage instead of a
+    // zlib stream. Charging first means the budget rejects it without ever
+    // calling inflate; inflating first means zlib fails and reports a corrupt
+    // stream. The two produce different errors, which makes the ordering
+    // observable rather than a claim in a comment.
+    let (_, _, file) = budget_fixtures();
+
+    match binary::parse(file) {
+        Err(m2m_io::fbx::FbxError::InflateBudgetExceeded { limit, .. }) => {
+            assert_eq!(limit, 512 * 1024 * 1024, "the per-file ceiling fired");
+        }
+        Err(m2m_io::fbx::FbxError::Inflate(_)) => {
+            panic!("inflate ran before the budget was charged")
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(_) => panic!("an over-budget file parsed"),
+    }
+}

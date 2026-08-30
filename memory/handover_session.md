@@ -1334,3 +1334,88 @@ P2-6, the FBX writer. First piece with no legacy implementation to diff
 against, so the method changes: round-trip our own reader, load the result in
 the legacy loader headless, and open it in Blender via MCP. P2-7 (glTF via the
 `gltf` crate) is an alternative next step with a spec and a crate behind it.
+
+---
+
+## Session 020 — 2026-08-30 — P2-8b: per-file inflate budget
+
+**Done.** `InflateBudget` threaded through `binary::parse`, charged with the
+declared size **before** inflating. Ceilings are now 256 MB per property and
+512 MB per file. Workspace 196 tests green, clippy and fmt clean, legacy 107/107.
+
+### Why 512 MB and not the 1 GB I first wrote
+This tool's stated priority is low memory use, and the reference rig inflates
+1.5 MB in total. 512 MB is two orders of magnitude of headroom and still inside
+what a desktop app survives. Per-property dropped 512 -> 256 MB so the two
+limits stay independently meaningful rather than one subsuming the other.
+
+### The ordering is now pinned, and it took a second attempt
+My first mutation "charge after inflate" actually *deleted* the charge, so it
+duplicated an earlier mutation and pinned nothing — I said so rather than
+counting it. The ordering **is** observable: give the last array a declared
+size but garbage instead of a zlib stream, and charging first yields
+`ImplausibleLength` while inflating first yields `Inflate`. Different errors,
+cheap test, and the real mutation now fails.
+
+### CORRECTION: P2-6 does have a reference implementation
+Sessions 018 and 019 both recorded "the FBX writer has no legacy implementation
+to diff against". **That is wrong.** The legacy exports FBX via
+**`@comfyorg/fbx-exporter-three` v1.0.1** — a third-party npm package, not
+three.js core, which ships no `FBXExporter`. Verified this session: it runs
+headless under the bench config exactly like the loader, and writes **binary**
+FBX (`Kaydara FBX Binary`, version 7400, 2.97 MB from the reference rig).
+So the differential-fixture method applies to P2-6 after all.
+
+**And our reader parses its output cleanly** — a second, independent producer,
+every report field zero across DOM/models/skins/animation. Good evidence the
+reader is not overfit to Mixamo's writer. Details and the shape differences
+(132 Models vs 67, 159 curves vs 315, unshared vertices, the empty stack
+dropped) are recorded under P2-6 in todo.md.
+
+### Format decision
+**P2-6 before P2-7.** The app exports both (`ExportFormat { GLB, FBX }`), so
+neither is optional, but P2-6 now has a runnable reference and a complete
+reader to round-trip against.
+
+### Fuzzing note
+`-max_len=65536` is worth more than it looks: `fbx_binary` went from 190k runs
+in 120 s to **1.73M runs in 46 s**, because without it libFuzzer adopts the
+2.1 MB rig as its input size. The review predicted this; the measurement
+confirms it.
+
+### Review: 7 findings, all real, all fixed
+- **The per-file rejection reused `ImplausibleLength`**, whose message reads
+  "declared length N exceeds the M bytes remaining" — but nothing is truncated
+  and M is not bytes remaining. Anyone hitting the cap on a legitimately large
+  file would chase a truncation that does not exist. Now
+  `FbxError::InflateBudgetExceeded { total, limit }`.
+- **THREE stale doc comments** citing the old 512 MB ceiling — in `binary.rs`
+  (the new constant's own rationale), `geometry.rs` and `animation.rs` — all
+  invalidated by this very change. This is a recurring failure mode across
+  018/019/020. **When a constant changes, grep for every numeric claim that
+  cites it.**
+- A test compressed 300 MB that was never inflated, because the per-property
+  check fires on the declared count alone.
+- The suite cost **13.6 s and 1.69 GB peak**; now **0.9 s and 1.33 GB**, by
+  sharing fixtures through a `OnceLock` and using the smallest arrays that
+  still exceed the real ceiling (three of 171 MB). The remaining peak is
+  inherent to testing real 512 MB constants with real data.
+- The all-zero fixture cleared the 1032:1 deflate-ratio guard by **0.24%**, so
+  a `miniz_oxide` release compressing zeros marginally better would have made
+  these tests fail *blaming the budget* for a compressor change. The buffer is
+  salted now, ~500:1.
+
+The reviewer also confirmed what I had reasoned about the uncompressed paths,
+and found one uncharged amplifier I had missed: `Cursor::read_string` expands
+invalid UTF-8 to 3-byte U+FFFD, so an `S` property of L bytes retains 3L. That
+is 3x against deflate's 1032x and still bounded by file size — noted, not fixed.
+
+### Next
+P2-6, the FBX writer, using the differential method against
+`@comfyorg/fbx-exporter-three`. Split it as (a) a binary **encoder**, the
+inverse of `binary::parse`, testable by round-tripping our own reader with no
+reference needed, then (b) **builders** from scene data, diffable against the
+reference. Note the reader validates a 16-byte `FOOTER_MAGIC` and `at_footer`
+treats "within ~176 bytes of the end" as the footer — a writer must satisfy
+both, and a file too small is unparseable for that reason (this bit me while
+writing a test fixture this session).

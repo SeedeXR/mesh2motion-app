@@ -86,6 +86,21 @@ pub enum FbxError {
         remaining: usize,
     },
 
+    /// One file's arrays would decompress to more than the reader allows.
+    ///
+    /// Distinct from [`Self::ImplausibleLength`], which is about a length the
+    /// file could not possibly satisfy. Nothing here is truncated or
+    /// inconsistent: the file is simply asking for more memory than a reader
+    /// will spend, and saying so in the language of "bytes remaining" would
+    /// send anyone reading the message hunting a truncation that is not there.
+    #[error("decompressing this file would need {total} bytes, over the {limit}-byte limit")]
+    InflateBudgetExceeded {
+        /// Running total, including the array that broke the limit.
+        total: usize,
+        /// The ceiling that was exceeded.
+        limit: usize,
+    },
+
     /// Decompressing a property array failed.
     #[error("zlib decompression failed: {0}")]
     Inflate(String),

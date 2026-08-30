@@ -14,3 +14,8 @@ glam.workspace = true
 # flate2, which wraps this same crate by default and adds a layer plus an
 # optional C backend we do not want.
 miniz_oxide = "0.8"
+
+[dev-dependencies]
+# Compressing test fixtures: the same crate the reader inflates with, so a
+# round trip cannot pass by using a different deflate implementation.
+miniz_oxide = "0.8"

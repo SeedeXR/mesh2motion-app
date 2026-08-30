@@ -102,8 +102,9 @@ impl GeometricTransform {
 
 /// Most polygon corners one mesh may declare.
 ///
-/// `PolygonVertexIndex` is bounded only by the reader's 512 MB inflate
-/// ceiling — 134 million i32 corners, from roughly half a megabyte of deflate.
+/// `PolygonVertexIndex` is bounded only by the reader's 256 MB per-property
+/// inflate ceiling — 67 million i32 corners, from roughly a quarter of a
+/// megabyte of deflate.
 /// Every corner becomes an expanded vertex with a position, a normal and a UV,
 /// so the output is tens of bytes per corner and nothing otherwise relates it
 /// to the input size. The reference rig's two meshes are 84,816 and 62,520

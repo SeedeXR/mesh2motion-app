@@ -44,8 +44,8 @@ use std::collections::HashMap;
 /// Most keys one curve may carry.
 ///
 /// The count comes from the file: a `KeyTime` array is bounded only by the
-/// reader's 512 MB inflate ceiling, which is 64 million keys, and a few
-/// kilobytes of deflate can ask for a million. Even the linear matching below
+/// reader's 256 MB per-property inflate ceiling, which is 32 million keys, and
+/// a few kilobytes of deflate can ask for a million. Even the linear matching below
 /// would then allocate and walk millions of keys per axis per track. A minute
 /// of animation at 120 fps is 7,200 keys; a quarter of a million is four hours
 /// of it, and past that the file is not an animation.
