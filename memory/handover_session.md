@@ -1169,3 +1169,78 @@ P2-5 `AnimationParser` (783 LOC). The fixture-dumper approach applies directly:
 dump the legacy's parsed `AnimationClip` tracks and diff. `model.rs` keeps each
 node's raw `TransformData`, which the animation layer needs as the base to apply
 curves onto.
+
+---
+
+## Session 018 — 2026-08-30 — P2-5: AnimationParser
+
+**Done.** `crates/m2m-io/src/fbx/animation.rs` + 14 tests. Workspace 170 tests
+green, clippy `-D warnings` clean, fmt clean.
+
+**Diffed key-for-key against the legacy: 2 clips, 53 tracks, 7,844 keys, worst
+deviation exactly 0 on times and 1.7e-18 on values.**
+
+### What the differential fixture caught that nothing else would have
+Clip order is ascending **stack id**, not alphabetical — the legacy iterates a
+JS object keyed by numeric id strings, which JavaScript enumerates numerically.
+I had sorted by name and it failed on the first run. This is the third session
+where the fixture caught an ordering/convention error invisible to inspection.
+
+### Measure before assuming a branch is exercised (again)
+Across 8 files: no `PostRotation`, no scale or morph channel, no curve node
+missing an axis, **zero rotation steps ≥180°**, **zero sign flips in 7,644
+adjacent key pairs**, zero non-default Euler orders, and all 53 tracks share one
+end time. Five mutations survived the real-rig test purely because of this;
+every one was a genuine gap, none was a redundant test.
+
+### The mistake worth remembering
+My first unroll test was **vacuous through a wrong premise**. I picked
+(0,0,0)→(170,170,170) by reasoning from the XYZ half-angle formula
+`w = c1c2c3 - s1s2s3`. The default order is **ZYX**, where that triple gives
+w ≈ +0.99 — it can never flip. A scan then showed **no** triple with every axis
+under 180° flips against the identity at all. The real case needs a non-identity
+previous key: (-180,-150,-180)→(-30,-30,-30), dot -0.90.
+
+Lesson: when a test needs a specific numerical condition, **construct it by
+search and assert the premise**, don't derive it from a formula you remember.
+
+### Trust boundary
+A curve whose `KeyTime` and `KeyValueFloat` differ in length indexed past the
+end of the value array while sampling — a panic reached straight from file
+bytes. Truncated and counted now, matching `skin.rs`'s ragged-array handling.
+
+### Deliberate divergences (documented in the module, not silent)
+- **Morph channels are counted, not parsed.** They need the geometry's
+  blend-shape list, which nothing in this project produces. A file whose facial
+  animation vanished must not load looking complete.
+- **The ≥180° sub-division slerps in quaternion space** rather than
+  round-tripping through Euler as the legacy does (lossy at gimbal lock), and
+  emits the interval endpoint the legacy's `for (t=0; t<1; …)` loop drops.
+  Measured unreachable on every file in the corpus.
+
+### Review: 5 findings, all real, all fixed
+Two were trust-boundary defects reachable from file bytes: an **unbounded
+subdivision count** (an infinite span saturates the float→int cast to
+`usize::MAX`, so the loop never ends; 1e7 degrees alone asks for 55,557 keys),
+and **non-finite keys becoming NaN quaternions** with nothing in the report.
+
+The one worth remembering: **I wrote a comment asserting `synchronise`'s
+shortcut could not change output, and it was wrong.** It compared key *counts*;
+a curve with a duplicated `KeyTime` has more values than distinct times, so it
+matches the deduplicated merged length while its keys sit elsewhere. The
+reviewer produced the counterexample. Comparing the times themselves fixes it —
+**the legacy still has this bug**. Lesson: a claim that a branch is
+output-neutral is a proof obligation, not a comment.
+
+Also: every layer was applied where the legacy takes only the first (a stack
+with an override layer would emit two tracks for one bone), and my
+clip-ordering comment overclaimed how JavaScript enumerates numeric keys
+(numeric order only below 2^32).
+
+### Next
+P2-6 is the **FBX writer** — net-new, no Rust prior art, and the first piece
+with no legacy implementation to diff against. That changes the method: the
+gate becomes round-tripping our own reader over what we write, plus loading the
+result in the legacy loader (which runs headless) and in Blender via MCP.
+P2-7 (glTF via the `gltf` crate) may be the better next step since it has a
+spec and a crate; consider reordering.

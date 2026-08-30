@@ -308,3 +308,56 @@ fn an_unrecognised_inherit_type_follows_the_legacy_into_rrs() {
     // distinction without a difference.
     assert_ne!(InheritType::RrSs, InheritType::Rrs);
 }
+
+#[test]
+fn the_quaternion_and_matrix_forms_of_an_euler_triple_agree() {
+    // `euler_matrix` (used by the transform pipeline) and `axis_quats` (used by
+    // the animation tracks) are each checked against three.js separately, so
+    // they could drift apart and both fixtures would still pass — leaving a
+    // rig whose rest pose and whose animation disagree about what a rotation
+    // means, which reads as "the animation is subtly off" and is very hard to
+    // trace back here.
+    let orders = [
+        EulerOrder::Zyx,
+        EulerOrder::Yzx,
+        EulerOrder::Xzy,
+        EulerOrder::Zxy,
+        EulerOrder::Yxz,
+        EulerOrder::Xyz,
+    ];
+    let triples = [
+        [0.0, 0.0, 0.0],
+        [30.0, 45.0, 60.0],
+        [-170.0, 20.0, 95.0],
+        [12.5, -160.0, -33.25],
+    ];
+
+    let mut worst = 0.0f64;
+    for order in orders {
+        for t in triples {
+            let [a, b, c] = order.axis_quats(t);
+            let from_quat = DMat4::from_quat(a * b * c);
+            // The pipeline's rotation term with everything else at identity.
+            let from_matrix = generate_transform(
+                &TransformData {
+                    rotation: DVec3::from(t),
+                    euler_order: order,
+                    ..Default::default()
+                },
+                None,
+            )
+            .expect("no parent");
+            let d = deviation(from_quat, from_matrix);
+            worst = worst.max(d);
+            assert!(d < 1e-12, "{order:?} {t:?} disagree by {d}");
+        }
+    }
+    // Not vacuous: these triples produce genuinely different matrices.
+    let [a, b, c] = EulerOrder::Zyx.axis_quats([30.0, 45.0, 60.0]);
+    let [d, e, f] = EulerOrder::Xyz.axis_quats([30.0, 45.0, 60.0]);
+    assert!(
+        deviation(DMat4::from_quat(a * b * c), DMat4::from_quat(d * e * f)) > 0.1,
+        "the orders should not agree on this triple"
+    );
+    eprintln!("worst quat/matrix disagreement {worst:e}");
+}

@@ -32,6 +32,7 @@
 //! the approximation is exact there. If a file ever disagrees, the node's byte
 //! extent would have to be retained.
 
+pub mod animation;
 pub mod binary;
 pub mod dom;
 pub mod geometry;

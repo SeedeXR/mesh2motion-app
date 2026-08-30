@@ -69,6 +69,27 @@ impl EulerOrder {
         }
     }
 
+    /// The three axis rotations as quaternions, in multiplication order.
+    ///
+    /// Angles are degrees, each belonging to its own axis regardless of where
+    /// that axis falls in the order. Multiplying the result in sequence gives
+    /// the same quaternion three.js's `setFromEuler` builds, sign included.
+    pub fn axis_quats(self, degrees: [f64; 3]) -> [glam::DQuat; 3] {
+        self.axes().map(|axis| {
+            let radians = match axis {
+                Axis::X => degrees[0],
+                Axis::Y => degrees[1],
+                Axis::Z => degrees[2],
+            }
+            .to_radians();
+            match axis {
+                Axis::X => glam::DQuat::from_rotation_x(radians),
+                Axis::Y => glam::DQuat::from_rotation_y(radians),
+                Axis::Z => glam::DQuat::from_rotation_z(radians),
+            }
+        })
+    }
+
     /// The axes in multiplication order.
     fn axes(self) -> [Axis; 3] {
         match self {
