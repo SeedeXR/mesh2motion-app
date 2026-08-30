@@ -10,3 +10,7 @@ license.workspace = true
 m2m-core = { path = "../m2m-core" }
 thiserror.workspace = true
 glam.workspace = true
+# Pure-Rust inflate for FBX's zlib-compressed property arrays. Chosen over
+# flate2, which wraps this same crate by default and adds a layer plus an
+# optional C backend we do not want.
+miniz_oxide = "0.8"

@@ -5,6 +5,91 @@ Timestamps are local (macOS, `date "+%Y-%m-%d %H:%M:%S"`).
 
 ---
 
+## Session 011 — 2026-08-30
+
+**Ended:** 2026-08-30 02:51:25
+**Focus:** P2-1, the FBX binary reader — first code in `m2m-io`
+
+### Result
+Parses the real 2.1 MB Mixamo export: **version 7700, 11 roots, 6099 nodes,
+11.6 ms**. Structure checked against what a rigged character must contain —
+67 Model, 131 Deformer, 315 AnimationCurve, 2 Geometry, 666 Connections — and
+`Geometry/Vertices` decodes through the zlib path to 42,696 f64, i.e. 14,232
+vertices, at a plausible centimetre scale.
+
+### Deliberate divergence from the original
+The TypeScript `BinaryParser` does two jobs in one pass: decoding the binary
+container, and reshaping nodes into a convenient object (`Properties70`
+flattening, `Connections` collection, single-property collapsing). The container
+format is only "named nodes with properties and children"; the reshaping is
+interpretation.
+
+Split here. This layer produces a faithful typed node tree; the reshaping moves
+to the DOM layer in P2-3. The original cannot be tested without its reshaping;
+this can, and the tree is typed rather than `[key: string]: any`.
+
+### No legacy tests to port
+P2-1's todo entry said "with legacy tests as harness". There are none —
+`BinaryParser.ts` and `BinaryReader.ts` have no test files; only FBXTreeParser,
+GeometryParser and TextParser do. The harness is instead the real Mixamo file
+plus hostile input.
+
+### Trust-boundary guards, each mutation-tested
+- **Depth limit.** A stack overflow aborts the process rather than unwinding, so
+  it cannot be caught — this has to be a limit, not a rescue.
+- **Declared-length checks before allocating**, so a file claiming four billion
+  elements fails on the number rather than on the reservation.
+- **512 MB inflate ceiling**, since a zlib stream can expand by orders of
+  magnitude.
+- **Header-only fragments rejected.** Found by the truncation test: cutting the
+  file to 27–100 bytes "parsed successfully" into an empty document, because the
+  footer heuristic fires immediately and the node loop never runs. A valid FBX
+  always has at least FBXHeaderExtension.
+
+Mutation-verified both guards by removing them and confirming the corresponding
+test fails.
+
+### Code review — 8 findings, 1 high, all resolved
+**The high one was a silent partial success, the worst failure mode for an
+animation tool.** Cutting 578 bytes from the 2.1 MB file (0.03%) returned `Ok`
+with 10 roots and 6089 nodes, having dropped the whole `Takes` section — every
+animation stack — because the end-of-content test is an offset heuristic and a
+cut inside the last root simply stops the loop. My `roots.is_empty()` guard only
+caught total loss.
+
+Fixed by validating the 16-byte FBX footer magic, which I first verified is
+identical across all 8 real Mixamo exports available (two separate export
+batches). Mutation-tested: removing the check reproduces the reviewer's exact
+symptom, "a truncated file parsed with 10 roots and 6089 nodes".
+
+Also: the inflate limit was the fixed 512 MB rather than the array's declared
+size, so a property declaring one element could still inflate half a gigabyte,
+and the ceiling was charged per property with the result retained — ten of them
+in a 5 MB file would peak around 5 GB. Now bounded by the declared size and by
+the maximum deflate ratio. A mid-list null record used to `break` and then seek
+past its siblings, silently producing a smaller tree than three.js would — a
+parser differential; now an error. And `expect`/`unreachable!` in parser code
+contradicted the crate's own no-panic rule, so both are gone.
+
+### A test expectation of mine that was wrong
+I asserted that truncating to `len - 1` must fail, then found it parsed all 6099
+nodes and wrote a test asserting *that* instead — reasoning the byte was footer
+padding carrying no node data. The footer check reversed it again: losing any
+footer byte means completeness cannot be verified, and given the alternative is
+silently dropping animation, strict is right. The test is now the regression
+guard for the 578-byte case.
+
+One more: after the null-record change, **all 600 corruption samples are
+rejected** where some previously parsed. I had added `assert!(parsed > 0)` to
+keep the accept path exercised; that penalises the parser for getting stricter,
+so the count is reported rather than asserted.
+
+### Next session starts at
+**P2-2** — the FBX ASCII reader (`TextParser`), which *does* have legacy tests
+to port as a harness.
+
+---
+
 ## Session 010 — 2026-08-30
 
 **Ended:** 2026-08-30 02:25:28

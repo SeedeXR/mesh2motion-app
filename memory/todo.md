@@ -107,7 +107,12 @@
 
 ## P2 — I/O (`m2m-io`)
 
-- [ ] **P2-1** Port FBX binary reader (`BinaryParser`, `BinaryReader`) with legacy tests as harness
+- [x] **P2-1** Port FBX binary reader *(2026-08-30)* — parses the real 2.1 MB Mixamo export: **version 7700, 11 roots, 6099 nodes, 11.6 ms**
+  - Structure verified against what a rigged character must contain: 67 Model, 131 Deformer, 315 AnimationCurve, 2 Geometry, 666 Connections; `Geometry/Vertices` decodes to 42,696 f64 (14,232 vertices) through the zlib path.
+  - **Deliberate divergence:** the legacy `BinaryParser` interleaves binary decoding with semantic reshaping (`Properties70` flattening, `Connections` collection, single-property collapsing). Split here — this layer produces a faithful typed node tree, and the reshaping moves to the DOM layer in P2-3. The original cannot be tested without the reshaping; this can.
+  - **No legacy tests existed for these two files** (only FBXTreeParser/GeometryParser/TextParser have them), so the harness is the real Mixamo file plus hostile input.
+  - Trust-boundary guards, each mutation-tested: depth limit (a stack overflow aborts rather than unwinds, so it cannot be caught), declared-length checks before allocating, inflate bounded by the *declared* size and the maximum deflate ratio, and **footer-magic validation**.
+  - **The footer check exists because of a serious silent failure found in review:** cutting 578 bytes from the 2.1 MB file — 0.03% — parsed to `Ok` with 10 roots and 6089 nodes, having discarded the entire `Takes` section, i.e. every animation stack. The end-of-content test is an offset heuristic, so a cut inside the last root just stops the loop early. The 16-byte footer magic is identical across all 8 real Mixamo exports checked and is the only reliable completeness signal.
 - [ ] **P2-2** Port FBX ASCII reader (`TextParser` + its existing tests)
 - [ ] **P2-3** Port `FBXTreeParser` (1620 LOC — largest single port; split across sessions)
 - [ ] **P2-4** Port `GeometryParser` (985 LOC) incl. skin clusters
