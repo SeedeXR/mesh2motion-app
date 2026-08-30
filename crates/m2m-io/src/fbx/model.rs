@@ -40,6 +40,14 @@ pub struct ModelReport {
     /// A cycle is unreachable from any root, so without this those Models get
     /// no transform at all — and a naive walk would not terminate.
     pub cycles_broken: usize,
+    /// Transform components that were not finite, replaced by their default.
+    ///
+    /// An infinite `Lcl_Translation` composes to a NaN matrix, and because a
+    /// child multiplies by its parent's world matrix, one bad node turns its
+    /// entire subtree to NaN — which surfaces as the mesh disappearing, with
+    /// nothing to say where it began. Replacing the single bad component keeps
+    /// the node's other, valid ones.
+    pub non_finite_components: usize,
     /// Models whose local transform could not be composed.
     ///
     /// Left as the identity. Happens when an ancestor collapsed to zero scale,
@@ -127,27 +135,36 @@ impl ModelTree {
     }
 }
 
-/// Reads a vec3 property, or its default when absent.
-fn vec3(object: &Object, name: &str, default: DVec3) -> DVec3 {
-    object
+/// Reads a vec3 property, or its default when absent or not finite.
+fn vec3(object: &Object, name: &str, default: DVec3, report: &mut ModelReport) -> DVec3 {
+    match object
         .property(name)
         .and_then(|p| p.as_vec3())
         .map(DVec3::from)
-        .unwrap_or(default)
+    {
+        Some(v) if v.is_finite() => v,
+        // Present but unusable is not the same as absent, and it is the case
+        // that poisons a whole subtree, so it is counted.
+        Some(_) => {
+            report.non_finite_components += 1;
+            default
+        }
+        None => default,
+    }
 }
 
 /// Reads one Model's transform components.
-fn transform_data(object: &Object) -> TransformData {
+fn transform_data(object: &Object, report: &mut ModelReport) -> TransformData {
     TransformData {
-        translation: vec3(object, "Lcl_Translation", DVec3::ZERO),
-        pre_rotation: vec3(object, "PreRotation", DVec3::ZERO),
-        rotation: vec3(object, "Lcl_Rotation", DVec3::ZERO),
-        post_rotation: vec3(object, "PostRotation", DVec3::ZERO),
-        scale: vec3(object, "Lcl_Scaling", DVec3::ONE),
-        scaling_offset: vec3(object, "ScalingOffset", DVec3::ZERO),
-        scaling_pivot: vec3(object, "ScalingPivot", DVec3::ZERO),
-        rotation_offset: vec3(object, "RotationOffset", DVec3::ZERO),
-        rotation_pivot: vec3(object, "RotationPivot", DVec3::ZERO),
+        translation: vec3(object, "Lcl_Translation", DVec3::ZERO, report),
+        pre_rotation: vec3(object, "PreRotation", DVec3::ZERO, report),
+        rotation: vec3(object, "Lcl_Rotation", DVec3::ZERO, report),
+        post_rotation: vec3(object, "PostRotation", DVec3::ZERO, report),
+        scale: vec3(object, "Lcl_Scaling", DVec3::ONE, report),
+        scaling_offset: vec3(object, "ScalingOffset", DVec3::ZERO, report),
+        scaling_pivot: vec3(object, "ScalingPivot", DVec3::ZERO, report),
+        rotation_offset: vec3(object, "RotationOffset", DVec3::ZERO, report),
+        rotation_pivot: vec3(object, "RotationPivot", DVec3::ZERO, report),
         euler_order: object
             .property("RotationOrder")
             .and_then(|p| p.as_i64())
@@ -173,7 +190,7 @@ pub fn parse_all(scene: &Scene) -> ModelTree {
             id: o.id,
             name: o.name.clone(),
             subclass: o.subclass.clone(),
-            transform: transform_data(o),
+            transform: transform_data(o, &mut report),
             local: DMat4::IDENTITY,
             world: DMat4::IDENTITY,
             parent: None,

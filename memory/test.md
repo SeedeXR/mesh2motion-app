@@ -61,6 +61,11 @@ non-watertight meshes, meshes with zero vertices, and duplicate bone names.
 
 ## 5. Fuzzing
 
+**Installed 2026-08-30 (session 019):** `rustup toolchain install nightly --profile minimal`
+plus `cargo install cargo-fuzz` (0.13.2). The targets live in `crates/m2m-io/fuzz/`, which
+declares its own `[workspace]` so the nightly requirement never reaches a stable build.
+Run them with `cargo +nightly fuzz run <target>`; assemble the corpus with `fuzz/seed.sh`.
+
 `cargo-fuzz` targets for the FBX binary parser, FBX ASCII parser, and GLB reader.
 Each runs 60 s in CI on PRs and 30 min nightly. Any crash or OOM found becomes a
 regression test with the minimised input committed.

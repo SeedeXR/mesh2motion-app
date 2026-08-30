@@ -100,12 +100,33 @@ impl GeometricTransform {
     }
 }
 
+/// Most polygon corners one mesh may declare.
+///
+/// `PolygonVertexIndex` is bounded only by the reader's 512 MB inflate
+/// ceiling — 134 million i32 corners, from roughly half a megabyte of deflate.
+/// Every corner becomes an expanded vertex with a position, a normal and a UV,
+/// so the output is tens of bytes per corner and nothing otherwise relates it
+/// to the input size. The reference rig's two meshes are 84,816 and 62,520
+/// corners; four million is a mesh of over a million triangles.
+const MAX_CORNERS: usize = 4_194_304;
+
+/// Most corners one polygon may have before it is dropped.
+///
+/// A single n-gon of N corners is fanned into N-2 triangles, so one absurd
+/// polygon amplifies without any total being exceeded. Real geometry is
+/// triangles and quads; a thousand-sided face is corruption, not a design.
+const MAX_POLYGON_CORNERS: usize = 1024;
+
 /// What a geometry parse had to approximate or discard.
 ///
 /// Reported rather than logged: a caller that silently accepts an approximation
 /// has no way to tell the user their mesh was altered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeometryReport {
+    /// Corners dropped because the mesh declared more than [`MAX_CORNERS`].
+    pub corners_over_limit: usize,
+    /// Polygons dropped for having more than [`MAX_POLYGON_CORNERS`] corners.
+    pub polygons_over_corner_limit: usize,
     /// Polygons with more than four corners, triangulated by fanning.
     ///
     /// Correct for a convex polygon, wrong for a concave one. Non-zero means
@@ -415,8 +436,17 @@ pub fn parse(object: &Object, pre_transform: GeometricTransform) -> Result<MeshG
     let uvs = node
         .child("LayerElementUV")
         .and_then(|n| read_layer(n, "UV", &["UVIndex"], 2, &mut out.report));
+    // Bound the work before any of it is sized from file content.
+    let polygon_indices: &[i64] = if polygon_indices.len() > MAX_CORNERS {
+        out.report.corners_over_limit = polygon_indices.len() - MAX_CORNERS;
+        &polygon_indices[..MAX_CORNERS]
+    } else {
+        &polygon_indices[..]
+    };
+
     // One polygon's corners, reset at each face boundary.
     let mut unresolved = 0usize;
+    let mut oversized = false;
     let mut corner_ids: Vec<usize> = Vec::new();
     let mut corner_slots: Vec<usize> = Vec::new();
     let mut polygon = 0usize;
@@ -438,6 +468,25 @@ pub fn parse(object: &Object, pre_transform: GeometricTransform) -> Result<MeshG
 
         corner_ids.push(id);
         corner_slots.push(slot);
+
+        // A polygon past the corner limit is abandoned, but its remaining
+        // corners still have to be consumed to find the face boundary — and it
+        // is counted once, as one polygon, not once per block of corners.
+        if !oversized && corner_ids.len() > MAX_POLYGON_CORNERS {
+            oversized = true;
+            out.report.polygons_over_corner_limit += 1;
+            corner_ids.clear();
+            corner_slots.clear();
+        }
+        if oversized {
+            corner_ids.clear();
+            corner_slots.clear();
+            if last {
+                oversized = false;
+                polygon += 1;
+            }
+            continue;
+        }
 
         if !last {
             continue;

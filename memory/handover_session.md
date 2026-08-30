@@ -1244,3 +1244,93 @@ gate becomes round-tripping our own reader over what we write, plus loading the
 result in the legacy loader (which runs headless) and in Blender via MCP.
 P2-7 (glTF via the `gltf` crate) may be the better next step since it has a
 spec and a crate; consider reordering.
+
+---
+
+## Session 019 — 2026-08-30 — P2-8 fuzzing + P2-9 hostile corpus
+
+**Done.** `crates/m2m-io/fuzz/` (three targets, seeds, `seed.sh`), a `fuzz` CI
+job on PRs and nightly, and `crates/m2m-io/tests/fbx_hostile.rs`. Workspace 189
+tests green in release; m2m-io 121 green in **debug**, which is the mode that
+matters this session.
+
+### Reordering P2-8 ahead of the writer paid for itself twice
+**Two real trust-boundary bugs, both found within minutes:**
+
+1. **`debug_assert!` on file content** (`Scene::from_document`). An `Objects`
+   child with no numeric id panicked *every debug build*, and CI's
+   `cargo test --workspace` **is** a debug build — it had simply never been
+   given that input. A second `debug_assert!` on duplicate ids was the same
+   mistake. Both are `SceneReport` counters now.
+   **An assertion is for an invariant this code controls. What a file contains
+   is never one.** Worth grepping for `debug_assert` in any new parser code.
+2. **A non-finite `Lcl_Translation` turned an entire subtree to NaN**, because
+   a child multiplies by its parent's world matrix. Found by the §4 corpus, not
+   the fuzzer. Components are validated at read time and replaced individually
+   so the node's other valid components survive.
+
+### Two things I would have got wrong without measuring
+- **Deep ASCII does not test the depth cap.** The text reader uses an explicit
+  stack; only the binary reader recurses. The test now builds a nested *binary*
+  file, and pins the exact boundary: outermost node is depth 0, so 257 levels
+  pass and 258 fail.
+- **`fbx_pipeline` is the target that finds things.** `fbx_binary` and
+  `fbx_text` ran 190k and 8M iterations with nothing. Both hand-found bugs from
+  017/018 and both bugs found here were in LAYERS above the readers.
+
+### Method note for the next parser
+Binary FBX starts with a 23-byte magic that random mutation essentially never
+reproduces, so the pipeline target reaches the layers mainly through the ASCII
+seeds. If GLB fuzzing (P2-7) matters, seed it with real GLBs and consider a
+structure-aware generator — otherwise the fuzzer spends its whole budget
+failing the header check.
+
+### Toolchain now installed
+`rustup toolchain install nightly --profile minimal` and `cargo install
+cargo-fuzz` (0.13.2). Run with `cargo +nightly fuzz run <target>`.
+
+### Disk — the memory was stale and I corrected it
+`session_start.md` claimed ~34 GB free since session 001. It is **~15 GB** on a
+460 GB disk that is 97% full. `fuzz/target` adds ~220 MB and `fuzz/corpus`
+grows past 300 MB; both are gitignored and safe to delete.
+
+### Review: 12 findings, and it was worth the hour it took
+The reviewer measured things I had asserted. Two were **HIGH and real**, both
+"never hang / never OOM" violations — the very contract this session was about:
+
+1. **Quadratic key matching with no cap.** `vector_track` searched each curve's
+   times per merged time. The key count comes from the file (a `KeyTime` array
+   is bounded only by the 512 MB inflate ceiling = 64M keys), so ~20 KB could
+   buy ~10^12 comparisons. Fixed twice over: a forward cursor per axis makes it
+   linear, and `MAX_KEYS_PER_CURVE` bounds the count. **The differential test
+   still matches the legacy to exactly 0 on times**, which is the evidence the
+   cursor is equivalent.
+2. **Unbounded geometry amplification.** A `PolygonVertexIndex` of N closed as
+   one polygon fans to 3(N-2) expanded vertices; ~0.5 MB of deflate could ask
+   for >10 GB. Now `MAX_CORNERS` and `MAX_POLYGON_CORNERS`.
+
+Also real: the fuzz target hardcoded an identity `GeometricTransform`, so the
+file-driven path was never fuzzed at all; `find(|r| r.name == "Objects")`
+silently dropped a second `Objects` root while the new counters read zero; and
+the CI loop under `bash -e` meant one crash stopped the other targets running.
+
+**Three of my own comments were factually wrong** and the reviewer caught each:
+a claim that `reader.rs` does format sniffing (it does not — it is only a
+`Cursor`), a claim that a bare `1800` in a GitHub expression could evaluate as
+falsy (it cannot), and a `seed.sh` warning promising the binary corpus would
+fall back to ASCII seeds (nothing copies them there).
+
+**Corpus quality was the most useful measurement:** 70.7% of the reference
+rig's bytes sit inside zlib streams, where any mutation fails inflate and
+rejects the whole file — so most of the 8.4M runs never reached the DOM. Added
+`ascii-skinned-quad.fbx` (a quad, both layer-element mappings, a skin cluster)
+with a test asserting it reaches those paths, plus `-max_len` so libFuzzer does
+not adopt the 2.1 MB rig as its input size.
+
+Deferred with reason, recorded as **P2-8b**: the per-file inflate budget.
+
+### Next
+P2-6, the FBX writer. First piece with no legacy implementation to diff
+against, so the method changes: round-trip our own reader, load the result in
+the legacy loader headless, and open it in Blender via MCP. P2-7 (glTF via the
+`gltf` crate) is an alternative next step with a spec and a crate behind it.

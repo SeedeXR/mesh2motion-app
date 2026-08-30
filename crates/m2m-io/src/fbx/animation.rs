@@ -41,6 +41,16 @@ use crate::fbx::transform::EulerOrder;
 use glam::{DQuat, DVec3};
 use std::collections::HashMap;
 
+/// Most keys one curve may carry.
+///
+/// The count comes from the file: a `KeyTime` array is bounded only by the
+/// reader's 512 MB inflate ceiling, which is 64 million keys, and a few
+/// kilobytes of deflate can ask for a million. Even the linear matching below
+/// would then allocate and walk millions of keys per axis per track. A minute
+/// of animation at 120 fps is 7,200 keys; a quarter of a million is four hours
+/// of it, and past that the file is not an animation.
+const MAX_KEYS_PER_CURVE: usize = 262_144;
+
 /// Most sub-keys one large rotation step may be split into.
 ///
 /// The step count comes from a degree delta read straight out of the file, so
@@ -127,6 +137,8 @@ pub struct AnimationReport {
     /// Counted rather than ignored: a file whose facial animation vanished
     /// would otherwise load looking complete.
     pub morph_channels_skipped: usize,
+    /// Curves truncated at [`MAX_KEYS_PER_CURVE`].
+    pub curves_over_key_limit: usize,
     /// Keys dropped for holding a value that is not finite.
     ///
     /// A NaN or infinite Euler angle cannot become a quaternion — it becomes a
@@ -292,6 +304,12 @@ fn curve_nodes(scene: &Scene, report: &mut AnimationReport) -> HashMap<i64, Curv
             times.truncate(keep);
             values.truncate(keep);
         }
+        // Cap here, before anything downstream is sized from the key count.
+        if times.len() > MAX_KEYS_PER_CURVE {
+            report.curves_over_key_limit += 1;
+            times.truncate(MAX_KEYS_PER_CURVE);
+            values.truncate(MAX_KEYS_PER_CURVE);
+        }
 
         // The connection's property name carries the axis: `d|X`, `d|Y`, `d|Z`.
         let parent = scene.links.get(&curve.id).and_then(|l| l.parents.first());
@@ -413,20 +431,33 @@ fn vector_track(
     let mut values = Vec::with_capacity(times.len() * 3);
     let mut non_finite = 0usize;
 
+    // One forward cursor per axis rather than a search per key. The merged
+    // array is the sorted union of all three axes' times, so each axis's own
+    // times appear in it in order and a single pass finds them all — turning
+    // what was quadratic in the key count into linear. At the reference rig's
+    // 7844 keys the difference was immaterial, but the count comes from the
+    // file, and a quadratic walk over a million keys is a hang, not a delay.
+    let mut cursor = [0usize; 3];
     for &time in &times {
-        for (curve, previous) in node.axes.iter().zip(previous.iter_mut()) {
+        for ((curve, previous), cursor) in node
+            .axes
+            .iter()
+            .zip(previous.iter_mut())
+            .zip(cursor.iter_mut())
+        {
             if let Some(curve) = curve {
-                // ponytail: linear scan per key, so this is quadratic in the
-                // key count. Measured at 0.92ms for the reference rig's 7844
-                // keys, against 26ms for the binary read that precedes it — so
-                // it is not worth a cursor yet. Revisit past ~10k keys per
-                // track, where a forward cursor per axis makes it linear
-                // (the curve's times are a sorted subsequence of the merged
-                // array, so one pass suffices).
-                //
+                // Skip any of this curve's keys that the merged array has
+                // already passed. That cannot happen while the curve's times
+                // are sorted — and they are, in every real file — but a
+                // malformed one must not make the cursor stick.
+                while *cursor < curve.times.len() && curve.times[*cursor] < time {
+                    *cursor += 1;
+                }
                 // Exact equality is right here: the merged array is built from
                 // these very floats, so a key either is in it or is not.
-                if let Some(i) = curve.times.iter().position(|&t| t == time) {
+                if curve.times.get(*cursor) == Some(&time) {
+                    let i = *cursor;
+                    *cursor += 1;
                     match curve.values.get(i) {
                         // A non-finite position or scale would place the bone
                         // nowhere and take the mesh with it. Hold the last
@@ -450,7 +481,11 @@ fn vector_track(
 }
 
 /// Samples a curve at `time`, clamping outside its range.
-fn sample(curve: &Curve, time: f64) -> f64 {
+///
+/// `from` is a forward cursor: the caller walks target times in ascending
+/// order, so each call resumes where the last left off instead of rescanning.
+/// Without that this is O(targets x keys), and both counts come from the file.
+fn sample(curve: &Curve, time: f64, from: &mut usize) -> f64 {
     let (times, values) = (&curve.times, &curve.values);
     let Some(&first) = values.first() else {
         return 0.0;
@@ -461,22 +496,26 @@ fn sample(curve: &Curve, time: f64) -> f64 {
     if time >= *times.last().unwrap_or(&time) {
         return *values.last().unwrap_or(&first);
     }
-    for i in 0..times.len().saturating_sub(1) {
-        if time >= times[i] && time <= times[i + 1] {
-            if times[i] == time {
-                return values[i];
-            }
-            let span = times[i + 1] - times[i];
-            let alpha = if span == 0.0 {
-                0.0
-            } else {
-                (time - times[i]) / span
-            };
-            let (a, b) = (values[i], values.get(i + 1).copied().unwrap_or(values[i]));
-            return a * (1.0 - alpha) + b * alpha;
-        }
+    // Advance to the last key at or before `time`. A malformed curve whose
+    // times are not sorted would leave the cursor early rather than looping.
+    while *from + 1 < times.len() && times[*from + 1] <= time {
+        *from += 1;
     }
-    first
+    let i = *from;
+    if times[i] == time {
+        return values[i];
+    }
+    let Some(&next) = times.get(i + 1) else {
+        return values[i];
+    };
+    let span = next - times[i];
+    let alpha = if span == 0.0 {
+        0.0
+    } else {
+        (time - times[i]) / span
+    };
+    let (a, b) = (values[i], values.get(i + 1).copied().unwrap_or(values[i]));
+    a * (1.0 - alpha) + b * alpha
 }
 
 /// Puts one axis onto the merged time array.
@@ -496,7 +535,11 @@ fn synchronise(curve: Option<&Curve>, times: &[f64], initial: f64) -> Vec<f64> {
     if curve.times == times && curve.values.len() == times.len() {
         return curve.values.clone();
     }
-    times.iter().map(|&t| sample(curve, t)).collect()
+    let mut cursor = 0usize;
+    times
+        .iter()
+        .map(|&t| sample(curve, t, &mut cursor))
+        .collect()
 }
 
 /// Euler angles in degrees to a quaternion, in the given order.

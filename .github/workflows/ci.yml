@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # A deeper nightly fuzz sweep. Every other job here is fast, so letting the
+    # whole workflow run costs little and keeps the trigger in one place.
+    - cron: '0 3 * * *'
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,6 +46,63 @@ jobs:
               || { echo "::error::$c is missing #![forbid(unsafe_code)]"; exit 1; }
           done
           echo "unsafe forbidden in all library crates"
+
+  fuzz:
+    name: Fuzz (FBX read path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-fuzz needs nightly for the sanitizer.
+      # Pinned rather than floating: `Swatinem/rust-cache` keys on the rustc
+      # version, so `@nightly` rebuilds cargo-fuzz from source the first run of
+      # every day, and a broken nightly reds the job for reasons of its own.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-29
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/m2m-io/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Seed the corpus
+        # references/ is gitignored, so CI seeds from the committed rig and the
+        # hand-written ASCII seeds only.
+        run: crates/m2m-io/fuzz/seed.sh
+      - name: Fuzz
+        working-directory: crates/m2m-io/fuzz
+        # 60s per target on a PR, half an hour on the nightly schedule
+        # (memory/test.md §5). -rss_limit_mb turns runaway allocation into a
+        # failure instead of a killed runner, and -timeout turns a hang into
+        # one instead of a six-hour job. -max_len matters more than it looks:
+        # without it libFuzzer adopts the largest seed as its cap, and the
+        # 2.1 MB reference rig would make every generated input megabyte-scale
+        # under ASan, spending the whole budget on a handful of slow runs.
+        run: |
+          seconds=${{ github.event_name == 'schedule' && '1800' || '60' }}
+          # Run every target even if one crashes, then fail. Under the default
+          # `bash -e` the first failure aborted the step, so a crash in
+          # fbx_binary meant the other two never ran that night — the least
+          # helpful moment to stop looking.
+          failed=''
+          for target in fbx_binary fbx_text fbx_pipeline; do
+            echo "::group::$target"
+            cargo fuzz run "$target" -- \
+              -max_total_time="$seconds" -rss_limit_mb=2048 -timeout=10 \
+              -max_len=65536 \
+              || failed="$failed $target"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "crashes in:$failed"
+            exit 1
+          fi
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: crates/m2m-io/fuzz/artifacts/
+          if-no-files-found: ignore
 
   rust:
     name: Rust ${{ matrix.job }}

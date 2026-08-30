@@ -1,0 +1,56 @@
+FBXVersion: 7400
+Objects:  {
+	Geometry: 9, "Geometry::Body", "Mesh" {
+		Vertices: *12 {
+			a: 0,0,0,1,0,0,1,1,0,0,1,0
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+		LayerElementNormal: 0 {
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *12 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1
+			}
+		}
+		LayerElementUV: 0 {
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *4 {
+				a: 0,0,1,1
+			}
+			UVIndex: *4 {
+				a: 0,1,1,0
+			}
+		}
+	}
+	Model: 7, "Model::Hips", "LimbNode" {
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,10,0
+			P: "GeometricScaling", "Vector3D", "Vector", "",1,1,1
+		}
+	}
+	Deformer: 20, "Deformer::skin", "Skin" {
+	}
+	Deformer: 30, "SubDeformer::cluster", "Cluster" {
+		Indexes: *4 {
+			a: 0,1,2,3
+		}
+		Weights: *4 {
+			a: 1,1,0.5,0.5
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,-10,0,1
+		}
+	}
+}
+Connections:  {
+	C: "OO",9,7
+	C: "OO",20,9
+	C: "OO",30,20
+	C: "OO",7,30
+}

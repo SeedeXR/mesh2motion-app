@@ -50,7 +50,10 @@ If `handover_session.md` says something merged and `git log` disagrees, **git wi
 
 ## 5. Disk guard (hard constraint)
 
-The dev machine has **~34 GB free**. Rust `target/` grows without bound across incremental builds.
+The dev machine has **~15 GB free** on a 460 GB disk that is 97% full — *measured 2026-08-30,
+down from the ~34 GB this file claimed since session 001. Re-measure it, do not trust this line.*
+Rust `target/` grows without bound across incremental builds, and `crates/m2m-io/fuzz/` adds its
+own `target/` (~220 MB) and `corpus/` (~330 MB after a few runs).
 
 ```bash
 # run at session start AND before any full rebuild
@@ -58,6 +61,12 @@ SZ=$(du -sm target 2>/dev/null | cut -f1); [ "${SZ:-0}" -gt 8000 ] && cargo clea
 ```
 
 Threshold: **8 GB**. Over it, `cargo clean` and recompile. Never let `target/` push free space below 10 GB.
+
+The fuzz corpus grows every run and is gitignored, so it is free to delete:
+
+```bash
+rm -rf crates/m2m-io/fuzz/corpus crates/m2m-io/fuzz/target   # regenerate with fuzz/seed.sh
+```
 
 ## 6. Session exit checklist
 

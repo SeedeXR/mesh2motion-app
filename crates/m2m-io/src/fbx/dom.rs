@@ -130,6 +130,33 @@ impl Object {
     }
 }
 
+/// What building the scene had to drop.
+///
+/// Both fields describe the FILE, not an internal invariant. They were
+/// `debug_assert!`s until a fuzzer reached them: an assertion about untrusted
+/// content is a panic waiting for the right bytes, and it fired on a document
+/// whose `Objects` block held a child with no numeric id. Release builds
+/// compiled the checks out, so the whole release test suite passed over them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SceneReport {
+    /// `Objects` children with no numeric id.
+    ///
+    /// Nothing can connect to them, so they are dropped — but silently losing
+    /// a mesh or a bone is exactly what the counters exist to prevent.
+    pub objects_without_id: usize,
+    /// Additional `Objects` roots beyond the first.
+    ///
+    /// Their children are read too — dropping them was a silent loss — but a
+    /// file with more than one is unusual enough to report.
+    pub extra_object_roots: usize,
+    /// Objects whose id was already taken; the later one wins.
+    ///
+    /// The legacy keys objects per kind (`Objects.Model[id]`) so it keeps both.
+    /// Flat keying is the right shape for an id-keyed connection graph, but it
+    /// cannot hold two, and which one survives is arbitrary.
+    pub duplicate_object_ids: usize,
+}
+
 /// An FBX document with its objects and relationships resolved.
 #[derive(Debug, Clone, Default)]
 pub struct Scene {
@@ -139,6 +166,8 @@ pub struct Scene {
     pub objects: HashMap<i64, Object>,
     /// Connections by object id.
     pub links: HashMap<i64, Links>,
+    /// What had to be dropped.
+    pub report: SceneReport,
 }
 
 impl Scene {
@@ -154,10 +183,13 @@ impl Scene {
         // lifetime of the scene — roughly doubling peak memory on a large mesh,
         // since the document is normally still alive alongside it.
         let links = collect_links(&doc);
+        let version = doc.version;
+        let (objects, report) = collect_objects(doc);
         Self {
-            version: doc.version,
-            objects: collect_objects(doc),
+            version,
+            objects,
             links,
+            report,
         }
     }
 
@@ -212,14 +244,27 @@ impl Scene {
 }
 
 /// Indexes every node under `Objects` by its id.
-fn collect_objects(doc: FbxDocument) -> HashMap<i64, Object> {
+fn collect_objects(doc: FbxDocument) -> (HashMap<i64, Object>, SceneReport) {
     let mut out = HashMap::new();
-    let Some(objects) = doc.roots.into_iter().find(|r| r.name == "Objects") else {
-        return out;
-    };
+    let mut report = SceneReport::default();
+    // EVERY `Objects` root, not just the first. A well-formed file has one,
+    // but `find` silently discarded a second one whole — with the report
+    // reading all-zero, which is precisely the loss these counters exist to
+    // make visible.
+    let objects: Vec<FbxNode> = doc
+        .roots
+        .into_iter()
+        .filter(|r| r.name == "Objects")
+        .collect();
+    if objects.len() > 1 {
+        report.extra_object_roots = objects.len() - 1;
+    }
+    if objects.is_empty() {
+        return (out, report);
+    }
 
     let mut skipped = 0usize;
-    for node in objects.children {
+    for node in objects.into_iter().flat_map(|o| o.children) {
         // Object attributes are the first three properties: id, name, subclass.
         let Some(id) = node.properties.first().and_then(FbxProperty::as_i64) else {
             // FBX 6.x-style objects have no numeric id. Counted rather than
@@ -256,21 +301,15 @@ fn collect_objects(doc: FbxDocument) -> HashMap<i64, Object> {
                 node,
             },
         ) {
-            // The legacy keys objects per kind (`Objects.Model[id]`), so an id
-            // shared between two kinds keeps both. Flat keying is the right
-            // shape for a connection graph, which is also id-keyed, but it must
-            // not lose an object without saying so.
-            let replaced: &Object = &existing;
-            debug_assert!(
-                false,
-                "duplicate object id {id}: {} replaced by {}",
-                replaced.kind, out[&id].kind
-            );
+            // Counted, not asserted: a file may legitimately be malformed, and
+            // an id shared between two kinds is the file's problem, not ours.
+            let _replaced: Object = existing;
+            report.duplicate_object_ids += 1;
         }
     }
 
-    debug_assert_eq!(skipped, 0, "{skipped} Objects children had no numeric id");
-    out
+    report.objects_without_id = skipped;
+    (out, report)
 }
 
 /// Flattens a node's `Properties70` block into named, typed values.

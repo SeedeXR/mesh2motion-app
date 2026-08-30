@@ -7,7 +7,7 @@
 //! side separately and hoping.
 
 use m2m_io::fbx::binary::{self, FbxDocument, FbxNode, FbxProperty};
-use m2m_io::fbx::dom::{Scene, TypedProperty};
+use m2m_io::fbx::dom::{Scene, SceneReport, TypedProperty};
 use m2m_io::fbx::text;
 
 const MIXAMO: &[u8] =
@@ -434,4 +434,66 @@ fn a_document_without_objects_yields_an_empty_scene() {
     assert!(scene.links.is_empty());
     assert_eq!(scene.objects_of_kind("Model").len(), 0);
     assert_eq!(scene.children_of(1, None), Vec::<i64>::new());
+}
+
+#[test]
+fn objects_the_scene_cannot_key_are_counted_rather_than_asserted_away() {
+    // Found by `cargo-fuzz` (P2-8) against `fbx_pipeline`, on a mutation of an
+    // ASCII seed that put control bytes inside an `Objects` block.
+    //
+    // Both conditions used to be `debug_assert!`s. That made them panics on
+    // untrusted file content in every debug build — including plain
+    // `cargo test` — while the release test suite compiled them out and passed
+    // straight over. An assertion is for an invariant this code controls; what
+    // a file contains is not one.
+    //
+    // These assertions are on the counters, not on "it did not panic", so they
+    // are meaningful in release too.
+    let no_id = text::parse(concat!(
+        "FBXVersion: 7400\n",
+        "Objects:  {\n",
+        // Two children whose first attribute is not a number, so neither can
+        // be keyed or connected to.
+        "\tModel: \"notanumber\", \"Model::x\", \"LimbNode\" {\n",
+        "\t}\n",
+        "\tGeometry: , \"Geometry::y\", \"Mesh\" {\n",
+        "\t}\n",
+        // ...and one that is fine, so the block is not wholly rejected.
+        "\tModel: 7, \"Model::good\", \"LimbNode\" {\n",
+        "\t}\n",
+        "}\n",
+    ))
+    .expect("ascii parses");
+    let scene = Scene::from_document(no_id);
+    assert_eq!(
+        scene.report.objects_without_id, 2,
+        "the two unkeyable nodes"
+    );
+    assert_eq!(scene.objects.len(), 1, "the good one survives");
+    assert!(scene.object(7).is_some());
+
+    // A second object claiming an id already taken. Flat id keying cannot hold
+    // both, and which one wins is arbitrary — so it has to be reported.
+    let duplicate = text::parse(concat!(
+        "FBXVersion: 7400\n",
+        "Objects:  {\n",
+        "\tModel: 7, \"Model::first\", \"LimbNode\" {\n",
+        "\t}\n",
+        "\tGeometry: 7, \"Geometry::second\", \"Mesh\" {\n",
+        "\t}\n",
+        "}\n",
+    ))
+    .expect("ascii parses");
+    let scene = Scene::from_document(duplicate);
+    assert_eq!(scene.report.duplicate_object_ids, 1);
+    assert_eq!(scene.objects.len(), 1, "only one can be keyed at id 7");
+
+    // And a clean file reports nothing, so the counters stay honest.
+    let clean = Scene::from_document(
+        binary::parse(include_bytes!(
+            "../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx"
+        ))
+        .expect("parses"),
+    );
+    assert_eq!(clean.report, SceneReport::default(), "the reference rig");
 }
