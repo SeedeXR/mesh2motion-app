@@ -11,3 +11,4 @@
 
 pub mod fbx;
 pub mod glb;
+pub mod import;

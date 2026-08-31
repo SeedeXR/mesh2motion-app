@@ -27,3 +27,31 @@ export async function reportStartup(diagnostics: string): Promise<void> {
 export function isDesktop(): boolean {
   return '__TAURI_INTERNALS__' in window
 }
+
+/** What reading a model file found. Mirrors `m2m_io::import::Import`. */
+export interface Import {
+  readonly format: 'Fbx' | 'Glb'
+  readonly meshes: number
+  /** Bone names, parents before children. Empty means the file has no skeleton. */
+  readonly bones: readonly string[]
+  readonly skinned_meshes: number
+  readonly clips: readonly string[]
+  /** Vertices (FBX) or primitives (glTF) whose influences past the fourth are dropped. */
+  readonly over_influence_limit: number
+}
+
+export interface ImportedFile {
+  readonly name: string
+  readonly import: Import
+}
+
+/**
+ * Opens the native file picker and reports what the chosen model contains.
+ *
+ * Resolves to `null` when the user cancels. Nothing is stripped — see O9 in
+ * `memory/todo.md`: an existing skeleton is kept and reported, never silently
+ * discarded the way the legacy app's cleanup step did.
+ */
+export async function importModel(): Promise<ImportedFile | null> {
+  return await invoke<ImportedFile | null>('import_model')
+}

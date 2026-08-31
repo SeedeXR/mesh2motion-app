@@ -2648,3 +2648,65 @@ inverted · rotations left un-normalised.
 
 **P3-0 / O9 in the app** is the last P3 item, still blocked on `app/` having any
 import pipeline. Otherwise **P4**: the Blender bridge, performance, release.
+
+---
+
+## Session 039 — 2026-09-01 — P3-0 / O9: an existing rig survives import
+
+**HEAD in: `ed1e102` (CI green, 7/7). Out: P3-0 done, the last unchecked P3 core item.**
+
+### The decision at the top of the session
+`app/src` was still a 254-line scaffold with no import path, which is what had
+blocked P3-0 since 2026-08-30. The choice was (a) build that seam or (b) skip to
+P4. Took (a): O9 is a direct user requirement, and every remaining P3 UI item
+needs a way to get a file into the app, so this is not speculative work.
+
+### What shipped
+- `crates/m2m-io/src/import.rs` — `inspect(bytes)` → `Import { format, meshes,
+  bones, skinned_meshes, clips, over_influence_limit }`, plus `already_rigged()`.
+  Format comes from the **contents**: `glTF` magic, then binary FBX, then ASCII
+  FBX on valid UTF-8. An extension is a claim the filesystem makes.
+- `src-tauri` `import_model` — picker + inspect. `spawn_blocking`, because
+  `blocking_pick_file` needs the main thread free to pump the event loop.
+- `app/` — the inspector's import panel. Where the legacy warned *"Mesh is
+  already rigged. This workflow drops the existing skeleton"*, this says the
+  skeleton is kept and re-rigging is the user's to choose.
+
+### Three findings worth keeping
+1. **A metric that could not move.** `SkinReport::vertices_over_influence_limit`
+   is written only inside `Skin::bind`, which needs mesh geometry. The report
+   `skin::parse_all` hands back has never been through `bind`, so reading that
+   field — the obvious thing to do, and what the todo's own wording suggested —
+   would have shipped a number permanently pinned at zero. **Check where a field
+   is written before you surface it, not just that it exists.**
+2. **glTF influence sets 1+ were dropped in silence.** `read_joints(0)` only.
+   Now counted as `GlbReport::primitives_over_influence_limit`. Found by reading
+   the reader while looking for something else.
+3. **A test whose premise was false.** `a_joint_shared_between_skins_is_one_bone`
+   asserted 67 bones on `human-interleaved-buffer-mesh.glb` — which has **one**
+   skin and nine mesh nodes pointing at it. The dedupe it claimed to cover was
+   never run. The mutation survived, and the survivor was the test, not the code.
+   Renamed to what it proves, and a real two-skin fixture added by duplicating
+   the skin in the JSON chunk. *Lesson 9 earning its keep again: a survivor is a
+   real gap until proved otherwise — and sometimes the gap is in the fixture.*
+
+### Verification
+- Blender at both ends of `rebuild_rig` on the reference rig: 65 bones, bone
+  names, `bone_parents` and all 65 `bone_rest` entries identical to 4 decimals;
+  meshes 10514/14232 verts; `influences_per_vertex {1: 23117, 2: 1259, 3: 370}`;
+  action `curves=520,keys=76960,range=1.00-148.00` on both sides. **Frame range
+  asserted, not just key counts** (lesson 11).
+- 325 tests, 0 failures, **both** profiles (was 312). fmt and clippy clean.
+- Mutations **8/8 caught**, two of them fixture mutations.
+- Self-reviewed: `/code-review` still 403s with `oauth_org_not_allowed`. The
+  review caught a real one — a filename reaching `innerHTML` unescaped, so a
+  model saved as `<img onerror=...>.glb` would have run as markup. Escaped.
+- **SonarQube not run.** This session touched `app/src` and `src-tauri/src`, so
+  it should have. There is still no token and the admin password is unknown —
+  **ask the user for a token**; do not guess at one.
+
+### Next
+P3-0 was the last unchecked P3 *core* item. What remains is **P4** (Blender
+bridge, performance, release) and the P3 UI series (P3-6 shell, P3-7 viewport,
+P3-8 binary IPC, P3-9..P3-13), plus the research items R-4..R-7. P3-7 is the
+natural follow-on: the import panel reports a model the viewport cannot yet draw.

@@ -213,6 +213,15 @@ pub struct GlbReport {
     pub morph_channels: usize,
     /// Primitives with JOINTS_0 but no WEIGHTS_0, or the reverse.
     pub half_skinned_primitives: usize,
+    /// Primitives declaring JOINTS_1 or beyond, whose influences past the
+    /// fourth are not read.
+    ///
+    /// glTF stores bone influences in sets of four; a vertex needing more than
+    /// four uses JOINTS_1/WEIGHTS_1 as well. This reader takes set 0 only, so
+    /// those extra influences are dropped. Counted rather than silent, because
+    /// dropping an influence changes how the mesh deforms and O9 requires an
+    /// existing rig to survive import intact (`memory/todo.md` P3-0).
+    pub primitives_over_influence_limit: usize,
     /// Triangles dropped for naming a vertex the primitive does not have.
     ///
     /// glTF validation checks that an accessor fits inside its buffer, not that
@@ -679,7 +688,11 @@ where
             // Check every accessor's declared layout before reading it. The
             // spec fixes these, and the `gltf` crate assumes them.
             let mut usable = true;
+            let mut extra_influence_sets = false;
             for (semantic, accessor) in primitive.attributes() {
+                if let gltf::Semantic::Joints(set) = semantic {
+                    extra_influence_sets |= set > 0;
+                }
                 let ok = match semantic {
                     gltf::Semantic::Positions | gltf::Semantic::Normals => accessor_is(
                         &accessor,
@@ -723,6 +736,9 @@ where
             if !usable {
                 report.invalid_accessors += 1;
                 continue;
+            }
+            if extra_influence_sets {
+                report.primitives_over_influence_limit += 1;
             }
 
             let reader = primitive.reader(get_buffer_data.clone());

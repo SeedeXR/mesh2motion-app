@@ -2,8 +2,8 @@ import './ui/tokens.css'
 import './ui/shell.css'
 
 import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
-import { STEPS, type StepDef } from './state/steps'
-import { buildInfo, isDesktop, reportStartup } from './ipc'
+import { STEPS, StepId, type StepDef } from './state/steps'
+import { buildInfo, importModel, isDesktop, reportStartup, type ImportedFile } from './ipc'
 import { detectBackend } from './viewport/backend'
 
 /** Index of the step the user is currently on. */
@@ -11,6 +11,85 @@ import { detectBackend } from './viewport/backend'
 // gate in P3-6. Backwards navigation works; forwards is deliberately absent
 // rather than fake.
 let activeStep = 0
+
+/** The model the user imported, or `null` before they have. */
+let loaded: ImportedFile | null = null
+
+/**
+ * Escapes text bound for `innerHTML`.
+ *
+ * A filename and an error message both carry text this app did not write — a
+ * model saved as `<img onerror=...>.glb` would otherwise run as markup.
+ */
+function escape(text: string): string {
+  const node = document.createElement('span')
+  node.textContent = text
+  return node.innerHTML
+}
+
+/**
+ * What the inspector shows for the current step.
+ *
+ * The import step is the only one with anything to say yet, and what it says is
+ * objective O9: a file that arrives with a skeleton keeps it. The legacy app
+ * warned that it was about to drop your rig; this reports that it kept it.
+ */
+function renderInspector(step: StepDef): string {
+  if (step.id !== StepId.LoadModel) {
+    return '<p style="color:var(--fg-2)">Properties for this step appear here.</p>'
+  }
+
+  const button = '<button id="import" class="action">Import model\u2026</button>'
+  if (loaded === null) {
+    return `${button}
+      <p style="color:var(--fg-2)">GLB or FBX. An existing rig is kept, not replaced.</p>`
+  }
+
+  const model = loaded.import
+  const rigged = model.bones.length > 0
+  const truncated =
+    model.over_influence_limit > 0
+      ? `<p style="color:var(--warn)">${model.over_influence_limit} of them carry more
+           than four bone influences; only the strongest four are kept.</p>`
+      : ''
+
+  return `${button}
+    <p style="color:var(--fg-1)">${escape(loaded.name)} \u00b7 ${model.format === 'Fbx' ? 'FBX' : 'glTF'}</p>
+    <dl class="facts">
+      <dt>Meshes</dt><dd>${model.meshes}${model.skinned_meshes > 0 ? ` (${model.skinned_meshes} skinned)` : ''}</dd>
+      <dt>Bones</dt><dd>${rigged ? model.bones.length : 'none'}</dd>
+      <dt>Clips</dt><dd>${model.clips.length}</dd>
+    </dl>
+    ${
+      rigged
+        ? `<p style="color:var(--fg-1)">This model is already rigged. Its skeleton, weights and
+             ${model.clips.length === 1 ? 'clip are' : 'clips are'} kept \u2014 re-rigging is
+             yours to choose, not the default.</p>`
+        : '<p style="color:var(--fg-2)">No skeleton found. Choose a template in the next step.</p>'
+    }
+    ${truncated}`
+}
+
+/** Runs the import step: pick a file, report what came back. */
+async function runImport(button: HTMLButtonElement): Promise<void> {
+  if (!isDesktop()) {
+    button.textContent = 'Importing needs the desktop app'
+    return
+  }
+  button.disabled = true
+  button.textContent = 'Reading\u2026'
+  try {
+    const picked = await importModel()
+    // A cancelled picker leaves the previous import alone rather than clearing it.
+    if (picked !== null) loaded = picked
+    render()
+  } catch (err) {
+    button.disabled = false
+    button.textContent = 'Import model\u2026'
+    const message = err instanceof Error ? err.message : String(err)
+    button.insertAdjacentHTML('afterend', `<p style="color:var(--err)">${escape(message)}</p>`)
+  }
+}
 
 function renderRail(): string {
   return STEPS.map((step, i) => {
@@ -57,8 +136,8 @@ function render(): void {
         <div class="viewport-empty">
           <i data-lucide="bone" width="40" height="40" stroke-width="1"></i>
           <div>
-            <div style="color:var(--fg-1);font-size:var(--fs-lg)">No model loaded</div>
-            <div>Import a mesh to begin</div>
+            <div style="color:var(--fg-1);font-size:var(--fs-lg)">${loaded === null ? 'No model loaded' : escape(loaded.name)}</div>
+            <div>${loaded === null ? 'Import a mesh to begin' : 'Viewport rendering arrives with the model preview step'}</div>
           </div>
         </div>
         <div class="guidance">${renderGuidance(step)}</div>
@@ -66,7 +145,7 @@ function render(): void {
 
       <aside class="inspector" aria-label="Properties">
         <h2>${step.label}</h2>
-        <p style="color:var(--fg-2)">Properties for this step appear here.</p>
+        ${renderInspector(step)}
       </aside>
 
       <div class="status" role="status">
@@ -78,6 +157,11 @@ function render(): void {
     </div>`
 
   createIcons({ icons: { Bone, Upload, Link, Play, Download, Move3d } })
+
+  const importButton = app.querySelector<HTMLButtonElement>('#import')
+  if (importButton !== null) {
+    importButton.addEventListener('click', () => void runImport(importButton))
+  }
 
   app.querySelectorAll<HTMLButtonElement>('.step').forEach((btn) => {
     btn.addEventListener('click', () => {

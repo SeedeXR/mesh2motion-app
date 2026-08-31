@@ -146,3 +146,31 @@ body {
 }
 
 .status .spacer { margin-left: auto; }
+
+/* Inspector: an action the user takes, as opposed to a step they navigate to. */
+.action {
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg-0);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.action:hover:not(:disabled) { background: var(--accent-dim); }
+.action:disabled { color: var(--fg-dis); cursor: progress; }
+.action:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* Name/value pairs describing an imported file. */
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-1) var(--s-3);
+  margin: var(--s-3) 0;
+}
+
+.facts dt { color: var(--fg-2); }
+.facts dd { margin: 0; color: var(--fg-1); }
