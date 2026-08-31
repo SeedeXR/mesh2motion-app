@@ -12,7 +12,7 @@ child list, and an array whose declared byte length is wrong). It also caught
 the object-name truncation that made our first encoder output unopenable.
 
     blender --background --factory-startup \
-        --python tools/blender-fbx-import-check.py -- <file.fbx> [report.json]
+        --python tools/blender-fbx-import-check.py -- <file.fbx|file.glb> [report.json]
 
 Prints one `BLENDER_JSON {...}` line, and writes the same JSON to
 `report.json` when a second argument is given. **Prefer the file.** Blender
@@ -47,7 +47,18 @@ def main() -> int:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     out = {"file": os.path.basename(path)}
     try:
-        bpy.ops.import_scene.fbx(filepath=path)
+        # Dispatch on extension so the same report can be produced for both
+        # formats, which is what makes the FBX and glTF gates comparable.
+        if path.lower().endswith((".glb", ".gltf")):
+            # disable_bone_shape stops the importer adding an icosphere as a
+            # bone display widget (blender/imp/node.py calls
+            # primitive_ico_sphere_add). It is a viewport gizmo, not model
+            # data, but it lands in bpy.data.objects as a real MESH and would
+            # otherwise add a phantom 42-vertex, 80-polygon mesh to every
+            # skinned file this compares.
+            bpy.ops.import_scene.gltf(filepath=path, disable_bone_shape=True)
+        else:
+            bpy.ops.import_scene.fbx(filepath=path)
     except Exception as error:  # noqa: BLE001 - report whatever Blender raised
         out["imported"] = False
         out["error"] = f"{type(error).__name__}: {error}"

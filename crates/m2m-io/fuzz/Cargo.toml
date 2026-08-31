@@ -42,3 +42,10 @@ path = "fuzz_targets/fbx_pipeline.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "glb"
+path = "fuzz_targets/glb.rs"
+test = false
+doc = false
+bench = false

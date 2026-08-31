@@ -155,3 +155,61 @@ rejection.
 - [ ] SonarQube gate green
 - [ ] Baseline comparison (§9) recorded if the solver changed
 - [ ] CI observed green — not assumed
+
+## 6. Fuzzing a format you did not write the parser for
+
+*Added session 025, after the glTF reader.*
+
+The `glb` fuzz target found four defects in five minutes. **Three were in the
+`gltf` crate, not in our code.** That is the finding worth keeping: adding a
+well-maintained parser as a dependency moves the trust boundary, it does not
+remove it. Everything reachable from file bytes is still our problem, because
+our process is the one that dies.
+
+What they were, and what each teaches:
+
+| Where | Trigger | Fires in |
+|---|---|---|
+| ours | index accessor names a vertex that does not exist | any build |
+| `gltf-json/src/mesh.rs:151` | `root.accessors[i]` inside the validation hook, before validating `i` | **release** |
+| `gltf/src/binary.rs:252` | `header.length as usize - 12` underflows below 12 | debug |
+| `gltf/src/accessor/util.rs:371` | `debug_assert_eq!` on the accessor's declared size; `stride * (count - 1)` at `count == 0` | debug |
+
+- **`cargo test` is a debug build.** A `debug_assert!` on file content is a CI
+  failure waiting for the right input, not a harmless annotation. Session 019
+  learned this about our own `debug_assert!`s in `Scene::from_document`; it
+  applies identically to a dependency's.
+- **A validator that dereferences before it validates is not a validator.** The
+  release panic is the serious one: it turns "open a malformed model" into
+  "the app exits". Guard indices *before* handing bytes to the library.
+- **Fuzz the layers, not just the entry point.** The target drives the whole
+  read and then asserts the invariants callers actually rely on — every triangle
+  index is a real vertex, every joint is a real node. The first crash was one of
+  those assertions, not a panic: the reader returned a document that was wrong
+  rather than crashing. A target that only checked "did not panic" would have
+  passed it.
+- **Validation must reject nothing legitimate.** After adding three guards,
+  every one of the 55 real `.glb` files in the repo still reads with an all-zero
+  report. That check is as important as the fuzzing: a guard that is too strict
+  fails closed on real user files, which is its own bug. Gating `NORMAL` on
+  VEC3/f32 was exactly that mistake — glTF allows normalized byte and short
+  there, and the reader does not read normals at all.
+
+### Comparing against an independent reader across formats
+
+`tools/blender-fbx-import-check.py` now imports `.glb` as well as `.fbx`, so one
+report shape covers both, and `tools/glb-blender-diff.sh` sweeps the corpus.
+Two things made the comparison lie before it told the truth:
+
+1. **Blender's glTF importer fabricates geometry.** It adds an icosphere as a
+   bone display widget, which appears in `bpy.data.objects` as a real MESH —
+   a phantom 42-vertex, 80-polygon mesh on every skinned file, including one
+   whose JSON declares no meshes at all. `disable_bone_shape=True`.
+2. **Count the same thing on both sides.** A glTF mesh holds one primitive per
+   material and importers merge them, so primitives are not mesh objects
+   (`human-jay.glb`: 22 primitives, 1 mesh). Four files looked wrong until the
+   comparison was fixed, and the reader was right the whole time.
+
+Both cost real time, and both would have been read as "our reader is broken".
+When an independent reader disagrees, **find out what it is actually counting
+before changing anything.**

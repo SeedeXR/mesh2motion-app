@@ -10,3 +10,4 @@
 #![warn(missing_docs)]
 
 pub mod fbx;
+pub mod glb;

@@ -84,7 +84,7 @@ jobs:
           # fbx_binary meant the other two never ran that night — the least
           # helpful moment to stop looking.
           failed=''
-          for target in fbx_binary fbx_text fbx_pipeline; do
+          for target in fbx_binary fbx_text fbx_pipeline glb; do
             echo "::group::$target"
             cargo fuzz run "$target" -- \
               -max_total_time="$seconds" -rss_limit_mb=2048 -timeout=10 \

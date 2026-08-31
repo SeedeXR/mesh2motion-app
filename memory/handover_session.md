@@ -1655,3 +1655,107 @@ CI, so anything only Blender can catch needs a Rust assertion beside it.
 legacy's `strip_out_all_unecessary_model_data`, which converts `SkinnedMesh` →
 `Mesh` and deletes `skinIndex`/`skinWeight`. The IO layer can now preserve a rig
 end to end, so P3-0 is unblocked.
+
+## Session 025 — P2-7 glTF/GLB read
+
+**Outcome: the glTF reader is done and agrees with Blender on all 55 `.glb`
+files in the repo** — meshes, bones, vertices, triangles, weighted vertices,
+and animation. `crates/m2m-io/src/glb/`, via `gltf 1.4.1`.
+
+CI was confirmed green for 289d3cb (7/7) before starting.
+
+### Why the reader refuses external buffers
+
+`gltf`'s `import` feature resolves buffer and image URIs — relative paths,
+absolute paths, `http://`, `data:` — out of the file being opened. That turns
+"open this model" into "let this file choose what to read off the disk and the
+network". Added with `default-features = false, features = ["utils", "names"]`
+instead; the reader resolves the embedded GLB BIN chunk and nothing else, and
+returns `ExternalBuffer` for anything pointing outward. Every file this app ships
+is a self-contained `.glb`.
+
+### Fuzzing found four defects in five minutes. Three were in the dependency.
+
+| Where | Trigger | Fires in |
+|---|---|---|
+| ours | index accessor names a vertex that does not exist | any build |
+| `gltf-json/src/mesh.rs:151` | `root.accessors[i]` inside the validation hook, before validating `i` | **release** |
+| `gltf/src/binary.rs:252` | `header.length as usize - 12` underflows below 12 | debug |
+| `gltf/src/accessor/util.rs:371` | `debug_assert_eq!` on the accessor's declared size; `stride * (count - 1)` at `count == 0` | debug |
+
+- The release one matters most: it turns "open a malformed model" into "the app
+  exits". Fixed by `check_indices`, a pre-flight over every index reference in
+  the JSON, run before the crate sees the bytes.
+- The debug ones are reachable in CI, because **`cargo test` is a debug build**.
+- Ours was not a panic at all — the reader *returned* a document whose triangle
+  indices pointed past the vertex array. glTF validation checks that an accessor
+  fits its buffer, not that the values inside an index accessor are vertices that
+  exist, so a "valid" file can say *draw vertex 49233* of a 995-vertex mesh. The
+  fuzz target caught it only because it asserts the invariants callers rely on,
+  not merely "did not panic".
+
+> **Adding a well-maintained parser moves the trust boundary; it does not remove
+> it.** Session 019 learned "an assertion is for an invariant this code controls,
+> and what a file contains is never one" about our own `debug_assert!`s. It
+> applies identically to a dependency's, and has to be checked at the boundary of
+> every parser you depend on.
+
+7.4M fuzz runs clean after the fixes. All 55 real files still read with an
+all-zero report — a guard that is too strict fails closed on real user files,
+which is its own bug. Gating `NORMAL` on VEC3/f32 was that mistake: glTF allows
+normalized byte and short there, and the reader never reads normals.
+
+### Two Blender gotchas that looked like reader bugs and were not
+
+1. **The importer fabricates geometry.** It adds an icosphere as a bone display
+   widget (`blender/imp/node.py` calls `primitive_ico_sphere_add`), which lands
+   in `bpy.data.objects` as a real MESH — a phantom 42-vertex, 80-polygon mesh on
+   every skinned file. `rig-human.glb`, whose JSON declares **zero** meshes,
+   imported as "1 mesh". Pass `disable_bone_shape=True`.
+2. **A glTF mesh is not a mesh object.** One mesh holds one primitive per
+   material and importers merge them — `human-jay.glb` is 1 mesh of 22
+   primitives. Four files "disagreed" until the comparison stopped equating the
+   two. `Primitive::mesh` and `Document::mesh_count()` exist for this.
+
+Both would have read as "our reader is broken". **When an independent reader
+disagrees, find out what it is actually counting before changing anything.**
+
+### Animation, related correctly
+
+glTF has one channel per node+path; Blender one F-curve per *component*. So
+66 bones x (3 T + 4 quaternion + 3 S) = 660 curves per 198 channels, and
+Blender's key total is the stride-weighted one — `Chest_Open`: 198 channels,
+1,356 keys, **5,128 component keys**, which is exactly Blender's 5,128. Duration
+matches across all 87 clips: 1.375 s x 24 fps = frame 33. The time axis is
+asserted, per session 024's lesson.
+
+### Gate coverage, measured (9 mutations, 9 caught)
+
+| mutation | caught by |
+|---|---|
+| ignore the index buffer | `interleaved_attributes_read_the_same_as_blender_reads_them` |
+| `mesh_count` returns primitive count | `many_primitives_can_belong_to_one_mesh` |
+| accept external buffers | both refusal tests |
+| duration left at zero | `animation_matches_blender_on_channels_keys_and_time` |
+| quaternion stride read as 3 | same |
+| joints read from set 1 | interleaved test |
+| skip the header length check | `a_glb_length_shorter_than_its_header_is_rejected` |
+| skip the index preflight | both index-range tests |
+| accept any accessor type | `an_accessor_of_the_wrong_type_is_skipped_not_read` |
+
+### State
+
+- 14 new tests in `crates/m2m-io/tests/glb_read.rs`, passing in **both** debug
+  and release. clippy `-D warnings` clean, fmt clean.
+- `tools/glb-blender-diff.sh` re-runs the differential sweep; `glb` added to the
+  fuzz targets, `seed.sh` and the CI fuzz matrix.
+- `tools/blender-fbx-import-check.py` now imports `.glb` as well as `.fbx`, so
+  one report shape serves both formats.
+
+### Next
+
+**P2-7 write** (GLB export) — the reader plus its Blender gate is the
+round-trip target, the same shape that worked for FBX. Then **P2-10** (Maya) and
+**P3-0/O9 in the app**, which is still blocked on there being an import pipeline
+in `app/` at all: `app/src` is currently `main.ts`, `backend.ts`, `steps.ts`,
+`ipc/index.ts` and two CSS files, with no model loading to invert.
