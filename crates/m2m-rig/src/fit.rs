@@ -557,5 +557,88 @@ pub fn fit_limbs(
 ) {
     for chain in template.of_kind(crate::template::ChainKind::Limb) {
         fit_limb(fitted, mesh, grid, chain);
+        refine_limb_joints(fitted, mesh, grid, chain);
+    }
+}
+
+/// Pulls a limb's intermediate joints onto the middle of the limb the mesh has.
+///
+/// [`fit_limb`] rotates a chain rigidly, so it gets the limb's **direction and
+/// reach** right and keeps the template's straight-line arrangement of joints
+/// along the way. A real arm is not straight — it bends at the elbow, and a mesh
+/// modelled in an A-pose bends differently from a T-posed template. That is what
+/// the joints still outside the mesh are: `upperarm` and `lowerarm` on every
+/// human body, while the clavicle at one end and the hand at the other are fine.
+///
+/// The legacy has no algorithm to borrow here. Its `RigModelVariations.ts`
+/// carries a hand-authored `expandArms` angle per model, only `bunny` sets one
+/// (-30 degrees), and it is used to pose the marketing page rather than to rig
+/// anything. Notably `bunny` is also the worst body measured here, so the number
+/// was real — it was just entered by a person.
+///
+/// A joint that is outside is moved to the centroid of the mesh near it,
+/// gathered within a radius of the joint so the torso cannot pull an upper arm
+/// inwards. A joint already inside is left where it is — a centroid is the
+/// middle of the *nearby mesh*, which is not where a joint belongs when the
+/// template already had it right.
+///
+/// **Endpoints are included**, which the first version of this did not do. The
+/// reasoning for excluding them was that an attachment belongs to the body and a
+/// tip was just aimed at the end of the limb, and it is wrong: on `human-jay`
+/// and `human-bunny` the endpoints were the *only* joints still outside, 2 and 4
+/// of them, and including them takes both bodies to zero. The guard already
+/// protects the good cases — an attachment the body fit placed correctly and a
+/// tip aimed at a surface vertex are both inside, so neither moves.
+pub fn refine_limb_joints(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    grid: &VoxelGrid,
+    chain: &crate::template::Chain,
+) {
+    if chain.bones.len() < 3 {
+        return;
+    }
+    let (Some(first), Some(last)) = (chain.bones.first(), chain.bones.last()) else {
+        return;
+    };
+    let (Some(attach), Some(tip)) = (fitted.position_of(first), fitted.position_of(last)) else {
+        return;
+    };
+    let reach = (tip - attach).length();
+    if reach <= f32::EPSILON {
+        return;
+    }
+    // Wide enough to contain a limb's cross-section, tight enough that the
+    // torso is not swept up along with the shoulder.
+    let radius = reach * 0.25;
+
+    for bone in &chain.bones {
+        let Some(index) = fitted.bones.iter().position(|b| b == bone) else {
+            continue;
+        };
+        let at = fitted.positions[index];
+        // Only a joint that is actually outside gets moved. Measured: pulling
+        // every intermediate joint to a local centroid helps the bodies that
+        // need it (bunny 8 -> 4 joints outside, sophia 3 -> 1, bird 4 -> 0) and
+        // hurts the ones that do not (fox 0 -> 5, horse 0 -> 6, human 5 -> 6),
+        // because a centroid is the middle of the *mesh nearby*, which is not
+        // where a joint belongs when the template already had it right.
+        if matches!(
+            grid.state(grid.coord_of(at)),
+            Some(VoxelState::Interior | VoxelState::Surface)
+        ) {
+            continue;
+        }
+        let mut sum = Vec3::ZERO;
+        let mut count = 0usize;
+        for &vertex in &mesh.positions {
+            if vertex.distance_squared(at) <= radius * radius {
+                sum += vertex;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            fitted.positions[index] = sum / count as f32;
+        }
     }
 }

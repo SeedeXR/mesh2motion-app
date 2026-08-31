@@ -2197,3 +2197,67 @@ not have. Budgets are pinned per model (fox 0, horse 0, sophia 3, bird 4, human
 
 no skip for already-placed limbs · target by distance instead of reach along the
 axis · limb fitting made a no-op · cone widened back to 60°.
+
+## Session 032 — A-pose / T-pose (P3-6)
+
+CI confirmed green for d8bbee0 before starting.
+
+### Result
+
+`refine_limb_joints` pulls a limb joint that is outside the mesh onto the
+centroid of the mesh near it. **Limb joints outside fell from 26 of 170 to 2 of
+170.** Five of seven bodies are exactly zero.
+
+| model | before | after |
+|---|---|---|
+| human | 5 | 1 |
+| jay | 6 | **0** |
+| bunny | 8 | **0** |
+| sophia | 3 | 1 |
+| bird | 4 | **0** |
+| fox / horse | 0 | 0 |
+
+Across three sessions: 53 → 26 → 2.
+
+### The legacy had nothing to port
+
+`RigModelVariations.ts` carries a hand-authored `expandArms` angle per model.
+Only `bunny` sets one (−30°), and it poses the marketing page rather than
+rigging anything. Bunny was also the worst body measured here — the number was
+real, it was just entered by a person rather than derived.
+
+### The same guard, twice
+
+Pulling *every* intermediate joint to a local centroid helps the bodies that
+need it and wrecks the ones that do not: fox 0→5, horse 0→6, human 5→6. A
+centroid is the middle of the nearby mesh, which is not where a joint belongs
+when the template already had it right. Only moving joints that are **outside**
+makes it monotone — exactly the guard `fit_limb` already needed.
+
+### Three process failures worth keeping
+
+1. **A scripted edit that silently does not apply looks exactly like a passing
+   test.** My budget-lowering edit never matched, because `cargo fmt` had
+   reflowed the tuples across several lines. The budgets stayed at the old
+   values, and two mutations then "survived" that were really being measured
+   against stale numbers. **Every scripted edit must assert its anchor matched**
+   — this is the third time in this project a `replace` has silently no-opped
+   after `cargo fmt` reformatted the target.
+2. **Verify the mutation landed before believing the survivor.** Re-running with
+   an explicit anchor check and an md5 comparison turned two false survivors
+   into two real catches.
+3. **A survivor can be an improvement you are declining.** The one genuine
+   survivor — refining endpoints as well as intermediate joints — was not a gap
+   in the tests but a better algorithm: it took jay and bunny to zero. Mutation
+   testing found a feature, not just a hole.
+
+### Gate coverage (4 mutations, 4 caught)
+
+refinement removed · refine every joint rather than only those outside · gather
+radius widened to 1.5x the limb · endpoints excluded again.
+
+### What remains
+
+Two joints, one each on `model-human` and `human-sophia` — the honest residue of
+a rigid chain swung onto an arm that bends differently. Budgets pinned at fox 0,
+horse 0, bird 0, jay 0, bunny 0, human 1, sophia 1.

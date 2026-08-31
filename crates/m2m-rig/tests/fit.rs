@@ -683,7 +683,21 @@ fn report_limb_placement() {
             "{model:44} limb joints {outside:3}/{total:3} outside, worst leg tip {:.1}% off the ground",
             worst_ground * 100.0
         );
+        let mut endpoints_outside = 0;
         for chain in manifest_data.of_kind(ChainKind::Limb) {
+            for bone in [chain.bones.first(), chain.bones.last()]
+                .into_iter()
+                .flatten()
+            {
+                if fitted.position_of(bone).is_none_or(|at| {
+                    !matches!(
+                        grid.state(grid.coord_of(at)),
+                        Some(VoxelState::Interior | VoxelState::Surface)
+                    )
+                }) {
+                    endpoints_outside += 1;
+                }
+            }
             let bad: Vec<&str> = chain
                 .bones
                 .iter()
@@ -701,6 +715,7 @@ fn report_limb_placement() {
                 println!("      {} ({:?}): {bad:?}", chain.name, chain.role);
             }
         }
+        println!("      endpoints outside: {endpoints_outside}");
     }
 }
 
@@ -803,14 +818,14 @@ fn limb_fitting_never_makes_a_body_worse() {
 
 /// The measured state of limb placement, pinned so it can only improve.
 ///
-/// These are **not** zero, and the reason is understood: `rig-human` is T-posed
-/// and every human mesh has its arms lower, so the arm chain is re-aimed onto
-/// the mesh's arm but its intermediate joints do not all land inside a limb
-/// whose bend differs from the template's. That is the A-pose/T-pose problem —
-/// **P3-6** — and it is the next thing that will move these numbers.
+/// Now **2 of 170** across seven bodies, down from 53 before any limb work, 26
+/// after the rigid swing, and 8 before endpoints were included in the joint
+/// refinement. Five of the seven are at zero.
 ///
-/// The fox and horse are zero because their rest poses already match their own
-/// meshes, and limb fitting leaves them alone.
+/// The two that remain are one joint each on `model-human` and `human-sophia`,
+/// and they are the honest residue of a rigid chain: a T-posed template swung
+/// onto an arm that bends differently still leaves one joint proud of the
+/// surface.
 #[test]
 fn limb_placement_is_at_least_this_good() {
     for (model, rig, manifest, budget) in [
@@ -825,26 +840,26 @@ fn limb_placement_is_at_least_this_good() {
             "models-variation/human-sophia.glb",
             "rigs/rig-human.glb",
             "human.json",
-            3,
+            1,
         ),
-        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json", 4),
+        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json", 0),
         (
             "models/model-human.glb",
             "rigs/rig-human.glb",
             "human.json",
-            5,
+            1,
         ),
         (
             "models-variation/human-jay.glb",
             "rigs/rig-human.glb",
             "human.json",
-            6,
+            0,
         ),
         (
             "models-variation/human-bunny.glb",
             "rigs/rig-human.glb",
             "human.json",
-            8,
+            0,
         ),
     ] {
         let (_, after, total, _) = limb_joints_outside(model, rig, manifest);
