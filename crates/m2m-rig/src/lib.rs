@@ -14,5 +14,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod automap;
 pub mod fit;
 pub mod template;

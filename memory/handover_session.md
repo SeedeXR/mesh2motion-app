@@ -2261,3 +2261,66 @@ radius widened to 1.5x the limb · endpoints excluded again.
 Two joints, one each on `model-human` and `human-sophia` — the honest residue of
 a rigid chain swung onto an arm that bends differently. Budgets pinned at fox 0,
 horse 0, bird 0, jay 0, bunny 0, human 1, sophia 1.
+
+## Session 033 — P3-4 structural bone auto-mapping
+
+CI confirmed green for 4510892 before starting.
+
+### The legacy's limit, measured rather than assumed
+
+I had written in the loop notes that the legacy "has nothing to work with"
+because it tokenises names. That was too strong, and reading it first corrected
+me: `BoneAutoMapper` routes known rigs through Mixamo/Rigify tables and
+everything else through canonical slot resolution that **does** use chain
+position and side. The real gap is narrower — it cannot *start* without a name,
+because `resolve_slot(parse_bone_name(name), side)` is where slots come from.
+
+Measured against its own resolver:
+
+| rig | bones resolved to a slot |
+|---|---|
+| named humanoid | **7 of 7** |
+| same shape, bones called `Bone.000`.. | **0 of 17** |
+
+### What landed
+
+`crates/m2m-rig/src/automap.rs` — `Skeleton::chains` (maximal parent→child
+runs), a name-free `Signature` (bone count, depth, direction, reach, lateral
+offset, attachment height), `match_skeletons` (greedy, cheapest first, each
+chain used once) and `map_bones` (proportional pairing within matched chains).
+
+Renaming every bone to `Bone.NNN` and re-matching recovers the **identity** on
+all seven rigs tested. Cross-rig, our human maps onto a Mixamo rig with no bone
+crossing the midline.
+
+### Template chains are not maximal chains
+
+`human.json` heads its spine with `pelvis`, but `pelvis` has three children, so
+topologically it *ends* the chain starting at `root`. My first design compared
+template chains against maximal runs — apples to oranges — and the test told me
+so immediately. Matching is now maximal-run to maximal-run.
+
+### Three fixtures that could not distinguish their mutations
+
+This is the sharpest lesson of the session. Four mutations, and **three of them
+initially survived**:
+
+| mutation | why it survived | fixture that catches it |
+|---|---|---|
+| side weight zeroed | identity recovery is exact whatever the weights are — the right pairing scores zero on every feature | map a rig onto its **mirror image**, where the answer is a left/right swap |
+| direction weight zeroed | my "two chains differing in direction" fixture also differed in *attachment height*, which separated them by itself | both branches leaving the **same joint at the same height** on the midline |
+| index pairing instead of proportional | `.min(len - 1)` clamps the ends, so both rules agree there | assert the **middle** bone of a 5-bone chain lands on the middle of a 3-bone one |
+
+> A fixture that cannot distinguish a mutation proves nothing about it, and
+> "the tests pass" then means only that the tests are blind. Ask what the
+> mutation would have to change, and build the case where nothing else varies.
+
+### State
+
+291 release tests, 46 in `m2m-rig` debug, 0 failures; clippy and fmt clean.
+
+### Next
+
+The legacy's 7 bone-automap test files as behaviour baselines, and Mixamo/Rigify
+fast paths for rigs whose names *are* meaningful — structure is the fallback that
+was missing, not a replacement for a known-rig table.
