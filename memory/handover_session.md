@@ -1839,3 +1839,83 @@ trustworthy until it has been shown to pass the identity case.
 
 **P3-1 templates** with the typed-chain format (A7), or **P3-0/O9 in the app**,
 still blocked on `app/` having any import pipeline at all.
+
+## Session 027 — P3-1, the typed-chain template format
+
+CI confirmed green for 2e7ac26 before starting. **P2 is complete**; this is the
+first P3 work.
+
+### What landed
+
+`crates/m2m-rig/src/template.rs` — templates stop being flat bone lists and
+become manifests of typed chains. `ChainKind`, `Chain`, `Template`, `Skeleton`,
+`TemplateProblem`, and `Template::check`, which reports **every** disagreement
+in one pass because fixing a manifest one error per run is miserable.
+
+Two manifests, validated in CI against the real `.glb` rather than fixtures:
+`human.json` (66 bones) and `fox.json` (49).
+
+### The check runs in both directions, and the second one is the point
+
+A chain naming a bone that does not exist is the obvious error. A bone that **no
+chain claims** is the one that actually happens: a skeleton gains a bone, the
+manifest is not updated, and that bone silently has no kind for every stage that
+later asks what it is. Contiguity is checked too — without it a manifest could
+claim all 66 bones exactly once and still describe a hierarchy that does not
+exist. Mutation M4 proved that: collapsing every bone into one chain still
+claims each exactly once.
+
+### The fox forced a kind into existence
+
+The vocabulary was derived by reading five templates — human, bird, snake,
+spider, shark. Then the fox turned out to have **ears** (`Ear_L -> Ear_Tip_L`)
+and a belly bone, which are not a limb, a digit or a jaw.
+
+I had written the rule "adding a kind is a format change and needs a real
+template that cannot be described without it" before hitting this, and the fox
+met that bar. `ChainKind::Accessory` — a chain with no fitting rule beyond
+following its parent. Rigify reaches the same place from the other direction:
+`basic.super_copy`, used twenty times in its bird metarig.
+
+> **Adding a creature stays free; adding a kind costs a justification.** Calling
+> an ear a digit to keep the first list intact would have put a wrong fitting
+> rule on it later.
+
+The honest note: my first kind list was incomplete because I surveyed five
+species by **bone names only** and never dumped the fox's tree until I came to
+annotate it. Reading names is not reading structure.
+
+### Recorded, not inferred
+
+- `Posture::{Plantigrade,Digitigrade}` — a fox stands on its toes and a human
+  does not. A fitter that grounded a fox's ankle would be wrong in a way no bone
+  count reveals.
+- `Side` — `_l`, `_L`, `.L` and `Left` all appear across the nine rigs, and a
+  wrong guess mirrors a limb onto the wrong side, which is worse than not
+  knowing.
+
+### Gate coverage (6 mutations, 6 caught — 4 of them on the *data*)
+
+| mutation | caught by |
+|---|---|
+| drop `spine_02` from the manifest | `the_human_template_describes_its_skeleton_exactly` |
+| `check` stops reporting unclaimed bones | 2 unit tests |
+| `check` stops verifying contiguity | 2 unit tests |
+| collapse all 66 bones into one chain | the shape test **and** the describes-exactly test |
+| mark the fox plantigrade | `the_fox_is_digitigrade_where_the_human_is_plantigrade` |
+| delete the fox's ears | `the_fox_template_describes_its_skeleton_exactly` |
+
+Mutating the manifests, not only the code, is what made these meaningful — the
+data is as much the artifact as the crate.
+
+### State
+
+255 release tests, 0 failures; clippy `-D warnings` and fmt clean.
+
+### Next
+
+**7 templates remain**: bird, snake, spider, shark, horse, dragon, kaiju. Do
+**bird** and **spider** first — bird has feather chains hanging off wings and
+spider has eight legs behind anchor bones, so they are the likeliest to force
+another kind, and it is better to learn that now than after four easy ones.
+Then **P3-2 fitting**, which is what the kinds exist to drive.
