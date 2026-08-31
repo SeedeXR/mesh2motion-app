@@ -1,0 +1,283 @@
+{
+  "name": "dragon",
+  "skeleton": "rig-dragon.glb",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "hips",
+        "spine_0",
+        "spine_1",
+        "spine_2",
+        "spine_3",
+        "spine_4"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head"
+      ]
+    },
+    {
+      "name": "jaw_upper",
+      "kind": "jaw",
+      "bones": [
+        "mouth_upper",
+        "mouth_upper_tip"
+      ]
+    },
+    {
+      "name": "jaw_lower",
+      "kind": "jaw",
+      "bones": [
+        "mouth_lower",
+        "mouth_lower_tip"
+      ]
+    },
+    {
+      "name": "stomach",
+      "kind": "accessory",
+      "bones": [
+        "stomach",
+        "stomach_tip"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4",
+        "tail_5",
+        "tail_6",
+        "tail_tip"
+      ]
+    },
+    {
+      "name": "horn_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "horn_base_l",
+        "horn_l",
+        "horn_tip_L"
+      ]
+    },
+    {
+      "name": "wing_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "wing",
+      "bones": [
+        "shoulder_l",
+        "wing_1_l",
+        "wing_2_l",
+        "wing_3_l",
+        "wing_4_l",
+        "wing_5_l",
+        "wing_tip_l"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "collar_anchor_l",
+        "front_leg_collar_l",
+        "front_leg_l",
+        "front_ankle_l",
+        "front_foot_l",
+        "front_toes_l",
+        "front_toes_tip_l"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "hips_anchor_l",
+        "back_leg_hip_l",
+        "back_leg_l",
+        "back_ankle_l",
+        "back_foot_l",
+        "back_toes_l",
+        "back_toes_tip_l"
+      ]
+    },
+    {
+      "name": "wing_feather_1_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_1_0_l",
+        "wing_feather_1_1_l",
+        "wing_feather_1_tip_l"
+      ]
+    },
+    {
+      "name": "wing_feather_2_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_2_0_l",
+        "wing_feather_2_1_l",
+        "wing_feather_2_tip_l"
+      ]
+    },
+    {
+      "name": "wing_feather_3_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_3_0_l",
+        "wing_feather_3_1_l",
+        "wing_feather_3_tip_l"
+      ]
+    },
+    {
+      "name": "wing_feather_4_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_4_0_l",
+        "wing_feather_4_1_l",
+        "wing_feather_4_tip_l"
+      ]
+    },
+    {
+      "name": "wing_feather_5_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_5_0_l",
+        "wing_feather_5_1_l",
+        "wing_feather_5_tip_l"
+      ]
+    },
+    {
+      "name": "horn_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "horn_base_r",
+        "horn_r",
+        "horn_tip_R"
+      ]
+    },
+    {
+      "name": "wing_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "wing",
+      "bones": [
+        "shoulder_r",
+        "wing_1_r",
+        "wing_2_r",
+        "wing_3_r",
+        "wing_4_r",
+        "wing_5_r",
+        "wing_tip_r"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "collar_anchor_r",
+        "front_leg_collar_r",
+        "front_leg_r",
+        "front_ankle_r",
+        "front_foot_r",
+        "front_toes_r",
+        "front_toes_tip_r"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "hips_anchor_r",
+        "back_leg_hip_r",
+        "back_leg_r",
+        "back_ankle_r",
+        "back_foot_r",
+        "back_toes_r",
+        "back_toes_tip_r"
+      ]
+    },
+    {
+      "name": "wing_feather_1_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_1_0_r",
+        "wing_feather_1_1_r",
+        "wing_feather_1_tip_r"
+      ]
+    },
+    {
+      "name": "wing_feather_2_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_2_0_r",
+        "wing_feather_2_1_r",
+        "wing_feather_2_tip_r"
+      ]
+    },
+    {
+      "name": "wing_feather_3_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_3_0_r",
+        "wing_feather_3_1_r",
+        "wing_feather_3_tip_r"
+      ]
+    },
+    {
+      "name": "wing_feather_4_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_4_0_r",
+        "wing_feather_4_1_r",
+        "wing_feather_4_tip_r"
+      ]
+    },
+    {
+      "name": "wing_feather_5_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_5_0_r",
+        "wing_feather_5_1_r",
+        "wing_feather_5_tip_r"
+      ]
+    }
+  ]
+}

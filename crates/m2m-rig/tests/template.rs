@@ -51,25 +51,35 @@ fn borrow(bones: &[(String, Option<String>)]) -> Skeleton<'_> {
     )
 }
 
-/// The manifest accounts for every bone of the real skeleton, and every chain
-/// is a real parent-to-child run.
-#[test]
-fn the_human_template_describes_its_skeleton_exactly() {
-    let (bones, joints) = skeleton_of("rig-human.glb");
-    assert_eq!(joints, 66, "the template file changed");
+/// Requires a manifest to account for every bone of a real skeleton, with every
+/// chain a real parent-to-child run.
+fn assert_template_matches(manifest: &str, skeleton: &str, expected_joints: usize) {
+    let (bones, joints) = skeleton_of(skeleton);
+    assert_eq!(joints, expected_joints, "{skeleton} changed");
 
-    let template = load("human.json");
+    let template = load(manifest);
     let problems = template.check(&borrow(&bones));
     assert!(
         problems.is_empty(),
-        "the human template does not describe rig-human.glb:\n{}",
+        "{manifest} does not describe {skeleton}:\n{}",
         problems
             .iter()
             .map(|p| format!("  - {p}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
-    assert_eq!(template.bones().count(), 66, "every bone exactly once");
+    assert_eq!(
+        template.bones().count(),
+        expected_joints,
+        "every bone exactly once"
+    );
+}
+
+/// The manifest accounts for every bone of the real skeleton, and every chain
+/// is a real parent-to-child run.
+#[test]
+fn the_human_template_describes_its_skeleton_exactly() {
+    assert_template_matches("human.json", "rig-human.glb", 66);
 }
 
 /// The chains are the ones a human actually has, not merely *a* set that adds
@@ -309,20 +319,7 @@ fn all_the_problems_are_reported_together() {
 /// rigs covered them.
 #[test]
 fn the_fox_template_describes_its_skeleton_exactly() {
-    let (bones, joints) = skeleton_of("rig-fox.glb");
-    assert_eq!(joints, 49, "the template file changed");
-
-    let template = load("fox.json");
-    let problems = template.check(&borrow(&bones));
-    assert!(
-        problems.is_empty(),
-        "the fox template does not describe rig-fox.glb:\n{}",
-        problems
-            .iter()
-            .map(|p| format!("  - {p}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+    assert_template_matches("fox.json", "rig-fox.glb", 49);
 }
 
 /// A fox stands on its toes and a human does not, and the templates say so.
@@ -357,6 +354,247 @@ fn the_fox_is_digitigrade_where_the_human_is_plantigrade() {
     assert_eq!(legs(&human), 2);
     assert_eq!(fox.of_kind(ChainKind::Tail).count(), 1, "a fox has a tail");
     assert_eq!(fox.of_kind(ChainKind::Jaw).count(), 1, "and a jaw");
+}
+
+/// The bird, whose wings carry feather chains part-way along their length.
+///
+/// One of the two templates picked to stress the format before the easy ones.
+/// It needed no new kind: a feather is a [`ChainKind::Digit`], the same as a
+/// finger, and both jaws are [`ChainKind::Jaw`] — this rig parents
+/// `mouth_lower` to `mouth_upper`, so they are two chains rather than one.
+#[test]
+fn the_bird_template_describes_its_skeleton_exactly() {
+    assert_template_matches("bird.json", "rig-bird.glb", 55);
+}
+
+/// The spider: eight legs, each behind an anchor bone.
+///
+/// The other stress case, and it needed no new kind either. Each leg chain
+/// starts at its `legs_anchor_N` exactly as the human arm chain starts at its
+/// clavicle — the bone that attaches a limb belongs to the limb. The two
+/// per-side hubs the anchors themselves hang from are `Accessory`.
+#[test]
+fn the_spider_template_describes_its_skeleton_exactly() {
+    assert_template_matches("spider.json", "rig-spider.glb", 56);
+}
+
+/// The bird and spider have the chains those creatures have.
+#[test]
+fn the_stress_templates_have_the_chains_those_creatures_have() {
+    let bird = load("bird.json");
+    assert_eq!(
+        bird.of_kind(ChainKind::Limb).count(),
+        4,
+        "two wings, two legs"
+    );
+    assert_eq!(
+        bird.of_kind(ChainKind::Limb)
+            .filter(|c| c.role == Some(LimbRole::Wing))
+            .count(),
+        2
+    );
+    assert_eq!(
+        bird.of_kind(ChainKind::Digit).count(),
+        8,
+        "four feather chains a wing"
+    );
+    assert_eq!(bird.of_kind(ChainKind::Jaw).count(), 2, "upper and lower");
+
+    let spider = load("spider.json");
+    let legs: Vec<&Chain> = spider
+        .of_kind(ChainKind::Limb)
+        .filter(|c| c.role == Some(LimbRole::Leg))
+        .collect();
+    assert_eq!(legs.len(), 8, "a spider has eight legs");
+    assert_eq!(
+        legs.iter().filter(|c| c.side == Some(Side::Left)).count(),
+        4
+    );
+    assert_eq!(
+        legs.iter().filter(|c| c.side == Some(Side::Right)).count(),
+        4
+    );
+    assert!(
+        legs.iter().all(|c| c.bones.len() == 5),
+        "each leg is its anchor plus four bones"
+    );
+
+    // Posture is left unset here, deliberately. Plantigrade and digitigrade
+    // describe how a mammal's foot meets the ground; an arthropod leg is
+    // neither, and recording a wrong value would be worse than recording none.
+    assert!(
+        legs.iter().all(|c| c.posture.is_none()),
+        "a spider leg is neither plantigrade nor digitigrade"
+    );
+    assert_eq!(spider.of_kind(ChainKind::Jaw).count(), 2, "two fangs");
+    assert_eq!(
+        spider.of_kind(ChainKind::Accessory).count(),
+        2,
+        "the per-side hubs the leg anchors hang from"
+    );
+}
+
+/// Every shipped template describes its own skeleton.
+///
+/// Table-driven so a new template cannot be added without being checked here,
+/// and so a failure names which creature broke.
+#[test]
+fn every_template_describes_its_skeleton_exactly() {
+    for (manifest, skeleton, joints) in [
+        ("human.json", "rig-human.glb", 66),
+        ("fox.json", "rig-fox.glb", 49),
+        ("bird.json", "rig-bird.glb", 55),
+        ("spider.json", "rig-spider.glb", 56),
+        ("snake.json", "rig-snake.glb", 28),
+        ("shark.json", "rig-shark.glb", 33),
+        ("horse.json", "rig-horse.glb", 56),
+        ("kaiju.json", "rig-kaiju.glb", 58),
+        ("dragon.json", "rig-dragon.glb", 99),
+    ] {
+        assert_template_matches(manifest, skeleton, joints);
+    }
+}
+
+/// There is a manifest for every rig in `static/rigs`, and no manifest without
+/// one.
+///
+/// Without this, adding a tenth rig and forgetting its manifest would pass
+/// every other test in this file, because they all iterate the manifests.
+#[test]
+fn every_rig_has_a_manifest_and_every_manifest_a_rig() {
+    let rigs = concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/rigs");
+    let mut skeletons: Vec<String> = std::fs::read_dir(rigs)
+        .expect("the rigs directory")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("rig-") && n.ends_with(".glb"))
+        .collect();
+    skeletons.sort();
+
+    let templates = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+    let mut described: Vec<String> = std::fs::read_dir(templates)
+        .expect("the templates directory")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".json"))
+        .map(|n| load(&n).skeleton)
+        .collect();
+    described.sort();
+
+    assert_eq!(
+        described, skeletons,
+        "every rig needs a manifest and every manifest a rig"
+    );
+}
+
+/// Each creature is described with the kinds it actually has, so a manifest
+/// cannot pass by lumping bones into whatever chain is convenient.
+#[test]
+fn each_creature_has_the_chains_it_should() {
+    // (template, limbs, digits, tails, jaws)
+    for (manifest, limbs, digits, tails, jaws) in [
+        ("human.json", 4, 10, 0, 0),
+        ("fox.json", 4, 0, 1, 1),
+        ("bird.json", 4, 8, 1, 2),
+        ("spider.json", 8, 0, 1, 2),
+        ("snake.json", 0, 0, 0, 1),
+        ("shark.json", 4, 0, 1, 1),
+        ("horse.json", 4, 0, 1, 1),
+        ("kaiju.json", 4, 6, 1, 1),
+        ("dragon.json", 6, 10, 1, 2),
+    ] {
+        let t = load(manifest);
+        assert_eq!(
+            t.of_kind(ChainKind::Limb).count(),
+            limbs,
+            "{manifest} limbs"
+        );
+        assert_eq!(
+            t.of_kind(ChainKind::Digit).count(),
+            digits,
+            "{manifest} digits"
+        );
+        assert_eq!(
+            t.of_kind(ChainKind::Tail).count(),
+            tails,
+            "{manifest} tails"
+        );
+        assert_eq!(t.of_kind(ChainKind::Jaw).count(), jaws, "{manifest} jaws");
+        assert_eq!(t.of_kind(ChainKind::Root).count(), 1, "{manifest} root");
+    }
+}
+
+/// Limbs carry the role that creature's limbs have.
+///
+/// **Found by mutation**: relabelling the shark's four fins as legs passed
+/// every other test in this file, because the counts only asked how many limbs
+/// there are, never what they are for. Role is what tells a fitter that a fin
+/// sweeps and an arm reaches.
+#[test]
+fn limbs_carry_the_role_that_creature_has() {
+    // (template, arms, legs, wings, fins)
+    for (manifest, arms, legs, wings, fins) in [
+        ("human.json", 2, 2, 0, 0),
+        ("fox.json", 0, 4, 0, 0),
+        ("bird.json", 0, 2, 2, 0),
+        ("spider.json", 0, 8, 0, 0),
+        ("snake.json", 0, 0, 0, 0),
+        ("shark.json", 0, 0, 0, 4),
+        ("horse.json", 0, 4, 0, 0),
+        ("kaiju.json", 2, 2, 0, 0),
+        ("dragon.json", 0, 4, 2, 0),
+    ] {
+        let t = load(manifest);
+        let count = |role: LimbRole| {
+            t.of_kind(ChainKind::Limb)
+                .filter(|c| c.role == Some(role))
+                .count()
+        };
+        assert_eq!(count(LimbRole::Arm), arms, "{manifest} arms");
+        assert_eq!(count(LimbRole::Leg), legs, "{manifest} legs");
+        assert_eq!(count(LimbRole::Wing), wings, "{manifest} wings");
+        assert_eq!(count(LimbRole::Fin), fins, "{manifest} fins");
+        assert_eq!(
+            t.of_kind(ChainKind::Limb)
+                .filter(|c| c.role.is_none())
+                .count(),
+            0,
+            "{manifest}: every limb needs a role"
+        );
+    }
+}
+
+/// Posture is recorded where it means something and left unset where it does
+/// not, rather than defaulted to whatever is nearest.
+///
+/// Three of the nine creatures meet the ground three different ways, and a
+/// spider meets it in none of them.
+#[test]
+fn posture_is_recorded_only_where_it_applies() {
+    let posture_of = |manifest: &str| -> Vec<Option<Posture>> {
+        let t = load(manifest);
+        let mut p: Vec<Option<Posture>> = t
+            .of_kind(ChainKind::Limb)
+            .filter(|c| c.role == Some(LimbRole::Leg))
+            .map(|c| c.posture)
+            .collect();
+        p.dedup();
+        p
+    };
+    assert_eq!(posture_of("human.json"), vec![Some(Posture::Plantigrade)]);
+    assert_eq!(posture_of("fox.json"), vec![Some(Posture::Digitigrade)]);
+    assert_eq!(posture_of("horse.json"), vec![Some(Posture::Unguligrade)]);
+    // A spider is an arthropod: none of the three describe it, so none is
+    // recorded. Wings and fins carry no posture either.
+    assert_eq!(posture_of("spider.json"), vec![None]);
+    for manifest in ["bird.json", "dragon.json"] {
+        let t = load(manifest);
+        for limb in t.of_kind(ChainKind::Limb) {
+            if limb.role != Some(LimbRole::Leg) {
+                assert_eq!(limb.posture, None, "{manifest} {}", limb.name);
+            }
+        }
+    }
 }
 
 /// The manifest survives a round trip through JSON, so an editor and this crate

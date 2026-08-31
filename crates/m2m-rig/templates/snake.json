@@ -1,0 +1,64 @@
+{
+  "name": "snake",
+  "skeleton": "rig-snake.glb",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head",
+        "head_tip"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "mouth_extension",
+        "mouth",
+        "mouth_tip"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "neck"
+      ]
+    },
+    {
+      "name": "body",
+      "kind": "spine",
+      "bones": [
+        "tail01",
+        "tail02",
+        "tail03",
+        "tail04",
+        "tail05",
+        "tail06",
+        "tail07",
+        "tail08",
+        "tail09",
+        "tail10",
+        "tail11",
+        "tail12",
+        "tail13",
+        "tail14",
+        "tail15",
+        "tail16",
+        "tail17",
+        "tail18",
+        "tail19",
+        "tail20",
+        "tail_tip"
+      ]
+    }
+  ]
+}

@@ -1919,3 +1919,69 @@ data is as much the artifact as the crate.
 spider has eight legs behind anchor bones, so they are the likeliest to force
 another kind, and it is better to learn that now than after four easy ones.
 Then **P3-2 fitting**, which is what the kinds exist to drive.
+
+## Session 028 — P3-1 and P3-2 complete: all nine templates annotated
+
+CI confirmed green for eb92974 before starting.
+
+### What landed
+
+All nine rigs are now typed-chain manifests, validated in CI against their real
+`.glb`: human 66, fox 49, bird 55, spider 56, snake 28, shark 33, horse 56,
+kaiju 58, dragon 99 — **500 bones, every one claimed exactly once**.
+
+`tools/glb-chains.py` splits a skeleton into maximal parent-to-child chains and
+refuses to finish unless they cover every joint. It does the mechanical part and
+leaves the judgement — what a chain *is* — to a person. Reading a tree by eye is
+how the fox's ears were missed in session 027, so this exists to stop that.
+
+### Bird and spider were chosen first because they looked hardest, and neither forced a kind
+
+- **Bird**: feather chains hang off `wing_2` through `wing_5`, part-way along
+  the wing rather than at its end. A feather is a `Digit`, the same as a finger.
+  (The `Digit` doc said "off the end of a limb"; corrected — that was written
+  before I had read a wing.)
+- **Spider**: eight legs, each behind a `legs_anchor_N`. A leg chain starts at
+  its anchor exactly as the human arm chain starts at its clavicle — **the bone
+  that attaches a limb belongs to the limb**. The two per-side hubs are
+  `Accessory`.
+
+### The horse did force one, and that is the rule working
+
+`Posture::Unguligrade`. A horse walks on hooves: a real third category, not a
+shade of digitigrade, because the ground contact is at the very end of the limb
+and a fitter grounding the foot bone puts the horse through the floor. Same bar
+as `Accessory` — a real template that cannot be described without it.
+
+### Judgement calls worth remembering
+
+- A snake's `tail01..tail20` is its **body axis**, so `Spine`. The bones are
+  named "tail"; the kind follows the definition, not the naming.
+- A spider's posture is left **unset**. Plantigrade, digitigrade and unguligrade
+  all describe mammal feet; an arthropod is none of them, and recording a wrong
+  value is worse than recording none.
+
+### A mutation survived, and closing it was the point
+
+Relabelling the shark's four fins as **legs** passed every test. The counts
+asked how many limbs a creature has and never what they are *for*. Role is what
+tells a fitter that a fin sweeps and an arm reaches, so
+`limbs_carry_the_role_that_creature_has` now pins arms/legs/wings/fins per
+species and requires every limb to have a role. 4 mutations this session,
+3 caught immediately, the 4th caught after closing the gap it exposed.
+
+Also added `every_rig_has_a_manifest_and_every_manifest_a_rig`: without it, a
+tenth rig with no manifest would pass everything, because every other test
+iterates the manifests rather than the rigs.
+
+### State
+
+263 release tests, 0 failures; 20 in `m2m-rig` debug; clippy `-D warnings` and
+fmt clean. **P3-1 and P3-2 are done.**
+
+### Next
+
+**P3-3 landmark-based auto-fitting** — placing a template skeleton from mesh
+proportions. This is what the kinds and postures exist to drive, and it is the
+first place they have to earn their keep: a plantigrade sole, a digitigrade
+toe and an unguligrade hoof are three different ground contacts.

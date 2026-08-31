@@ -265,8 +265,9 @@
 > request. It is **GPL-2.0-or-later and we are MIT**: reimplement its
 > architecture, never copy its code or its metarig bone data. The decision that
 > came out of it — templates become **typed chains** rather than flat bone
-> lists — shapes P3-1 through P3-4, and `m2m-rig` is still a 15-line stub, so
-> it costs no rewrite to adopt now rather than later.
+> lists — shapes P3-1 through P3-4. P3-1 and P3-2 are **done**: the format
+> lives in `crates/m2m-rig/src/template.rs` and all nine templates are
+> annotated and checked against their `.glb` in CI.
 
 - [ ] **P3-0** **Preserve an existing rig on import (O9)** — *user requirement, 2026-08-30. Do this BEFORE the auto-rig workflow assumes it owns the skeleton.*
   - On import, detect whether the file already carries a skeleton and skin, and **keep them by default**: bone hierarchy, bone names, bind matrices, skin weights, and any animation. Re-rigging becomes an explicit action the user takes, not what happens if they do not read a warning.
@@ -274,16 +275,15 @@
   - **No new read capability is needed**: `model::parse_all` already returns the hierarchy with world matrices, `skin::parse_all` the clusters and bind matrices, `animation::parse_all` the clips. What is missing is the decision and the UI affordance.
   - Acceptance: import an already-rigged FBX, export it again, and the Blender gate sees the same armature, bone count, bone names and action as the input — i.e. a rigged model survives a round trip through the app untouched. The reference rig (65 bones, 2 meshes, 1 action) is the fixture.
   - Related: O9's own weights must not be silently renormalised or truncated either — `MAX_INFLUENCES` is 4, so a file with 5+ influences per vertex loses some. That is already counted in `SkinReport::vertices_over_influence_limit`; surface it rather than dropping quietly.
-- [~] **P3-1** Template definition format — **data-driven**, no Rust change to add a creature *(started 2026-08-31, session 027; 2 of 9 templates annotated)*
+- [x] **P3-1** Template definition format — **data-driven**, no Rust change to add a creature *(done 2026-08-31, sessions 027-028; all 9 templates annotated)*
   - `crates/m2m-rig/src/template.rs`: `ChainKind`, `Chain`, `Template`, `Skeleton`, `TemplateProblem`, and `Template::check`, which reports **every** disagreement in one pass rather than one per run.
-  - **The check runs in both directions.** A chain naming a bone that does not exist is the obvious error; a bone *no chain claims* is the one that actually happens, when a skeleton gains a bone and the manifest is not updated — that bone then silently has no kind and every later stage has to guess. Contiguity is checked too: without it a manifest could claim all 66 bones exactly once and still describe a hierarchy that does not exist.
-  - Manifests are `crates/m2m-rig/templates/*.json`, validated in CI against the real `.glb` rather than hand-written fixtures — a format tested only against fixtures drifts from the files it exists to describe.
-  - **`human.json`** (66 bones): root, spine 4, neck, head, 4 limbs, 10 digits. **`fox.json`** (49 bones): root, spine 6, head, jaw, tail, 2 ears, stomach, 4 digitigrade legs.
-  - **The fox forced a kind into existence, which is the format rule working, not failing.** The vocabulary was derived by reading human, bird, snake, spider and shark; a fox has ears (`Ear_L -> Ear_Tip_L`) and a belly bone and none of those kinds covered them. Rather than call an ear a digit, `ChainKind::Accessory` was added — a chain with no fitting rule beyond following its parent. Rigify arrives at the same place from the other direction with `basic.super_copy`, used 20x in its bird metarig. **Adding a creature stays free; adding a kind costs a justification.**
-  - `Posture::{Plantigrade,Digitigrade}` is recorded, not inferred: a fox stands on its toes and a human does not, and a fitter that grounded a fox's ankle would be wrong in a way no bone count reveals. `Side` is stored rather than parsed from names — `_l`, `_L`, `.L` and `Left` all appear across the nine rigs, and a wrong guess mirrors a limb onto the wrong side.
-  - Mutation-tested 6 for 6, mutating the **manifests** as well as the code: dropping a bone, collapsing all 66 into one chain, mis-marking the fox as plantigrade, deleting its ears, and disabling each of the two check directions.
-  - **Remaining: 7 templates** — bird, snake, spider, shark, horse, dragon, kaiju. Do **bird** and **spider** early: bird has feather chains hanging off wings, spider has eight legs behind anchor bones, and they are the likeliest to force another kind.
-- [ ] **P3-2** Port the 9 existing templates into the new format
+  - **The check runs in both directions.** A chain naming a bone that does not exist is the obvious error; a bone *no chain claims* is the one that actually happens, when a skeleton gains a bone and the manifest is not updated. Contiguity is checked too: without it a manifest could claim all 66 bones exactly once and still describe a hierarchy that does not exist.
+  - **All nine manifests** in `crates/m2m-rig/templates/*.json`, validated in CI against the real `.glb`: human 66, fox 49, bird 55, spider 56, snake 28, shark 33, horse 56, kaiju 58, dragon 99 — **500 bones, every one claimed exactly once**.
+  - `tools/glb-chains.py` splits a skeleton into maximal parent→child chains and refuses to finish unless they cover every joint. It does the mechanical part; what a chain *is* stays a judgement. Reading a tree by eye is how the fox's ears were missed.
+  - **Two kinds were forced into existence by real templates, which is the rule working.** `ChainKind::Accessory` (fox ears and belly; also horse ears and ribcage, dragon horns) and `Posture::Unguligrade` (the horse walks on hooves — a real third category, not a shade of digitigrade, because the ground contact is at the very end of the limb). Neither bird nor spider needed anything new, which is the useful part: they were chosen first *because* they looked hardest.
+  - Judgement calls worth remembering: a snake's `tail01..tail20` is its **body axis**, so `Spine`, matching that kind's definition; a spider leg starts at its `legs_anchor_N` exactly as a human arm starts at its clavicle — the bone that attaches a limb belongs to the limb; a spider's posture is left **unset** because plantigrade, digitigrade and unguligrade all describe mammal feet and an arthropod is none of them.
+  - Mutation-tested 10 for 10 across both sessions, most of them mutations of the **manifests** rather than the code. One survivor was found and closed: relabelling the shark's fins as legs passed everything, because the tests counted limbs but never asked what they were *for*.
+- [x] **P3-2** Port the 9 existing templates into the new format *(done 2026-08-31 with P3-1 — all nine annotated and validated against their `.glb` in CI; 500 bones, each claimed exactly once)*
 - [ ] **P3-3** Landmark-based auto-fitting: place the skeleton from mesh proportions
 - [ ] **P3-4** Port `bone-automap/` 1:1 including all 7 test files
 - [ ] **P3-5** Port `Retargeter` logic (drop `Quat`/`Vec3`/`Transform` → `glam`)

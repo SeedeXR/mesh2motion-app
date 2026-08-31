@@ -54,7 +54,10 @@ pub enum ChainKind {
     Jaw,
     /// A limb: arm, leg, wing, fin, or one of a spider's eight.
     Limb,
-    /// A chain hanging off the end of a limb — finger, toe, or wing feather.
+    /// A chain hanging off a limb — finger, toe, or wing feather.
+    ///
+    /// Not necessarily off its *end*: a bird's four feather chains hang off
+    /// `wing_2` through `wing_5`, part-way along the wing.
     Digit,
     /// A tail.
     Tail,
@@ -114,6 +117,14 @@ pub enum Posture {
     Plantigrade,
     /// Standing on the toes, ankle raised — dog, cat, bird.
     Digitigrade,
+    /// Standing on hoofed toe tips — horse, deer.
+    ///
+    /// **Added because the horse template needs it.** It is a real third
+    /// category, not a shade of digitigrade: the ground contact is the hoof at
+    /// the very end of the limb, so a fitter grounding the foot bone puts the
+    /// horse through the floor. Same bar as [`ChainKind::Accessory`] — a real
+    /// template that cannot be described without it.
+    Unguligrade,
 }
 
 /// One typed run of bones.
