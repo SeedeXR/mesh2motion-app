@@ -602,3 +602,208 @@ fn structure_reproduces_the_mixamo_table_exactly() {
         "structure did not map every bone the table covers"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Behaviour ported from the legacy's own automap tests
+// (legacy/src/retarget/bone-automap/BoneAutoMapping.test.ts and
+// rig-fixtures.ts). What is ported and what is not:
+//
+// PORTED, because it is behaviour a user sees:
+//   - Mixamo is detected with and without its `mixamorig` prefix.
+//   - Other rigs are not mistaken for Mixamo, nor is an empty skeleton.
+//   - A prefix-stripped Mixamo rig still maps through the table.
+//   - A skeleton with a parent cycle does not hang or panic.
+//   - One source bone is never assigned to two targets (already asserted in
+//     `a_chain_is_claimed_at_most_once`).
+//
+// NOT PORTED, because our design replaced the machinery they describe:
+//   - Everything asserting a `BoneSlot` — "resolves the source rig to the
+//     expected slots", "settles shoulder ambiguity", "Mixamo LeftLeg is the
+//     calf". Slots come from parsing names; we match on structure and have no
+//     slot to assert.
+//   - "numbers chains from the hierarchy, not from the digits in the name" —
+//     our chains are derived from the hierarchy by construction, so there is no
+//     alternative behaviour to guard against.
+//   - The Unreal, DAZ and VRM *mapping* tests. Those fixtures carry names and
+//     parents but **no positions**, which is all the legacy needed; a
+//     structural matcher cannot run on them at all. Their name lists are still
+//     used below for detection, where geometry is irrelevant.
+//
+// ONE DELIBERATE DIVERGENCE: the legacy "leaves an unrecognisable rig unmapped
+// rather than mapping it wrongly". We map it structurally instead, which is the
+// entire point of `map_bones` — a rig whose bones are called `Bone.027` is
+// unrecognisable by name and perfectly mappable by shape.
+// ---------------------------------------------------------------------------
+
+/// Bone names only, as the legacy's fixtures carry them.
+fn mixamo_names(prefix: &str) -> Vec<String> {
+    let mut names = vec![
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "HeadTop_End",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<String>>();
+    for side in ["Left", "Right"] {
+        for part in ["Shoulder", "Arm", "ForeArm", "Hand"] {
+            names.push(format!("{side}{part}"));
+        }
+        for finger in ["Thumb", "Index", "Middle", "Ring", "Pinky"] {
+            for n in 1..=4 {
+                names.push(format!("{side}Hand{finger}{n}"));
+            }
+        }
+        for part in ["UpLeg", "Leg", "Foot", "ToeBase", "ToeEnd"] {
+            names.push(format!("{side}{part}"));
+        }
+    }
+    names.into_iter().map(|n| format!("{prefix}{n}")).collect()
+}
+
+fn named_skeleton(names: Vec<String>) -> Skeleton {
+    let count = names.len();
+    Skeleton {
+        names,
+        parents: (0..count).map(|i| i.checked_sub(1)).collect(),
+        positions: (0..count)
+            .map(|i| Vec3::new(0.0, i as f32 * 0.1, 0.0))
+            .collect(),
+    }
+}
+
+/// Mixamo is recognised whether or not the exporter kept its prefix.
+#[test]
+fn mixamo_is_detected_with_and_without_its_prefix() {
+    let rigs = known_rigs();
+    let mixamo = rigs.iter().find(|r| r.name == "mixamo").expect("the table");
+    assert_eq!(mixamo.common_prefix(), "mixamorig");
+
+    for prefix in ["mixamorig", "mixamorig:", ""] {
+        let skeleton = named_skeleton(mixamo_names(prefix));
+        let coverage = mixamo.coverage(&skeleton);
+        assert!(
+            coverage > 0.9,
+            "prefix {prefix:?} gave coverage {coverage:.2}"
+        );
+    }
+}
+
+/// Other rigs, and an empty skeleton, are not mistaken for Mixamo.
+#[test]
+fn other_rigs_are_not_mistaken_for_mixamo() {
+    let rigs = known_rigs();
+    let mixamo = rigs.iter().find(|r| r.name == "mixamo").expect("the table");
+
+    // Unreal, DAZ and VRM naming, from the legacy's fixtures.
+    let unreal = [
+        "root", "pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head",
+    ];
+    let daz = [
+        "hip", "abdomen", "chest", "neck", "head", "lShldr", "lForeArm", "lHand",
+    ];
+    let vrm = [
+        "hips",
+        "spine",
+        "chest",
+        "upperChest",
+        "neck",
+        "head",
+        "leftUpperArm",
+    ];
+
+    for (name, names) in [
+        ("unreal", unreal.to_vec()),
+        ("daz", daz.to_vec()),
+        ("vrm", vrm.to_vec()),
+        ("empty", Vec::new()),
+    ] {
+        let skeleton = named_skeleton(names.into_iter().map(str::to_owned).collect());
+        let coverage = mixamo.coverage(&skeleton);
+        assert!(
+            coverage < 0.5,
+            "{name} was taken for Mixamo at coverage {coverage:.2}"
+        );
+    }
+}
+
+/// A prefix-stripped Mixamo rig still maps through the table, bone for bone.
+///
+/// The legacy asserts `LeftForeArm -> lowerarm_l`, `LeftHandIndex1 ->
+/// index_01_l` and `HeadTop_End -> head_leaf`; the same three are checked here,
+/// in our direction (ours to theirs).
+#[test]
+fn a_prefix_stripped_mixamo_rig_still_maps_through_the_table() {
+    let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
+    let theirs = named_skeleton(mixamo_names(""));
+    let rigs = known_rigs();
+
+    let (mapping, strategy) = m2m_rig::automap::map_bones_best(&ours, &theirs, &rigs, 0.5);
+    assert_eq!(strategy, m2m_rig::automap::Strategy::Known("mixamo".into()));
+
+    for (ours_name, theirs_name) in [
+        ("lowerarm_l", "LeftForeArm"),
+        ("index_01_l", "LeftHandIndex1"),
+        ("head_leaf", "HeadTop_End"),
+    ] {
+        let from = ours
+            .names
+            .iter()
+            .position(|n| n == ours_name)
+            .expect(ours_name);
+        let to = mapping
+            .get(&from)
+            .copied()
+            .unwrap_or_else(|| panic!("{ours_name} unmapped"));
+        assert_eq!(theirs.names[to], theirs_name, "{ours_name}");
+    }
+}
+
+/// A skeleton whose parents form a cycle is survived, not hung on.
+///
+/// Ported directly: the legacy asserts its resolver does not throw on
+/// `a -> c -> b -> a`. Ours must not loop forever computing depth either.
+#[test]
+fn a_skeleton_with_a_parent_cycle_is_survived() {
+    let cyclic = Skeleton {
+        names: vec!["a".into(), "b".into(), "c".into()],
+        parents: vec![Some(2), Some(0), Some(1)],
+        positions: vec![
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ],
+    };
+    // Every bone has a parent, so no chain can start: the result is empty
+    // rather than wrong, and nothing hangs.
+    let chains = cyclic.chains();
+    assert!(chains.is_empty(), "a cycle has no chain head: {chains:?}");
+
+    let sane = named_skeleton(vec!["x".into(), "y".into(), "z".into()]);
+    let mapping = map_bones(&cyclic, &sane);
+    assert!(mapping.is_empty(), "nothing to map from a cycle");
+    let _ = map_bones(&sane, &cyclic);
+}
+
+/// Our own rig is not mistaken for a known foreign rig.
+///
+/// Worth checking because prefix stripping widens what a table will accept:
+/// Rigify's shared prefix is `def`, so its entries also match bare names like
+/// `spine` and `toel`. Our source rig must still come back unrecognised, or the
+/// mapper would try to map us onto ourselves through someone else's table.
+#[test]
+fn our_own_rig_is_not_taken_for_a_foreign_one() {
+    let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
+    for rig in known_rigs() {
+        let coverage = rig.coverage(&ours);
+        assert!(
+            coverage < 0.5,
+            "our own rig looks like {} at coverage {coverage:.2}",
+            rig.name
+        );
+    }
+}

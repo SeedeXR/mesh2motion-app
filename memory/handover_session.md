@@ -2422,3 +2422,68 @@ version) · offset compared by magnitude instead of direction.
 
 The legacy's `BoneAutoMapping.test.ts` and `BoneNameTokenizer.test.ts`
 expectations as Rust behaviour baselines — the last piece of P3-4.
+
+## Session 036 — P3-4 complete: legacy baselines ported
+
+CI confirmed green for bd5c795 before starting.
+
+### What was ported, and what was not
+
+The instruction was to port *expectations*, not implementation, and reading the
+legacy tests first made the split obvious.
+
+**Ported** — behaviour a user sees: Mixamo detected with and without its
+`mixamorig` prefix; Unreal, DAZ, VRM and an empty skeleton not mistaken for it;
+a prefix-stripped Mixamo rig still mapping through the table; a parent cycle
+survived; one source bone never assigned twice.
+
+**Not ported** — machinery our design replaced: every assertion about a
+`BoneSlot`, which is parsed from a name and has no counterpart here; "numbers
+chains from the hierarchy, not from the digits in the name", which is true by
+construction for us.
+
+**Not portable at all**: the Unreal, DAZ and VRM *mapping* tests. Those fixtures
+carry names and parents and **no positions** — everything the legacy needed, and
+not enough to run a structural matcher on. That is a property of their design,
+not a gap in ours. Their name lists are still used for detection, where geometry
+is irrelevant.
+
+**One deliberate divergence**, stated rather than hidden: the legacy "leaves an
+unrecognisable rig unmapped rather than mapping it wrongly". We map it
+structurally, which is the entire point — a rig whose bones are called
+`Bone.027` is unrecognisable by name and perfectly mappable by shape.
+
+### One real behaviour we were missing
+
+The legacy detects Mixamo with the prefix stripped; we did not, because our
+table stores `mixamorigLeftForeArm` and a stripped rig says `LeftForeArm`.
+`KnownRig::common_prefix` now computes the shared prefix from the table itself
+(`mixamorig`, and `def` for Rigify) and accepts either form.
+
+### A survivor proved rather than fixed
+
+Removing the "stripped remainder must be at least 3 characters" guard survived
+mutation. Measured: the shortest remainder is 4 characters in both tables
+(`hips`, `toel`) and **no entry falls under 3**, so the guard cannot fire on the
+shipped data. It is a genuine no-op there, kept against a degenerate future
+table — not a coverage gap.
+
+That measurement also surfaced something worth guarding: Rigify's prefix is
+`def`, so stripping makes its entries match bare names like `spine`.
+`our_own_rig_is_not_taken_for_a_foreign_one` checks our own source rig still
+comes back unrecognised.
+
+### Gate coverage (3 mutations, 2 caught, 1 proved a no-op)
+
+prefix stripping removed · common prefix forced empty · the length guard removed
+(no-op, proved by measuring both tables).
+
+### State
+
+**P3-4 is complete.** Structural matching, known-rig tables, prefix tolerance,
+and the legacy's behaviour baselines.
+
+### Next
+
+**P3-5** (`Retargeter` logic on `glam`), or **P3-0/O9 in the app** — still
+blocked on `app/` having any import pipeline at all.

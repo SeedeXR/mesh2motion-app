@@ -404,6 +404,52 @@ pub fn normalised_bone_name(name: &str) -> String {
 }
 
 impl KnownRig {
+    /// The prefix every target name in this table shares, if any.
+    ///
+    /// Mixamo's is `mixamorig`, and exporters routinely strip it — the legacy
+    /// tests a rig "whose mixamorig prefix was stripped" for exactly this
+    /// reason. Computed from the table rather than written down, so a table
+    /// with no shared prefix simply has none.
+    pub fn common_prefix(&self) -> String {
+        let mut values = self.bones.values();
+        let Some(first) = values.next() else {
+            return String::new();
+        };
+        let mut prefix = normalised_bone_name(first);
+        for value in values {
+            let value = normalised_bone_name(value);
+            let shared = prefix
+                .chars()
+                .zip(value.chars())
+                .take_while(|(a, b)| a == b)
+                .count();
+            prefix.truncate(shared);
+            if prefix.is_empty() {
+                break;
+            }
+        }
+        prefix
+    }
+
+    /// The names this table expects, each with and without the shared prefix.
+    fn targets(&self) -> Vec<(&str, String, Option<String>)> {
+        let prefix = self.common_prefix();
+        self.bones
+            .iter()
+            .map(|(ours, theirs)| {
+                let full = normalised_bone_name(theirs);
+                // A stripped name is only offered when something is left of it,
+                // so a table whose entries *are* the prefix cannot match
+                // everything by matching nothing.
+                let stripped = full
+                    .strip_prefix(prefix.as_str())
+                    .filter(|rest| rest.len() >= 3)
+                    .map(str::to_owned);
+                (ours.as_str(), full, stripped)
+            })
+            .collect()
+    }
+
     /// How many of this table's target bones the skeleton actually has, as a
     /// fraction of the table.
     pub fn coverage(&self, skeleton: &Skeleton) -> f32 {
@@ -416,9 +462,11 @@ impl KnownRig {
             .map(|n| normalised_bone_name(n))
             .collect();
         let found = self
-            .bones
-            .values()
-            .filter(|target| present.contains(&normalised_bone_name(target)))
+            .targets()
+            .iter()
+            .filter(|(_, full, stripped)| {
+                present.contains(full) || stripped.as_ref().is_some_and(|s| present.contains(s))
+            })
             .count();
         found as f32 / self.bones.len() as f32
     }
@@ -433,13 +481,20 @@ impl KnownRig {
             .enumerate()
             .map(|(index, name)| (normalised_bone_name(name), index))
             .collect();
+        let targets: HashMap<&str, (String, Option<String>)> = self
+            .targets()
+            .into_iter()
+            .map(|(ours, full, stripped)| (ours, (full, stripped)))
+            .collect();
         reference
             .names
             .iter()
             .enumerate()
             .filter_map(|(index, name)| {
-                let target = self.bones.get(name)?;
-                let to = theirs.get(&normalised_bone_name(target))?;
+                let (full, stripped) = targets.get(name.as_str())?;
+                let to = theirs
+                    .get(full)
+                    .or_else(|| stripped.as_ref().and_then(|s| theirs.get(s)))?;
                 Some((index, *to))
             })
             .collect()
