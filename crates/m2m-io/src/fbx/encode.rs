@@ -13,12 +13,12 @@
 //!
 //! # What this writes, and what it does not
 //!
-//! Arrays are written **uncompressed** (`encoding = 0`). The format allows it
-//! and every reader accepts it; it costs file size, which is a trade to revisit
-//! with a measurement rather than a guess. Nothing else about the container is
-//! simplified: offsets, the null records that terminate node lists, and the
-//! 16-byte footer magic are all as the format requires, because
-//! [`crate::fbx::binary::parse`] validates each of them.
+//! Arrays are deflated when that is smaller (`encoding = 1`), which is what
+//! real exporters emit; raw arrays are legal but make the file about 2.5x
+//! larger. Nothing else about the container is simplified: offsets, the null
+//! records that terminate node lists, and the 16-byte footer magic are all as
+//! the format requires, because [`crate::fbx::binary::parse`] validates each of
+//! them.
 
 use crate::fbx::binary::{FbxDocument, FbxNode, FbxProperty};
 use crate::fbx::FbxError;
@@ -91,12 +91,17 @@ fn write_node(out: &mut Vec<u8>, node: &FbxNode, wide: bool) -> Result<(), FbxEr
     }
     let property_bytes = out.len() - properties_start;
 
-    if !node.children.is_empty() {
+    if !node.children.is_empty() || node.empty_scope {
         for child in &node.children {
             write_node(out, child, wide)?;
         }
-        // Without this the reader's child loop would run past the end of the
-        // subtree into whatever follows.
+        // A node gets one when it has children, and also when it declared an
+        // empty list. Measured on the reference rig, which an FBX SDK exporter
+        // wrote: 5,144 childless nodes declare no list and exactly 3 declare an
+        // empty one — `References` and its two `AnimationLayer`s. Writing it
+        // always breaks the three.js loader; writing it never makes assimp read
+        // the file with no animation at all. Neither blanket rule is right, so
+        // the distinction is carried on the node.
         write_null_record(out, wide);
     }
 
@@ -225,7 +230,15 @@ fn write_property(out: &mut Vec<u8>, property: &FbxProperty) {
     }
 }
 
-/// Writes an array header and its payload, uncompressed.
+/// Writes an array header and its payload, deflating it when that is smaller.
+///
+/// Real exporters compress array payloads, and a file with raw arrays is around
+/// 2.5x larger than the same data as an FBX SDK writer would emit. The encoding
+/// word says which was used, so a reader handles either — but "legal" and "what
+/// other tools expect" are not the same thing, and the size alone is worth it.
+///
+/// Compression is skipped when it would not shrink the payload, which is the
+/// case for small arrays where the zlib header costs more than it saves.
 fn write_array(
     out: &mut Vec<u8>,
     type_code: u8,
@@ -233,9 +246,22 @@ fn write_array(
     byte_len: usize,
     payload: impl FnOnce(&mut Vec<u8>),
 ) {
+    let mut raw = Vec::with_capacity(byte_len);
+    payload(&mut raw);
+
+    // Level 6 is zlib's default: the point is interoperability and size, not
+    // the last few percent, and higher levels cost noticeably more time on the
+    // multi-megabyte arrays a rig produces.
+    let deflated = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+    let (encoding, body) = if deflated.len() < raw.len() {
+        (1u32, deflated)
+    } else {
+        (0u32, raw)
+    };
+
     out.push(type_code);
     out.extend_from_slice(&(count as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // encoding: none
-    out.extend_from_slice(&(byte_len as u32).to_le_bytes());
-    payload(out);
+    out.extend_from_slice(&encoding.to_le_bytes());
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
 }

@@ -283,6 +283,9 @@ pub fn parse(text: &str) -> Result<FbxDocument, FbxError> {
                     name: name.to_string(),
                     properties: values_of(attrs),
                     children: Vec::new(),
+                    // ASCII has no null records, so it cannot express the
+                    // empty-scope distinction the binary format carries.
+                    empty_scope: false,
                 });
             }
 
@@ -327,6 +330,7 @@ pub fn parse(text: &str) -> Result<FbxDocument, FbxError> {
                     name: name.to_string(),
                     properties: values_of(value),
                     children: Vec::new(),
+                    empty_scope: false,
                 };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(node),

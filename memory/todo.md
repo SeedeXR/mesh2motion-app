@@ -248,9 +248,25 @@
   - **Found a second real bug.** A non-finite `Lcl_Translation` composed to a NaN matrix, and because a child multiplies by its parent's world matrix, **one bad node turned its entire subtree to NaN** — surfacing as the mesh disappearing, with nothing to say where it started. Components are now validated at read time and replaced individually, so a node's other valid components survive; counted as `ModelReport::non_finite_components`.
   - **Pinned the depth cap properly.** Deep ASCII does not exercise it: the text reader uses an explicit stack, only the binary reader recurses. The test now builds a genuinely nested binary FBX and pins the exact boundary — the outermost node is depth 0, so 257 levels are accepted and 258 are not.
 - [ ] **P2-9** Full hostile-input corpus (`test.md` §4) passing — no panics, no OOM, no hangs
-- [ ] **P2-10** Verify exports open correctly in Blender **and** Maya-compatible readers
+- [x] **P2-10** Verify exports open in Blender **and** an independent reader — *2026-08-31, and it found a real bug on the first run.*
+  - Third reader is **assimp** (`/opt/homebrew/bin/assimp`, `tools/assimp-check.sh`). Not Autodesk's FBX SDK, so **this is not proof that Maya opens a file** — it is an independently written importer, which is what makes it useful. Maya itself remains unverified and needs a machine with it installed.
+  - **It found what two readers could not.** Our FBX exports loaded in assimp with **zero animations** — 0 animations and 0 channels where the source has 1 and 53 — while the mesh, all 129 bones and every one of 49,112 faces came through perfectly. Blender and three.js both read the animation fine, so nothing in the existing gates could see it.
+  - **Cause: an empty scope.** A childless FBX node can either declare a nested list holding only its terminating null record, or declare none at all. Our reader represented both as `children: []`, so re-encoding wrote "none" for both — and assimp reads an `AnimationLayer` without the empty list as *no layer*, leaving the stack with no layers and the file with no animation. `FbxNode::empty_scope` now carries the distinction.
+  - **Both blanket rules are wrong, and I tried the wrong one first.** The reference rig has 5,144 childless nodes declaring no list and exactly **3** declaring an empty one — `References` and its two `AnimationLayer`s. Writing one for every node fixes assimp and **breaks the three.js loader** on materials. Our output now reproduces the source's census exactly: 3 / 5,144 / 952.
+  - Arrays are now **deflated** when that is smaller, which is what real exporters emit. The rebuilt reference rig went from 1,860,976 to **980,672 bytes**, and re-encoding the source produces a file smaller than the source itself.
+  - Verified after the fix: assimp matches the source on nodes, meshes, animations, faces, bones and channels for both the re-encoded source and the from-scratch rebuild; Blender still reports every field identically; three.js conformance 3/3. glTF was unaffected throughout — assimp read our GLB round trip correctly from the start (87 animations, 5,743 channels).
+  - Vertices differ under assimp (28,464 vs 24,746) because it splits vertices at normal and UV seams and our writers carry neither. That is the documented scope of the writers, not a defect; faces are the comparable figure and match exactly.
+- [ ] **P2-10b** Verify in Maya proper (Autodesk FBX SDK) — **blocked**: no Maya and no FBX SDK on this machine. `tools/assimp-check.sh` is the closest available proxy.
 
 ## P3 — Rigging UX (`m2m-rig` + `app/`)
+
+> **Read `memory/architecture.md` §8a and decision A7 before starting P3-1.**
+> Rigify (which ships with Blender) was studied in session 026 at the user's
+> request. It is **GPL-2.0-or-later and we are MIT**: reimplement its
+> architecture, never copy its code or its metarig bone data. The decision that
+> came out of it — templates become **typed chains** rather than flat bone
+> lists — shapes P3-1 through P3-4, and `m2m-rig` is still a 15-line stub, so
+> it costs no rewrite to adopt now rather than later.
 
 - [ ] **P3-0** **Preserve an existing rig on import (O9)** — *user requirement, 2026-08-30. Do this BEFORE the auto-rig workflow assumes it owns the skeleton.*
   - On import, detect whether the file already carries a skeleton and skin, and **keep them by default**: bone hierarchy, bone names, bind matrices, skin weights, and any animation. Re-rigging becomes an explicit action the user takes, not what happens if they do not read a warning.

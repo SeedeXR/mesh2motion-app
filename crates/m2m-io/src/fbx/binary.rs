@@ -235,6 +235,18 @@ pub struct FbxNode {
     pub properties: Vec<FbxProperty>,
     /// Nested nodes, in file order.
     pub children: Vec<FbxNode>,
+    /// Whether the record declared a nested list that turned out to be empty,
+    /// as opposed to declaring none at all.
+    ///
+    /// Only meaningful when `children` is empty, and it looks like a
+    /// distinction without a difference until you write the file back out.
+    /// **assimp reads an `AnimationLayer` written without the empty list as no
+    /// layer at all**, so its stack has no layers and the file loads with zero
+    /// animations — mesh and skeleton perfect, every keyframe silently gone.
+    /// The reference rig has exactly three such nodes: `References` and its two
+    /// `AnimationLayer`s. Its other 5,144 childless nodes declare no list, so
+    /// "always write one" is equally wrong and breaks the three.js loader.
+    pub empty_scope: bool,
 }
 
 impl FbxNode {
@@ -383,6 +395,10 @@ fn parse_node(
         properties.push(parse_property(cursor, budget)?);
     }
 
+    // Whether the record declared a nested list at all. A node whose extent
+    // stops at its properties declared none; one that runs on declared a list,
+    // even if that list turns out to hold only the terminating null record.
+    let declares_scope = cursor.offset() < end_offset;
     let mut children = Vec::new();
     while cursor.offset() < end_offset {
         match parse_node(cursor, version, depth + 1, budget)? {
@@ -411,10 +427,12 @@ fn parse_node(
     // and the original relies on the same thing implicitly.
     cursor.seek(end_offset)?;
 
+    let empty_scope = declares_scope && children.is_empty();
     Ok(Some(FbxNode {
         name,
         properties,
         children,
+        empty_scope,
     }))
 }
 

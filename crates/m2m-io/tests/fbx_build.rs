@@ -517,3 +517,29 @@ fn the_layer_keeps_the_name_it_was_given() {
         .collect();
     assert_eq!(layers, vec!["Layer0\u{0}\u{1}AnimLayer"]);
 }
+
+/// The animation layer declares an empty scope rather than no scope at all.
+///
+/// A childless node can either declare a nested list holding only its
+/// terminating null record, or declare none. Our reader represents both as
+/// `children: []`, so this is invisible to it — but **assimp reads an
+/// `AnimationLayer` written without the empty list as no layer at all**, and
+/// the file then loads with zero animations: mesh and bones perfect, every
+/// keyframe gone. Blender and three.js accept either form, which is why this
+/// needed a third reader to find. The reference rig writes the empty list for
+/// its two layers and for `References`, and for nothing else.
+#[test]
+fn the_animation_layer_declares_an_empty_scope() {
+    let document = build_animated(6);
+    let layer = document
+        .root("Objects")
+        .expect("Objects")
+        .children_named("AnimationLayer")
+        .next()
+        .expect("an AnimationLayer");
+    assert!(layer.children.is_empty(), "the layer has no child nodes");
+    assert!(
+        layer.empty_scope,
+        "without this assimp reads the file with no animation at all"
+    );
+}

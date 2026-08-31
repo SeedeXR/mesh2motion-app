@@ -246,6 +246,7 @@ fn both_readers_produce_the_same_model() {
         name: name.into(),
         properties: props,
         children,
+        empty_scope: false,
     };
     let p = |name: &str, ty: &str, flags: &str, values: Vec<FbxProperty>| {
         let mut props = vec![

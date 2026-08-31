@@ -318,6 +318,20 @@ fn node(name: &str, properties: Vec<FbxProperty>, children: Vec<FbxNode>) -> Fbx
         name: name.into(),
         properties,
         children,
+        empty_scope: false,
+    }
+}
+
+/// A node that declares a nested list and puts nothing in it.
+///
+/// The difference is invisible to our reader and decides whether assimp sees an
+/// `AnimationLayer` at all — see `FbxNode::empty_scope`.
+fn empty_scope_node(name: &str, properties: Vec<FbxProperty>) -> FbxNode {
+    FbxNode {
+        name: name.into(),
+        properties,
+        children: Vec::new(),
+        empty_scope: true,
     }
 }
 
@@ -783,15 +797,21 @@ fn stack_node(id: i64, clip: &Clip) -> FbxNode {
 /// FBX allows a stack to blend several, but the reader takes only the first —
 /// as three.js does — so writing more than one would produce a file we cannot
 /// read back.
+/// The layer an animation's curve nodes hang from.
+///
+/// Written with an **empty scope**, which the reference export also does. A
+/// layer written without one is invisible to assimp: its stack then has no
+/// layers, and the file loads with the mesh and skeleton intact and not a
+/// single keyframe. Blender and three.js read it either way, which is exactly
+/// why this needed a third reader to catch.
 fn layer_node(id: i64, name: &str) -> FbxNode {
-    node(
+    empty_scope_node(
         "AnimationLayer",
         vec![
             FbxProperty::I64(id),
             FbxProperty::Str(object_name(name, "AnimLayer")),
             FbxProperty::Str(String::new()),
         ],
-        vec![],
     )
 }
 

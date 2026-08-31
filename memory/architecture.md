@@ -161,6 +161,91 @@ Blender with the companion add-on, for artist round-tripping).
   never panic, never OOM. Fuzz targets required (`test.md` §5).
 - No telemetry, no network calls at runtime. Fonts and assets are vendored.
 
+## 8a. Prior art — Blender's Rigify
+
+*Researched session 026, at the user's request. Read from the addon shipped with
+the installed Blender (`/Applications/Blender.app/Contents/Resources/5.2/scripts/addons_core/rigify`);
+the 2.81 manual URL returns 403, and the source is the better reference anyway.*
+
+### Licence — read this first
+
+**Rigify is `GPL-2.0-or-later`. mesh2motion is `MIT` (`Cargo.toml:15`).**
+
+- **Do not** copy Rigify code into this repo.
+- **Do not** copy or redistribute its metarig data. The bone coordinates in
+  `metarigs/Animals/*.py` are the creative content of a GPL file, so a template
+  derived from them cannot ship under MIT.
+- **Do** reimplement architecture and taxonomy. Ideas and structure are fair to
+  learn from; that is not the same as copying expression.
+- **Do** use Blender+Rigify locally as a dev-time comparison tool, provided
+  nothing generated from GPL metarig data is committed.
+
+### What it is
+
+Two tiers, which is the insight worth taking:
+
+1. **Metarig** — a small, plain, editable armature the user fits to the mesh.
+   Every bone carries a `rigify_type` (`limbs.paw`, `spines.basic_spine`, ...)
+   plus per-type `rigify_parameters`. The template is *data*: "this chain is a
+   paw, that chain is a tentacle."
+2. **Generated rig** — a 10-stage pipeline (`initialize`, `prepare_bones`,
+   `generate_bones`, `parent_bones`, `configure_bones`, `preapply_bones`,
+   `apply_bones`, `rig_bones`, `generate_widgets`, `finalize`) expands each
+   tagged chain into deform (`DEF-`), organizational (`ORG-`), mechanism
+   (`MCH-`) and control bones, with constraints, drivers and widgets. The
+   phases are strict because chains cross-reference each other.
+
+43 rig-type modules. Metarig sizes: human 159 bones, wolf 190, cat 174, bird 75,
+horse 70, shark 35, basic_human 29, basic_quadruped 34.
+
+**A wing is not a wing solver.** The bird metarig's 75 bones are tagged
+13x `limbs.simple_tentacle`, 2x `limbs.paw`, and one each of
+`spines.super_head` / `basic_tail` / `basic_spine`, plus 20x `basic.super_copy`.
+Composition of generic chains, not a bespoke type per species.
+
+### Why it matters here
+
+The species overlap with our own templates is near total:
+
+| Rigify | ours (bone counts measured session 025) |
+|---|---|
+| `human`, `basic_human` | `rig-human` (66) |
+| `bird` | `rig-bird` (55) |
+| `cat`, `wolf` | `rig-fox` (49) |
+| `horse` | `rig-horse` (56) |
+| `shark` | `rig-shark` (33) |
+| — | `rig-snake` (28), `rig-spider` (56), `rig-dragon` (99), `rig-kaiju` (58) |
+
+We already have the species. What we lack is the **typed chain**: our templates
+are flat bone lists in a `.glb`, with nothing saying "these five bones are a
+digitigrade leg."
+
+### What to take, ranked
+
+1. **A typed-chain template format** (see A7 below). Highest value, and the
+   timing is right: `crates/m2m-rig/src/lib.rs` is a 15-line stub, so there is
+   nothing to rewrite.
+2. **The rig-type taxonomy as a topology specification** — not the code, the
+   list: `limbs/{arm,leg,paw,front_paw,rear_paw,simple_tentacle,spline_tentacle,super_finger,super_palm}`
+   and `spines/{basic_spine,basic_tail,super_head}`. It is a tested answer to
+   "what kinds of limb actually exist across vertebrates". `paw.py` carrying an
+   optional **second heel control** is the digitigrade detail that separates a
+   fox rig that works from one that does not.
+3. **The naming discipline** (`utils/naming.py`: `org()`, `mch()`, `deformer()`,
+   `strip_org()`, `make_derived_name()`). A systematic prefix scheme separating
+   what deforms the mesh from what is only mechanism. Needed the moment we add
+   IK for viewport posing, because **only deform bones may be skinned and
+   exported** — getting that boundary wrong ships files with several times the
+   bones a DCC expects.
+
+### What to skip
+
+Widgets and the generated Python IK/FK UI. They are Blender-only and
+unexportable: neither FBX nor glTF carries constraints or drivers, so a control
+rig cannot survive export at all. We export a deform skeleton plus baked
+animation, which is the correct Mixamo-like model. **Rigify's value to us is
+template structure and limb taxonomy, not rig generation.**
+
 ## 9. Architecture decision record
 
 | # | Date | Decision | Rationale |
@@ -172,3 +257,4 @@ Blender with the companion add-on, for artist round-tripping).
 | A4 | 2026-08-29 | Drop hand-rolled `Quat`/`Vec3`/`Transform`, use `glam` | 1,300 LOC deleted; `glam` is SIMD-optimised and battle-tested |
 | A5 | 2026-08-29 | Neural rigging (UniRig) deferred to opt-in phase | ~1.5 GB RAM + ORT-from-source build conflicts with the resource budget; templates + geodesic solve first |
 | A6 | 2026-08-29 | Binary IPC for buffers, JSON only for control | JSON vertex arrays are ~7× larger and parse-dominated |
+| A7 | 2026-08-31 | **Templates become typed chains, not flat bone lists** — a template declares chains with a kind (`spine`, `tail`, `neck`, `digitigrade_leg`, `plantigrade_leg`, `wing`, `finger`, `tentacle`) and per-kind parameters | Structure learned from Rigify (§8a), reimplemented, never copied — it is GPL and we are MIT. Pays off three ways: fitting gets per-kind rules (a paw needs a ground plane and a heel pivot, a spine needs a centreline); retarget becomes chain-to-chain rather than name-to-name, superseding most of the legacy's 32-category `bone-automap` name guessing; and adding a species becomes data rather than code, which is what "intuitive to rig different kinds of animals" (O2) actually requires. `m2m-rig` is still a stub, so this costs no rewrite. |

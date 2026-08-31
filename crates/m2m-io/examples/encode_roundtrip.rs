@@ -32,5 +32,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         encoded.len(),
         document.roots.len()
     );
+    // The claim this example rests on: re-encoding does not change the
+    // document. Asserted rather than assumed, because every conclusion drawn
+    // by comparing the two files depends on it.
+    let reparsed = m2m_io::fbx::binary::parse(&encoded)?;
+    if reparsed == document {
+        println!("re-parsed document is identical to the original");
+    } else {
+        println!("RE-PARSED DOCUMENT DIFFERS from the original");
+        for (i, (a, b)) in reparsed.roots.iter().zip(&document.roots).enumerate() {
+            if a != b {
+                println!("  root {i} differs: {} vs {}", a.name, b.name);
+            }
+        }
+        if reparsed.roots.len() != document.roots.len() {
+            println!(
+                "  root count {} vs {}",
+                reparsed.roots.len(),
+                document.roots.len()
+            );
+        }
+    }
     Ok(())
 }

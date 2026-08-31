@@ -187,6 +187,7 @@ fn geometry_object(vertices: Vec<f64>, polygon_indices: Vec<i64>) -> Object {
         name: name.into(),
         properties: vec![prop],
         children: vec![],
+        empty_scope: false,
     };
     Object {
         id: 1,
@@ -201,6 +202,7 @@ fn geometry_object(vertices: Vec<f64>, polygon_indices: Vec<i64>) -> Object {
                 child("Vertices", FbxProperty::F64Array(vertices)),
                 child("PolygonVertexIndex", FbxProperty::I64Array(polygon_indices)),
             ],
+            empty_scope: false,
         },
     }
 }
