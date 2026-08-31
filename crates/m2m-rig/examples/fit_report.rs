@@ -97,6 +97,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fitted.scale, fitted.offset
     );
 
+    // What refinement does to each spine joint.
+    let axis = m2m_rig::fit::body_axis(&rest, &spine).expect("axis");
+    println!("axis   {axis:?}");
+    let mut refined = fitted.clone();
+    m2m_rig::fit::refine_spine(&mut refined, &mesh, &landmarks, &spine, axis);
+    for bone in spine.iter().map(String::as_str) {
+        let (a, b) = (
+            fitted.position_of(bone).unwrap(),
+            refined.position_of(bone).unwrap(),
+        );
+        println!(
+            "  {bone:14} before ({:+.3},{:+.3},{:+.3})  after ({:+.3},{:+.3},{:+.3})  moved {:.4}",
+            a.x,
+            a.y,
+            a.z,
+            b.x,
+            b.y,
+            b.z,
+            a.distance(b)
+        );
+    }
+
     // Where the lower spine lands, and what the mesh looks like at that height.
     for bone in spine.iter().map(String::as_str) {
         let Some(at) = fitted.position_of(bone) else {

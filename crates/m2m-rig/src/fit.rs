@@ -294,3 +294,146 @@ impl Fitted {
         self.positions.get(index).copied()
     }
 }
+
+/// Moves each spine joint onto the mesh's midline **at its own height**.
+///
+/// [`fit_uniform`] gives the whole skeleton one depth, taken from the body's
+/// overall midline. That is right on average and wrong in detail: a torso is
+/// not a straight tube, and a chest sits further forward than a pelvis. On
+/// `human-sintel` the single global depth left `spine_03` 0.031 outside her
+/// chest — 1.7% of her height — with every other joint inside.
+///
+/// So each joint is re-placed against the slice of mesh at its own position
+/// along the body axis: on the symmetry plane across, and on the median of that
+/// slice in depth. A joint whose slice is empty keeps the placement it had,
+/// since there is nothing to measure against.
+///
+/// **Upright bodies only.** The same idea applied to a horizontal body makes it
+/// worse: a quadruped's backbone runs along the *top* of its torso, and the
+/// median of a slice is dragged down by the legs hanging below it. Measured on
+/// the fox, refining by slice median moved its whole spine from y 1.08 to 0.74
+/// — a fall of 20% of its height — and pushed two joints out of a body they had
+/// been inside. Until there is a statistic for "where a backbone sits
+/// vertically" that is justified by measurement rather than plausible, a
+/// horizontal body keeps its uniform placement, which puts every joint inside
+/// on every horizontal creature tested.
+///
+/// Only the spine. Limbs leave the midline by definition and need their own
+/// treatment — see [`ground_bone`].
+pub fn refine_spine(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    landmarks: &Landmarks,
+    spine: &[String],
+    axis: BodyAxis,
+) {
+    if axis != BodyAxis::Upright {
+        return;
+    }
+    let extent = landmarks.extent();
+    // The slice is a band around the joint, and its width trades noise against
+    // locality: too thin and a slice can be empty, too thick and it averages
+    // away the very variation this exists to follow.
+    let band = extent.y * 0.04;
+    if band <= f32::EPSILON {
+        return;
+    }
+    let half_width = extent.x * 0.15;
+
+    for bone in spine {
+        let Some(index) = fitted.bones.iter().position(|b| b == bone) else {
+            continue;
+        };
+        let at = fitted.positions[index];
+        // Vertices near this joint along the body axis, and near the midline
+        // across it. Off-midline vertices belong to limbs, not the body.
+        let mut slice: Vec<Vec3> = mesh
+            .positions
+            .iter()
+            .copied()
+            .filter(|v| {
+                (v.y - at.y).abs() <= band && (v.x - landmarks.symmetry_x).abs() <= half_width
+            })
+            .collect();
+        if slice.is_empty() {
+            continue;
+        }
+
+        slice.sort_by(|a, b| a.z.total_cmp(&b.z));
+        fitted.positions[index] = Vec3::new(landmarks.symmetry_x, at.y, slice[slice.len() / 2].z);
+    }
+}
+
+/// Which bone of a limb chain touches the ground, measured from the template's
+/// own rest pose.
+///
+/// **Measured, not derived from posture.** The first version of this picked a
+/// bone by counting back from the end of the chain, on the reasoning that a
+/// plantigrade sole contacts at the foot while an unguligrade hoof contacts at
+/// the very tip. Checking the three rest poses says otherwise: the lowest bone
+/// is the **last** bone in all of them — `ball_leaf_l` at y 0.012 for the human,
+/// `Back_Leg_Tip_L` at 0.027 for the fox, `back_leg_leaf_l` at 0.011 for the
+/// horse. The templates are authored standing on the ground, so the ground
+/// contact is a thing to look up rather than infer.
+///
+/// What posture *does* describe is how high the ankle rides, which is a real
+/// difference and a large one — see [`ankle_height`].
+///
+/// `None` for a chain with no bones, or whose bones are absent from the rest
+/// pose.
+pub fn ground_bone<'a>(chain: &'a crate::template::Chain, rest: &RestPose) -> Option<&'a str> {
+    chain
+        .bones
+        .iter()
+        .filter_map(|b| rest.position_of(b).map(|p| (b.as_str(), p.y)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(bone, _)| bone)
+}
+
+/// How high a limb's ankle rides, as a fraction of the rest pose's height.
+///
+/// This is what separates the three postures, and the separation is wide:
+/// measured on the shipped templates, a plantigrade human's ankle sits at 6% of
+/// its height, a digitigrade fox's at 21%, an unguligrade horse's at 32%. That
+/// is the geometry a fitter has to preserve when it puts a leg on a new mesh —
+/// grounding the toe is common to all three, but *where the ankle ends up* is
+/// not.
+///
+/// The ankle is taken as the chain's highest bone that still sits in the lower
+/// half of the limb's own span, which is what "the joint above the foot" means
+/// without depending on how many bones a species puts in its foot.
+///
+/// `None` when the chain has no posture, or too few bones in the rest pose.
+pub fn ankle_height(chain: &crate::template::Chain, rest: &RestPose) -> Option<f32> {
+    chain.posture?;
+    let heights: Vec<(usize, f32)> = chain
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| rest.position_of(b).map(|p| (i, p.y)))
+        .collect();
+    if heights.len() < 3 {
+        return None;
+    }
+    let (top, bottom) = (
+        heights
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f32::NEG_INFINITY, f32::max),
+        heights
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f32::INFINITY, f32::min),
+    );
+    let span = top - bottom;
+    if span <= f32::EPSILON {
+        return None;
+    }
+    let midpoint = bottom + span * 0.5;
+    let ankle = heights
+        .iter()
+        .filter(|(_, y)| *y <= midpoint)
+        .map(|(_, y)| *y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    ankle.is_finite().then_some(ankle)
+}
