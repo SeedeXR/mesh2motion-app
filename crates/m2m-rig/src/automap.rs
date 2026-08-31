@@ -112,6 +112,12 @@ pub struct Signature {
     /// Where its midpoint sits across the body, over the skeleton's height.
     /// Negative is one side, positive the other; near zero is the midline.
     pub lateral: f32,
+    /// Offset from the parent bone to this chain's first bone, over height.
+    ///
+    /// Where on the parent a chain hangs. Two chains leaving the same joint —
+    /// four fingers off one hand — are alike in every other term and differ
+    /// only here.
+    pub parent_offset: Vec3,
     /// Height of its first bone above the skeleton's lowest point, over height.
     pub attachment_height: f32,
 }
@@ -129,10 +135,17 @@ impl Signature {
         let lateral = (self.lateral - other.lateral).abs();
         let reach = (self.reach - other.reach).abs();
         let attachment = (self.attachment_height - other.attachment_height).abs();
+        let hang = (self.parent_offset - other.parent_offset).length();
         let bones = (self.bones as f32 - other.bones as f32).abs() / 8.0;
         let depth = (self.depth as f32 - other.depth as f32).abs() / 8.0;
 
-        2.0 * direction + 2.0 * lateral + reach + attachment + 0.5 * bones + 0.5 * depth
+        2.0 * direction
+            + 2.0 * lateral
+            + reach
+            + attachment
+            + 3.0 * hang
+            + 0.5 * bones
+            + 0.5 * depth
     }
 }
 
@@ -176,6 +189,22 @@ pub fn signature_of(skeleton: &Skeleton, chain: &[usize]) -> Option<Signature> {
         reach: span.length() / height,
         lateral: ((start.x + end.x) * 0.5 - symmetry_x) / height,
         attachment_height: (start.y - lo.y) / height,
+        parent_offset: match skeleton.parents[first] {
+            // Scaled by the parent bone's own length, not the skeleton's
+            // height: a finger's offset from the hand is a fraction of a
+            // percent of a body, which is noise beside the other terms.
+            Some(parent) => {
+                let offset = start - skeleton.positions[parent];
+                let scale = match skeleton.parents[parent] {
+                    Some(grandparent) => skeleton.positions[parent]
+                        .distance(skeleton.positions[grandparent])
+                        .max(f32::EPSILON),
+                    None => height,
+                };
+                offset / scale
+            }
+            None => Vec3::ZERO,
+        },
     })
 }
 

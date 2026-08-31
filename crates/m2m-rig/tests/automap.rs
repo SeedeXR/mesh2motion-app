@@ -554,12 +554,23 @@ fn an_unrecognised_rig_falls_back_to_structure() {
     );
 }
 
-/// Where the two strategies disagree is the fingers, and only the fingers.
+/// Structure now reproduces the hand-authored Mixamo table exactly.
 ///
-/// Pinned because it is the measured reason the tables exist. If structure ever
-/// learns to order fingers, this test is how that will show up.
+/// This test used to assert the opposite — that the two disagreed, and only
+/// about fingers. That was true and measured: 41 of 65 bones agreed and all 24
+/// disagreements were fingers, because index, middle, ring and pinky are four
+/// near-identical chains leaving the same hand.
+///
+/// What fixed it was scaling a chain's offset from its parent by the **parent
+/// bone's own length** rather than by the skeleton's height. A finger sits
+/// about 2% of a body height from the hand, so against terms weighted around
+/// 1.0 that difference was numerically invisible; measured against the hand
+/// itself it is decisive. Agreement went 41 -> 65 of 65.
+///
+/// The old assertion fired the moment it stopped being true, which is what it
+/// was for.
 #[test]
-fn structure_and_the_table_differ_only_on_fingers() {
+fn structure_reproduces_the_mixamo_table_exactly() {
     let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
     let theirs = skeleton_of("test-files/retarget testing/mixamo-sample-rig.glb");
     let rigs = known_rigs();
@@ -567,27 +578,27 @@ fn structure_and_the_table_differ_only_on_fingers() {
 
     let by_table = mixamo.map_bones(&ours, &theirs);
     let by_structure = map_bones(&ours, &theirs);
+    assert_eq!(by_table.len(), 65, "the table covers 65 bones");
 
-    let mut disagreements = Vec::new();
-    for (from, table_to) in &by_table {
-        if by_structure.get(from).is_some_and(|s| s != table_to) {
-            disagreements.push(ours.names[*from].as_str());
-        }
-    }
-    assert!(
-        !disagreements.is_empty(),
-        "they agreed everywhere, which is new"
-    );
-    let non_finger: Vec<&&str> = disagreements
+    let disagreements: Vec<&str> = by_table
         .iter()
-        .filter(|name| {
-            !["thumb", "index", "middle", "ring", "pinky"]
-                .iter()
-                .any(|finger| name.starts_with(finger))
-        })
+        .filter(|(from, to)| by_structure.get(from).is_some_and(|s| s != *to))
+        .map(|(from, _)| ours.names[*from].as_str())
         .collect();
     assert!(
-        non_finger.is_empty(),
-        "structure and the table now differ outside the fingers: {non_finger:?}"
+        disagreements.is_empty(),
+        "{} bones differ from the table: {:?}",
+        disagreements.len(),
+        &disagreements[..disagreements.len().min(8)]
+    );
+
+    // And every table bone was actually reached, so agreement is not vacuous.
+    assert_eq!(
+        by_table
+            .keys()
+            .filter(|from| by_structure.contains_key(from))
+            .count(),
+        by_table.len(),
+        "structure did not map every bone the table covers"
     );
 }

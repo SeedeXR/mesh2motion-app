@@ -2373,3 +2373,52 @@ worth having: the tables are the artifact, so the tables get mutated.
 
 The legacy's `BoneAutoMapping.test.ts` and `BoneNameTokenizer.test.ts`
 expectations as Rust baselines, and finger ordering for the structural fallback.
+
+## Session 035 — finger ordering: structure now matches the table exactly
+
+CI confirmed green for 216fd66 before starting.
+
+### Result
+
+Structural matching reproduces the hand-authored Mixamo table **exactly, 65 of
+65**, up from 41 of 65. The 24 disagreements — all fingers — are gone.
+
+### The fix was a yardstick, not an idea
+
+`Signature` gained `parent_offset`: where on its parent a chain hangs. Four
+fingers leaving one hand are alike in direction, reach, side and attachment
+height, and differ only in that.
+
+Adding the term changed **nothing** at first — still 41 of 65, with the finger
+errors merely shuffling from ring to pinky. The reason is scale: a finger sits
+about 2% of a body height from the hand, so expressed as a fraction of skeleton
+height the difference is numerically invisible next to terms weighted around
+1.0. Scaling the same offset by the **parent bone's own length** made it
+decisive.
+
+> A term can be exactly the right idea and still do nothing, because it is
+> measured against the wrong yardstick. The first attempt looked like a failed
+> hypothesis and was a units bug.
+
+I nearly reverted it. The measurement said 41/65 unchanged, and the honest
+reading of that was "this idea does not help" — one cheap variant later it was
+65/65.
+
+### The old test did its job
+
+`structure_and_the_table_differ_only_on_fingers` asserted the disagreements
+existed and were fingers-only. It failed with "they agreed everywhere, which is
+new" the moment the fix landed, and is now
+`structure_reproduces_the_mixamo_table_exactly`. A test that pins a known
+limitation is worth writing precisely because it fires when the limitation
+lifts.
+
+### Gate coverage (3 mutations, 3 caught)
+
+parent-offset term dropped · offset scaled by skeleton height again (the 41/65
+version) · offset compared by magnitude instead of direction.
+
+### Next
+
+The legacy's `BoneAutoMapping.test.ts` and `BoneNameTokenizer.test.ts`
+expectations as Rust behaviour baselines — the last piece of P3-4.
