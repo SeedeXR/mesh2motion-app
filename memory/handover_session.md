@@ -2070,3 +2070,70 @@ template spine.
 **Per-chain refinement**, where `role` and `posture` finally matter: a
 plantigrade sole, a digitigrade toe and an unguligrade hoof are three different
 ground contacts, and a spider's legs have none of them.
+
+## Session 030 — per-chain refinement, and five reference animals
+
+CI confirmed green for 0722787 before starting; per-chain refinement shipped as
+d70847d.
+
+### Refinement (P3-3, committed separately as d70847d)
+
+`refine_spine` moves each spine joint onto the mesh's midline at its own height,
+which removes the `human-sintel` budget entirely — all eight human bodies plus
+fox and horse now pass with **zero** allowance.
+
+Two things measurement overturned:
+
+1. **Refinement is upright-only.** Applied to a horizontal body it makes things
+   worse: a quadruped's backbone runs along the *top* of the torso and the slice
+   median is dragged down by the legs. On the fox it moved the spine from y 1.08
+   to 0.74 — 20% of its height — pushing two joints out of a body they were in.
+2. **`ground_bone` is measured, not derived from posture.** I had written "a
+   horse grounded at its foot bone goes through the floor" into the docs. All
+   three rest poses ground at the **last** bone. What posture actually separates
+   is **ankle height**: 6% / 21% / 26% of template height for plantigrade,
+   digitigrade, unguligrade. (I had also claimed 32% for the horse, from
+   dividing its ankle height by the *fox's* template height.)
+
+### The user's reference animals
+
+`references/human_based_fbx_mixamo_animations/animals-3d/` — giraffe, african
+buffalo, crow, southern white rhino, hyena. **`references/` is gitignored**, so
+these are study material: no CI test may depend on them, and with licensing
+unknown nothing derived from them ships as a template.
+
+| animal | our reader |
+|---|---|
+| crow (FBX) | 91 bones, 9 clips, 1620 channels |
+| hyena (FBX) | 122 bones, 2 clips — **matches Blender's 122** |
+| buffalo (GLB) | 42 bones, 28,637 verts, 1 clip 14.6 s |
+| rhino (GLB) | 35 bones, 33,743 verts, 1 clip 17.3 s |
+| giraffe (.blend → GLB) | 48 bones, 3 meshes, 2 clips — **matches Blender exactly** |
+
+Three findings worth keeping:
+
+- **Blender 5.2 cannot open the crow; our reader can.** Its FBX importer raises
+  `AttributeError: 'CyclesLightSettings' object has no attribute 'cast_shadow'`
+  at `io_scene_fbx/import_fbx.py:2255`, because the file contains a light. The
+  file is a valid `Kaydara FBX Binary`. **Blender is an independent reader, not
+  an infallible one** — worth remembering given how much of our gating leans on
+  it.
+- **A skin's joint list is not the set of deforming bones.** The buffalo carries
+  four `PoleTarget` bones weighted to nothing that sit *outside* the body by
+  design. Our own `rig-human` has three (`root`, two thumb tips). Now reported by
+  `Document::non_deforming_joints`, because "is this bone inside the mesh" and
+  "should this be exported" both get the wrong answer for them.
+- **The giraffe's bones are named `Bone.027`..`Bone.055`**, many parented to
+  nothing — 31 chains for 48 bones. The strongest argument yet that **P3-4 must
+  match on chain structure, not names**: the legacy's 32-category tokenizer has
+  nothing to work with on a real user asset.
+
+`ChainKind::Control` is **justified but deliberately not added**: the buffalo's
+pole targets are a kind the vocabulary cannot express, but the rule is that a
+kind needs a real template that cannot be described without it, and the buffalo
+cannot ship as a template. Add it with the first control-bearing rig we own.
+
+### State
+
+278 release tests, 177 in `m2m-io` debug, 0 failures; clippy and fmt clean.
+5 mutations this session, 5 caught.

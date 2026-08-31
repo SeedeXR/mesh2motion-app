@@ -269,6 +269,50 @@
 > lives in `crates/m2m-rig/src/template.rs` and all nine templates are
 > annotated and checked against their `.glb` in CI.
 
+### Reference animals the user supplied *(2026-09-01, `references/human_based_fbx_mixamo_animations/animals-3d/`)*
+
+Five species from outside our own asset set: **giraffe, african buffalo, crow,
+southern white rhino, hyena**. `references/` is **gitignored**, so these are
+local study material — no test may depend on them in CI, and their licensing is
+unknown, so nothing derived from them ships as a template.
+
+What our readers make of them, and what it taught us:
+
+| animal | format | our reader |
+|---|---|---|
+| crow | FBX | 91 bones, 60 clusters, **9 clips**, 1620 channels |
+| hyena | FBX | 122 bones, 101 clusters, 2 clips — **matches Blender's 122** |
+| buffalo | GLB | 42 bones, 28,637 verts all weighted, 1 clip 14.6 s |
+| rhino | GLB | 35 bones, 33,743 verts, 3 meshes, 1 clip 17.3 s |
+
+- **Blender 5.2 cannot open the crow at all; our reader can.** Its FBX importer
+  raises `AttributeError: 'CyclesLightSettings' object has no attribute
+  'cast_shadow'` at `io_scene_fbx/import_fbx.py:2255` because the file contains
+  a light. The file is a valid `Kaydara FBX Binary`. Worth remembering the next
+  time Blender is treated as the arbiter: it is an independent reader, not an
+  infallible one.
+- **A skin's joint list is not the set of bones that deform the mesh.** The
+  buffalo carries `PoleTarget.L/R` and `PoleTargetBack.L/R` — IK pole targets,
+  weighted to nothing, sitting *outside* the body by design, because a pole
+  target belongs in front of the knee. Our own `rig-human` has the same shape
+  for a different reason: `root` and two `thumb_04_leaf` tips, 63 of 66 bones
+  deforming. `Document::non_deforming_joints` now reports them, because
+  anything that asks "is this bone inside the mesh" or "should this be
+  exported" gets the wrong answer for them.
+- **`ChainKind::Control` is justified but not yet added.** The buffalo's pole
+  targets are a chain kind our vocabulary cannot express, which is the bar the
+  format sets. It is deliberately not added yet: the rule is that a kind needs a
+  real template that cannot be described without it, and we cannot ship the
+  buffalo as a template. Add it with the first control-bearing rig we can ship.
+- The buffalo and rhino are both **unguligrade** and the hyena **digitigrade**,
+  which is the posture split already recorded.
+- **The giraffe's bones have no meaningful names.** Exported from its `.blend`
+  via Blender (48 bones, 3 meshes, 2 actions — our reader agrees exactly), every
+  bone is called `Bone.027` through `Bone.055`, and many are parented to nothing:
+  31 chains for 48 bones. **This is the strongest argument yet for P3-4 matching
+  on chain structure rather than names** — the legacy's 32-category name
+  tokenizer has nothing to work with here, and a real user asset looks like this.
+
 - [ ] **P3-0** **Preserve an existing rig on import (O9)** — *user requirement, 2026-08-30. Do this BEFORE the auto-rig workflow assumes it owns the skeleton.*
   - On import, detect whether the file already carries a skeleton and skin, and **keep them by default**: bone hierarchy, bone names, bind matrices, skin weights, and any animation. Re-rigging becomes an explicit action the user takes, not what happens if they do not read a warning.
   - **This inverts the legacy's default, it does not port it.** `ModelCleanupUtility.strip_out_all_unecessary_model_data` turns every `SkinnedMesh` into a plain `Mesh` and deletes `skinIndex`/`skinWeight`; only `strip_out_retargeting_model_data` preserves the hierarchy, and only the retarget flow calls it. `ModelAnalysisReport.ts:353` warns *"Mesh is already rigged. This workflow drops the existing skeleton"* — which is the behaviour to remove.

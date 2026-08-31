@@ -434,3 +434,39 @@ fn an_accessor_of_the_wrong_type_is_skipped_not_read() {
     assert!(document.primitives.is_empty());
     assert_eq!(document.report.invalid_accessors, 1);
 }
+
+/// A skin's joint list is not the set of bones that deform the mesh.
+///
+/// Found while reading reference animals a user supplied: an `african
+/// buffalo.glb` carries four `PoleTarget` bones that drive an IK solve and are
+/// weighted to nothing, sitting outside the body by design. Our own rigs have
+/// the same shape for a different reason — a root and two fingertip markers.
+///
+/// It matters because anything asking "is this bone inside the mesh" or "should
+/// this bone be exported" gets the wrong answer for these.
+#[test]
+fn joints_that_deform_nothing_are_reported() {
+    let document = glb::read(&fixture("models-variation/human-sophia.glb")).expect("reads");
+    let skin = &document.skins[0];
+    let idle = document.non_deforming_joints(0);
+    let names: Vec<&str> = idle
+        .iter()
+        .map(|&i| document.nodes[skin.joints[i]].name.as_str())
+        .collect();
+
+    assert_eq!(
+        names,
+        vec!["root", "thumb_04_leaf_l", "thumb_04_leaf_r"],
+        "a root and two fingertip markers carry no weight"
+    );
+    assert_eq!(skin.joints.len() - idle.len(), 63, "63 of 66 bones deform");
+}
+
+/// A skin index that does not exist yields nothing rather than panicking.
+#[test]
+fn non_deforming_joints_of_a_missing_skin_is_empty() {
+    let document = glb::read(&fixture("models/model-human.glb")).expect("reads");
+    assert!(document.skins.is_empty(), "this model has no skin");
+    assert!(document.non_deforming_joints(0).is_empty());
+    assert!(document.non_deforming_joints(99).is_empty());
+}

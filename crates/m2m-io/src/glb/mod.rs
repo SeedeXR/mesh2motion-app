@@ -259,6 +259,51 @@ pub struct Document {
 }
 
 impl Document {
+    /// Joints of a skin that no vertex is weighted to.
+    ///
+    /// A skin's joint list is not the same as the set of bones that deform the
+    /// mesh, and the difference is not a defect. Three kinds of bone show up
+    /// here in real files:
+    ///
+    /// - **Roots and leaf tips.** Our own `rig-human` has three: `root` and the
+    ///   two `thumb_04_leaf` bones. They mark structure and orientation.
+    /// - **Controls.** An `african buffalo.glb` supplied as reference carries
+    ///   `PoleTarget.L/R` and `PoleTargetBack.L/R`, which drive an IK solve and
+    ///   sit *outside* the body on purpose — a pole target belongs in front of
+    ///   the knee, not inside it.
+    /// - Bones left over from an authoring rig that the exporter kept.
+    ///
+    /// Callers need this because anything that asks "is this bone inside the
+    /// mesh" or "should this bone be exported" gets the wrong answer for them.
+    /// Returns indices into `skin.joints`.
+    pub fn non_deforming_joints(&self, skin: usize) -> Vec<usize> {
+        let Some(skin) = self.skins.get(skin) else {
+            return Vec::new();
+        };
+        let mut deforms = vec![false; skin.joints.len()];
+        for primitive in &self.primitives {
+            for (joints, weights) in primitive
+                .joints
+                .chunks_exact(4)
+                .zip(primitive.weights.chunks_exact(4))
+            {
+                for (&joint, &weight) in joints.iter().zip(weights) {
+                    if weight > 0.0 {
+                        if let Some(slot) = deforms.get_mut(joint as usize) {
+                            *slot = true;
+                        }
+                    }
+                }
+            }
+        }
+        deforms
+            .iter()
+            .enumerate()
+            .filter(|(_, &d)| !d)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// How many distinct glTF meshes the primitives came from.
     pub fn mesh_count(&self) -> usize {
         let mut seen: Vec<usize> = self.primitives.iter().map(|p| p.mesh).collect();
