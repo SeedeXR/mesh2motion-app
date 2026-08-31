@@ -40,6 +40,26 @@ Every new creature type needs new correctors. That does not scale.
 | O6 | Performance | 50k-vertex rig ≤ 3 s, ≤ 1.5 GB peak, 0% idle CPU |
 | O7 | Dark-themed, guided UX | Lucide icons, 42dot/Asta Sans, per-step instruction panel |
 | O8 | **Pose-agnostic humans** | the same model rigs correctly whether authored in A-pose or T-pose, and T-pose-authored clips retarget onto an A-pose bind without arm drift |
+| O9 | **An existing rig is preserved, never silently discarded** *(user requirement, 2026-08-30)* | importing an already-rigged model keeps its skeleton, bone names, hierarchy and skin weights by default; re-rigging is a deliberate choice, not the default, and nothing is lost without the user asking |
+
+### O9 — why this is a change, not a port
+
+The legacy has both behaviours but makes the user pick the right one, and
+strips the rig if they pick wrong:
+
+- `ModelCleanupUtility.strip_out_all_unecessary_model_data` converts every
+  `SkinnedMesh` to a plain `Mesh` and deletes the `skinIndex` and `skinWeight`
+  attributes — the existing rig is gone.
+- `ModelCleanupUtility.strip_out_retargeting_model_data` preserves the
+  `SkinnedMesh` and its bone hierarchy, but only the retarget flow uses it.
+- `ModelAnalysisReport` warns: *"Mesh is already rigged. This workflow drops the
+  existing skeleton - use \"Use Your Rigged Model\" to keep it."*
+
+So today preservation is opt-in and losing the rig is the default for anyone who
+does not read the warning. **The requirement inverts that.** The read path
+already has everything needed — `model::parse_all` gives the bone hierarchy and
+`skin::parse_all` gives clusters, weights and bind matrices — so this is a
+workflow decision, not missing capability.
 
 ## Deliverables
 

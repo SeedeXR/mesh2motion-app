@@ -228,6 +228,12 @@
 
 ## P3 — Rigging UX (`m2m-rig` + `app/`)
 
+- [ ] **P3-0** **Preserve an existing rig on import (O9)** — *user requirement, 2026-08-30. Do this BEFORE the auto-rig workflow assumes it owns the skeleton.*
+  - On import, detect whether the file already carries a skeleton and skin, and **keep them by default**: bone hierarchy, bone names, bind matrices, skin weights, and any animation. Re-rigging becomes an explicit action the user takes, not what happens if they do not read a warning.
+  - **This inverts the legacy's default, it does not port it.** `ModelCleanupUtility.strip_out_all_unecessary_model_data` turns every `SkinnedMesh` into a plain `Mesh` and deletes `skinIndex`/`skinWeight`; only `strip_out_retargeting_model_data` preserves the hierarchy, and only the retarget flow calls it. `ModelAnalysisReport.ts:353` warns *"Mesh is already rigged. This workflow drops the existing skeleton"* — which is the behaviour to remove.
+  - **No new read capability is needed**: `model::parse_all` already returns the hierarchy with world matrices, `skin::parse_all` the clusters and bind matrices, `animation::parse_all` the clips. What is missing is the decision and the UI affordance.
+  - Acceptance: import an already-rigged FBX, export it again, and the Blender gate sees the same armature, bone count, bone names and action as the input — i.e. a rigged model survives a round trip through the app untouched. The reference rig (65 bones, 2 meshes, 1 action) is the fixture.
+  - Related: O9's own weights must not be silently renormalised or truncated either — `MAX_INFLUENCES` is 4, so a file with 5+ influences per vertex loses some. That is already counted in `SkinReport::vertices_over_influence_limit`; surface it rather than dropping quietly.
 - [ ] **P3-1** Template definition format — **data-driven**, no Rust change to add a creature
 - [ ] **P3-2** Port the 9 existing templates into the new format
 - [ ] **P3-3** Landmark-based auto-fitting: place the skeleton from mesh proportions
