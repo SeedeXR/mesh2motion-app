@@ -1985,3 +1985,88 @@ fmt clean. **P3-1 and P3-2 are done.**
 proportions. This is what the kinds and postures exist to drive, and it is the
 first place they have to earn their keep: a plantigrade sole, a digitigrade
 toe and an unguligrade hoof are three different ground contacts.
+
+## Session 029 — P3-3, initial skeleton placement
+
+CI confirmed green for cc00bde before starting.
+
+### `crates/m2m-rig/src/fit.rs`
+
+`Landmarks` (bounds, ground, symmetry plane, `medial_z`, `symmetry_error`),
+`RestPose`, `BodyAxis`, `fit_uniform`. Uniform scale plus translation — the
+initial placement per-chain refinement starts from.
+
+### The mesh cannot supply the body axis
+
+The obvious approach is to take it from the mesh's longest bounding-box extent.
+**Measuring all nine base models shows that is wrong for four of them:**
+
+| model | widest extent is |
+|---|---|
+| human | **arm span** — 1.933 across against 1.830 tall |
+| bird, dragon | **wingspan** |
+| spider | **leg spread** |
+| fox, horse, shark, snake, kaiju | body length |
+
+The template's own spine answers what the mesh cannot. **This is decision A7
+earning its keep on its first real use.**
+
+### Three corrections, each found by measuring rather than reasoning
+
+1. **`medial_z`, not the bounding-box centre.** Fitting the human rig onto
+   `human-sophia.glb` put the whole lower spine *behind* her body: her hair
+   reaches z = −0.549 while the torso at pelvis height spans only
+   [−0.157, +0.135], dragging the box centre 0.18 back.
+2. **`BodyAxis` decides what Z *means*.** Upright: Z is depth, use the midline.
+   Horizontal: Z is *length*, and the midline median slides the skeleton from
+   nose to tail. Fixing sophia with `medial_z` immediately broke the fox until
+   this existed.
+3. **Both sides of an alignment must measure the same thing.** Aligning the
+   template's *bounding box* (which contains arms) to the mesh's *midline* was
+   wrong by 0.027 on the base human — enough to push `human-female`'s spine_01
+   out of her chest. The template side is now its spine.
+
+### The base pairs are a weak fixture — the variations are the real one
+
+Base rigs were authored against base models, so the fit is nearly the identity
+(scale 1.117 human, 1.014 fox; ground offset 0.0004). A mutation removing ground
+alignment **entirely** moved the human by 0.0004 and the inside-the-mesh check
+never noticed. The variation meshes run 0.99x to 2.30x the base height, and
+switching to them found three real bugs within minutes.
+
+> Ask what fixture could distinguish the mutation *before* trusting a green test.
+
+### An honest limit, stated rather than absorbed
+
+Seven of eight bodies get every spine joint inside the mesh. `human-sintel`'s
+spine_03 sits 0.031 out — 1.7% of her height — and carries a **stated per-model
+budget** rather than a blanket tolerance chosen to swallow it. I started writing
+exactly such a tolerance and stopped: that is fitting the test, not the problem.
+No single global scale matches every torso, which is what per-chain fitting is
+for. I also caught myself quoting "0.002 outside" from a slice-range check when
+the vertex-distance measure said 0.031 — two different metrics, and the looser
+one flattered me.
+
+### Two things the data corrected
+
+- I asserted the **spider** is `Upright` because it walks on legs. Its spine runs
+  +0.002 in Y against +0.299 in Z: as horizontal as a fox's. The kaiju is the
+  only one of the four-limbed rigs that is genuinely upright (Y +1.043 against
+  Z +0.861).
+- The **shark's** spine was a single bone, so it had no direction at all. Its
+  `tail_1..tail_8` are its body axis — the same call already made for the snake,
+  where bones named "tail" are the body. `shark.json` now runs
+  `pelvis -> tail_1 -> ... -> tail_tip` as its Spine and has no Tail chain. A
+  fox's tail is an appendage behind a separate spine; a shark's *is* the spine.
+
+### Gate coverage (6 mutations, 6 caught)
+
+no ground alignment · scale from the box diagonal · align to the left edge ·
+bbox instead of `medial_z` · every creature upright · template box instead of
+template spine.
+
+### Next
+
+**Per-chain refinement**, where `role` and `posture` finally matter: a
+plantigrade sole, a digitigrade toe and an unguligrade hoof are three different
+ground contacts, and a spider's legs have none of them.

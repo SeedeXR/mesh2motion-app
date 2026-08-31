@@ -493,12 +493,15 @@ fn every_rig_has_a_manifest_and_every_manifest_a_rig() {
 fn each_creature_has_the_chains_it_should() {
     // (template, limbs, digits, tails, jaws)
     for (manifest, limbs, digits, tails, jaws) in [
+        // shark has no Tail chain: its "tail_*" bones are its body axis, the
+        // same call made for the snake. A fox's tail is an appendage behind a
+        // separate spine; a shark's is the spine.
         ("human.json", 4, 10, 0, 0),
         ("fox.json", 4, 0, 1, 1),
         ("bird.json", 4, 8, 1, 2),
         ("spider.json", 8, 0, 1, 2),
         ("snake.json", 0, 0, 0, 1),
-        ("shark.json", 4, 0, 1, 1),
+        ("shark.json", 4, 0, 0, 1),
         ("horse.json", 4, 0, 1, 1),
         ("kaiju.json", 4, 6, 1, 1),
         ("dragon.json", 6, 10, 1, 2),

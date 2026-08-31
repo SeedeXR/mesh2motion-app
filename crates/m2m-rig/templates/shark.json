@@ -13,7 +13,16 @@
       "name": "spine",
       "kind": "spine",
       "bones": [
-        "pelvis"
+        "pelvis",
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4",
+        "tail_5",
+        "tail_6",
+        "tail_7",
+        "tail_8",
+        "tail_tip"
       ]
     },
     {
@@ -38,21 +47,6 @@
         "mouth_base",
         "mouth_1",
         "mouth_tip"
-      ]
-    },
-    {
-      "name": "tail",
-      "kind": "tail",
-      "bones": [
-        "tail_1",
-        "tail_2",
-        "tail_3",
-        "tail_4",
-        "tail_5",
-        "tail_6",
-        "tail_7",
-        "tail_8",
-        "tail_tip"
       ]
     },
     {
