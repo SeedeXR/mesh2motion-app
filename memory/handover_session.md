@@ -1437,3 +1437,55 @@ reference. Note the reader validates a 16-byte `FOOTER_MAGIC` and `at_footer`
 treats "within ~176 bytes of the end" as the footer — a writer must satisfy
 both, and a file too small is unparseable for that reason (this bit me while
 writing a test fixture this session).
+
+---
+
+## Session 021 — 2026-08-30 — P2-6(b1): the independent-reader gate
+
+**Done.** `legacy/bench/fbx-conformance.ts`, `tools/blender-fbx-import-check.py`,
+`crates/m2m-io/examples/encode_roundtrip.rs`, and a reader fix. 133 m2m-io
+tests, legacy 107/107, clippy and fmt clean, conformance gate green.
+
+### The lesson: "a second reader" is not the same as "an independent reader"
+I predicted three.js's loader would catch the four conformance details that
+survive our own round trip. **It caught none.** It shares our reader's design —
+`end_offset` authoritative, heuristic footer detection, ignores an uncompressed
+array's declared byte length. Two implementations that make the same
+assumptions do not cross-check each other.
+
+**Blender 5.2 is genuinely independent and catches two of the four.** Its
+parser validates the child-list sentinel outright (`parse_fbx.py:225`).
+
+### It found a bug that would have shipped
+Our reader truncated object names at the NUL in `Name\0\x01Class`, so the
+encoder wrote names with no class. Blender's `elem_split_name_class` raises
+`ValueError: not enough values to unpack` — **the file would not open at all**,
+while both our reader and three.js loaded it happily.
+
+Fixed in the READER, not by special-casing the writer. Both callers of
+`read_string` carry explicit lengths, so there was never NUL padding to strip;
+truncation was silently altering bytes. The truncating variant is deleted.
+
+### The two remaining survivors are explained, not just unexplained
+- **Top-level null record**: omitting it survives *because our footer begins
+  with zeros*, which Blender reads as the `end_offset == 0` terminator
+  (`parse_fbx.py:159`). Accidentally satisfied, not optional.
+- **Footer padding**: genuinely unvalidated by all three readers.
+
+### Environment notes
+- **The code-review subagent could not run**: `oauth_org_not_allowed` (403,
+  "Your organization has disabled Claude subscription access for Claude Code").
+  I reviewed the diff myself and said so. If this persists, subagent-based
+  review is unavailable and the loop prompt should stop assuming it.
+- **Something reclaimed disk mid-session**: free space went 15 GB -> 70 GB and
+  both `node_modules` trees plus most of `target/` were removed. Reinstalled
+  with `npm ci` in root and legacy. If a tool suddenly "cannot find package",
+  check this before debugging the tool.
+- Blender is at `/Applications/Blender.app/Contents/MacOS/Blender` (5.2) and
+  runs headless fine; the MCP server needs Blender open with the addon, which
+  it was not.
+
+### Next
+P2-6(b2): the builders — scene data to `FbxDocument` — diffed against
+`@comfyorg/fbx-exporter-three`, with the conformance gate above as the
+acceptance test.

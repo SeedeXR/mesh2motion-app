@@ -183,19 +183,19 @@ fn a_name_too_long_for_its_length_byte_is_refused() {
 }
 
 #[test]
-fn a_name_and_its_class_do_not_survive_the_document() {
-    // A limitation of the document, found by the round trip and worth pinning
-    // before the writer is built on top of it.
+fn a_name_keeps_its_class_suffix_through_the_document() {
+    // Binary FBX encodes an object's name as `Name\0\x01Class`. The reader used
+    // to stop at the first NUL, so the document held `Hips` and the encoder
+    // wrote a name with no class — and our round trip passed anyway, because
+    // both parses truncated identically. The loss was only in the bytes.
     //
-    // FBX binary stores an object's name as `Name\0\x01Class`, and the reader
-    // truncates at the first NUL (`Cursor::read_string`) — so `FbxDocument`
-    // holds `mixamorig:Hips`, never `mixamorig:Hips\0\x01Model`. Encoding that
-    // document therefore writes a name with no class suffix.
+    // Blender is what found it: `elem_split_name_class` raises
+    // `ValueError: not enough values to unpack (expected 2, got 1)` on a name
+    // without the separator, so the file would not open at all. Verified on
+    // Blender 5.2 against the encoder's output before and after this fix.
     //
-    // The document still round-trips, because both parses truncate identically.
-    // What is lost is in the BYTES, and only matters to a reader that wants the
-    // suffix. three.js truncates the same way; Blender and Maya are unverified,
-    // so P2-6 has to check its output in those before calling the writer done.
+    // three.js truncates the same way we did and never noticed, which is why a
+    // second reader was not enough and a genuinely different one was.
     use binary::{FbxDocument, FbxNode, FbxProperty};
 
     let document = FbxDocument {
@@ -211,14 +211,25 @@ fn a_name_and_its_class_do_not_survive_the_document() {
     let FbxProperty::Str(name) = &reparsed.roots[0].properties[0] else {
         panic!("expected a string property");
     };
-    assert_eq!(name, "Hips", "the class suffix is dropped at the NUL");
-    assert_ne!(
-        reparsed, document,
-        "if this ever becomes equal the reader stopped truncating, and the \
-         writer can carry the suffix through"
-    );
+    assert_eq!(name, "Hips\u{0}\u{1}Model", "the class suffix must survive");
+    assert_eq!(reparsed, document, "the document round-trips exactly now");
 
-    // And a second round trip is stable: the loss happens once, not repeatedly.
-    let again = binary::parse(&encode::encode(&reparsed).expect("encodes")).expect("parses");
-    assert_eq!(again, reparsed, "the truncation must be idempotent");
+    // And the reference rig's own names carry theirs, so this is not a
+    // property of hand-built documents only.
+    let rig = binary::parse(RIG).expect("the rig parses");
+    let objects = rig.root("Objects").expect("Objects");
+    let with_class = objects
+        .children
+        .iter()
+        .flat_map(|c| c.properties.iter())
+        .filter_map(|p| match p {
+            FbxProperty::Str(s) => Some(s),
+            _ => None,
+        })
+        .filter(|s| s.contains('\u{0}'))
+        .count();
+    assert!(
+        with_class > 500,
+        "only {with_class} names carry a class separator — is the reader truncating again?"
+    );
 }

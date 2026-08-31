@@ -123,10 +123,22 @@ impl<'a> Cursor<'a> {
     /// embeds a `\0\x01` separator inside object names. Invalid UTF-8 is
     /// replaced rather than rejected — a mangled name should not fail a load
     /// when everything else about the file is sound.
+    /// Reads exactly `len` bytes as a string, keeping any NULs.
+    ///
+    /// This used to stop at the first NUL, on the theory that a fixed-width
+    /// field is NUL-padded. Both callers — an FBX `S` property and a node's
+    /// name — carry an explicit length, so there is no padding to strip and
+    /// truncating only alters the bytes silently.
+    ///
+    /// It also broke the writer. Binary FBX encodes an object's name as
+    /// `Name\0\x01Class`, so truncating discarded the class, and Blender's
+    /// importer does `elem_name, elem_class = elem_split_name_class(elem)` and
+    /// raises `ValueError: not enough values to unpack` on a name without the
+    /// separator — the file would not open at all. Verified on Blender 5.2.
+    /// three.js truncates the same way we did and never noticed.
     pub fn read_string(&mut self, len: usize) -> Result<String, FbxError> {
         let bytes = self.take(len)?;
-        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-        Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+        Ok(String::from_utf8_lossy(bytes).into_owned())
     }
 }
 
@@ -166,10 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn strings_truncate_at_nul() {
-        let data = b"name\0padpad";
+    fn strings_keep_their_nuls() {
+        // FBX encodes an object's name as `Name\0\x01Class`, so a NUL is data,
+        // not padding. Truncating at it made the writer emit names with no
+        // class, which Blender refuses to open — see `read_string`.
+        let data = b"name\0\x01Model";
         let mut c = Cursor::new(data);
-        assert_eq!(c.read_string(11).unwrap(), "name");
+        assert_eq!(c.read_string(data.len()).unwrap(), "name\0\u{1}Model");
         assert_eq!(c.remaining(), 0, "the full field width is consumed");
     }
 
