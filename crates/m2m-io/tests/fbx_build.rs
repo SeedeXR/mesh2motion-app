@@ -22,8 +22,10 @@ fn build_square() -> binary::FbxDocument {
         meshes: &[build::Mesh {
             name: "Square",
             positions: &positions,
-            triangles: &triangles,
+            faces: build::Faces::Triangles(&triangles),
         }],
+        bones: &[],
+        skins: &[],
     })
 }
 
@@ -100,10 +102,14 @@ fn the_declared_counts_match_the_objects_written() {
         .map(|i| build::Mesh {
             name: ["A", "B", "C"][i],
             positions: &positions,
-            triangles: &triangles,
+            faces: build::Faces::Triangles(&triangles),
         })
         .collect();
-    let document = build::build(&build::Scene { meshes: &meshes });
+    let document = build::build(&build::Scene {
+        meshes: &meshes,
+        bones: &[],
+        skins: &[],
+    });
 
     let definitions = document.root("Definitions").expect("Definitions");
     let declared = |kind: &str| -> i32 {
@@ -179,4 +185,220 @@ fn our_own_reader_reads_the_geometry_back() {
         vec![0],
         "the model must hang off the scene root, id 0"
     );
+}
+
+/// Two bones, a parent and its child, with the child weighted onto a square.
+fn rigged_square() -> (Vec<f32>, Vec<u32>, [f64; 16]) {
+    let (positions, triangles) = square();
+    let identity = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    (positions, triangles, identity)
+}
+
+fn build_rigged() -> binary::FbxDocument {
+    let (positions, triangles, identity) = rigged_square();
+    let bones = [
+        build::Bone {
+            name: "root",
+            parent: None,
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0; 3],
+            scale: [1.0; 3],
+            pre_rotation: [0.0; 3],
+        },
+        build::Bone {
+            name: "child",
+            parent: Some(0),
+            translation: [0.0, 10.0, 0.0],
+            rotation: [0.0; 3],
+            scale: [1.0; 3],
+            pre_rotation: [90.0, 0.0, 0.0],
+        },
+    ];
+    let indices = [0u32, 1, 2, 3];
+    let weights = [1.0f64, 1.0, 0.5, 0.5];
+    let clusters = [
+        build::Cluster {
+            bone: 1,
+            indices: &indices,
+            weights: &weights,
+            transform: identity,
+            transform_link: identity,
+        },
+        // A bone bound to the skin but influencing nothing: 40 of the reference
+        // rig's 129 clusters are exactly this.
+        build::Cluster {
+            bone: 0,
+            indices: &[],
+            weights: &[],
+            transform: identity,
+            transform_link: identity,
+        },
+    ];
+    build::build(&build::Scene {
+        meshes: &[build::Mesh {
+            name: "Square",
+            positions: &positions,
+            faces: build::Faces::Triangles(&triangles),
+        }],
+        bones: &bones,
+        skins: &[build::Skin {
+            mesh: 0,
+            clusters: &clusters,
+        }],
+    })
+}
+
+#[test]
+fn a_rigged_document_survives_encoding_and_our_own_layers() {
+    let document = build_rigged();
+    let bytes = encode::encode(&document).expect("encodes");
+    let reparsed = binary::parse(&bytes).expect("parses");
+    assert_eq!(reparsed, document);
+
+    let scene = Scene::from_document(reparsed);
+    assert_eq!(scene.report, m2m_io::fbx::dom::SceneReport::default());
+
+    // The skeleton comes back as a two-bone chain, in order.
+    let models = m2m_io::fbx::model::parse_all(&scene);
+    let bones: Vec<&str> = models
+        .models
+        .iter()
+        .filter(|m| m.is_bone())
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(bones.len(), 2, "bones: {bones:?}");
+    let child = models
+        .models
+        .iter()
+        .find(|m| m.name == "child")
+        .expect("child");
+    let root = models
+        .models
+        .iter()
+        .find(|m| m.name == "root")
+        .expect("root");
+    assert_eq!(child.parent, Some(root.id), "the chain must survive");
+    // PreRotation is what places a Mixamo joint; 440 of 522 models in the
+    // corpus carry one, so a writer that drops it moves every bone.
+    assert_eq!(child.transform.pre_rotation.x, 90.0);
+    assert_eq!(child.transform.translation.y, 10.0);
+
+    // And the skin comes back with both clusters, including the empty one.
+    let (skins, skipped) = m2m_io::fbx::skin::parse_all(&scene);
+    assert_eq!(skipped, 0);
+    assert_eq!(skins.len(), 1);
+    assert_eq!(skins[0].clusters.len(), 2, "the empty cluster is kept");
+    assert_eq!(skins[0].report, m2m_io::fbx::skin::SkinReport::default());
+
+    let weighted: Vec<&m2m_io::fbx::skin::Cluster> = skins[0]
+        .clusters
+        .iter()
+        .filter(|c| !c.indices.is_empty())
+        .collect();
+    assert_eq!(weighted.len(), 1);
+    assert_eq!(weighted[0].indices, vec![0, 1, 2, 3]);
+    assert_eq!(weighted[0].weights, vec![1.0, 1.0, 0.5, 0.5]);
+}
+
+#[test]
+fn every_bone_gets_the_attribute_that_makes_it_a_joint() {
+    // A Model alone is an empty transform. The NodeAttribute with
+    // TypeFlags "Skeleton" is what makes an importer build an armature —
+    // measured: without it Blender imports the bones as empties and produces
+    // no armature at all.
+    let document = build_rigged();
+    let objects = document.root("Objects").expect("Objects");
+
+    let attributes: Vec<&binary::FbxNode> = objects
+        .children
+        .iter()
+        .filter(|c| c.name == "NodeAttribute")
+        .collect();
+    assert_eq!(attributes.len(), 2, "one per bone");
+    for attribute in &attributes {
+        let flags = attribute
+            .child("TypeFlags")
+            .and_then(|n| n.properties.first())
+            .expect("TypeFlags");
+        assert!(
+            matches!(flags, FbxProperty::Str(s) if s == "Skeleton"),
+            "TypeFlags must be Skeleton, got {flags:?}"
+        );
+    }
+
+    // And each is connected to its Model, or it marks nothing.
+    let scene = Scene::from_document(document);
+    for attribute in scene.objects_of_kind("NodeAttribute") {
+        let parents = scene.parents_of(attribute.id, Some("Model"));
+        assert_eq!(parents.len(), 1, "{} is unattached", attribute.name);
+    }
+}
+
+#[test]
+fn the_bone_drives_the_cluster_and_not_the_other_way_round() {
+    // The direction that surprises everyone reading FBX connections: the bone's
+    // Model is the CHILD of the Cluster. Reversing it produces a file our
+    // reader still parses — `skin::parse_all` looks for a Model child of the
+    // cluster — but with no bone found, so every cluster loses its bone.
+    let document = build_rigged();
+    let scene = Scene::from_document(document);
+
+    let (skins, _) = m2m_io::fbx::skin::parse_all(&scene);
+    assert_eq!(skins[0].report.clusters_without_bone, 0);
+    for cluster in &skins[0].clusters {
+        let bone = scene.object(cluster.bone_id).expect("the bone exists");
+        assert_eq!(bone.kind, "Model");
+    }
+
+    // The skin itself hangs off the geometry, or it deforms nothing.
+    let geometry = scene.objects_of_kind("Geometry")[0];
+    assert_eq!(skins[0].geometry_id, geometry.id);
+}
+
+#[test]
+fn a_cluster_with_no_influence_writes_no_arrays() {
+    // 40 of the reference rig's 129 clusters carry no Indexes node at all,
+    // every one a finger bone. Writing an empty array instead of omitting the
+    // node would make those bones look weighted-with-nothing rather than
+    // simply unused.
+    let document = build_rigged();
+    let objects = document.root("Objects").expect("Objects");
+    let clusters: Vec<&binary::FbxNode> = objects
+        .children
+        .iter()
+        .filter(|c| {
+            c.name == "Deformer"
+                && matches!(&c.properties[2], FbxProperty::Str(s) if s == "Cluster")
+        })
+        .collect();
+    assert_eq!(clusters.len(), 2);
+
+    let empty = clusters
+        .iter()
+        .filter(|c| c.child("Indexes").is_none())
+        .count();
+    assert_eq!(empty, 1, "the influence-less cluster omits its arrays");
+
+    // The one that does have influence carries both arrays, at equal length.
+    let full = clusters
+        .iter()
+        .find(|c| c.child("Indexes").is_some())
+        .expect("a weighted cluster");
+    let len = |name: &str| match full.child(name).and_then(|n| n.properties.first()) {
+        Some(FbxProperty::I32Array(a)) => a.len(),
+        Some(FbxProperty::F64Array(a)) => a.len(),
+        other => panic!("{name}: {other:?}"),
+    };
+    assert_eq!(len("Indexes"), len("Weights"));
+    // Both bind matrices are always written, empty cluster or not — they place
+    // the bone, and a cluster without them binds to the identity.
+    for cluster in &clusters {
+        assert!(cluster.child("Transform").is_some(), "Transform missing");
+        assert!(
+            cluster.child("TransformLink").is_some(),
+            "TransformLink missing"
+        );
+    }
 }

@@ -26,9 +26,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mesh = m2m_io::fbx::build::Mesh {
         name: "Cube",
         positions: &positions,
-        triangles: &triangles,
+        faces: m2m_io::fbx::build::Faces::Triangles(&triangles),
     };
-    let document = m2m_io::fbx::build::build(&m2m_io::fbx::build::Scene { meshes: &[mesh] });
+    let document = m2m_io::fbx::build::build(&m2m_io::fbx::build::Scene {
+        meshes: &[mesh],
+        bones: &[],
+        skins: &[],
+    });
     let bytes = m2m_io::fbx::encode::encode(&document)?;
     std::fs::write(&output, &bytes)?;
     println!("{} bytes, {} roots", bytes.len(), document.roots.len());

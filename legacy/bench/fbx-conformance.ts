@@ -27,6 +27,28 @@ describe('FBX encoder conformance', () => {
   const repo = resolve(__dirname, '..', '..')
   const source = resolve(repo, 'legacy/static/test-files/retarget testing/mixamo-original-rig.fbx')
 
+  const blenderBinary = '/Applications/Blender.app/Contents/MacOS/Blender'
+
+  /**
+   * Imports a file in headless Blender and returns its report.
+   *
+   * Reads the JSON from a file rather than stdout: Blender writes its own
+   * progress there without always terminating the line, so scraping stdout
+   * once produced `SyntaxError: Unexpected non-whitespace character after
+   * JSON` instead of the assertion under test — a gate that fails for the
+   * wrong reason is worse than no gate.
+   */
+  const runBlender = (path: string): Record<string, unknown> => {
+    const report = join(mkdtempSync(join(tmpdir(), 'm2m-blender-')), 'report.json')
+    execFileSync(
+      blenderBinary,
+      ['--background', '--factory-startup', '--python',
+       resolve(repo, 'tools/blender-fbx-import-check.py'), '--', path, report],
+      { cwd: repo, stdio: 'pipe' }
+    )
+    return JSON.parse(readFileSync(report, 'utf8')) as Record<string, unknown>
+  }
+
   const summarise = (path: string): { bones: number, meshes: number, clips: Array<{ name: string, tracks: number, duration: number }> } => {
     const bytes = readFileSync(path)
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
@@ -79,7 +101,7 @@ describe('FBX encoder conformance', () => {
     // importer is the only independent reader here, and it catches two of them
     // — plus it is what caught the object-name truncation that made the first
     // encoder output refuse to open at all.
-    const blender = '/Applications/Blender.app/Contents/MacOS/Blender'
+    const blender = blenderBinary
     if (!existsSync(blender)) {
       // Loud, because what is being skipped is the only part of this test that
       // can catch a conformance error: three.js agreeing proves little, since
@@ -92,17 +114,7 @@ describe('FBX encoder conformance', () => {
       )
       return
     }
-    const run = (path: string): Record<string, unknown> => {
-      const stdout = execFileSync(
-        blender,
-        ['--background', '--factory-startup', '--python',
-         resolve(repo, 'tools/blender-fbx-import-check.py'), '--', path],
-        { cwd: repo, encoding: 'utf8' }
-      )
-      const line = stdout.split('\n').find((l) => l.startsWith('BLENDER_JSON '))
-      if (line === undefined) throw new Error(`no BLENDER_JSON in:\n${stdout}`)
-      return JSON.parse(line.slice('BLENDER_JSON '.length)) as Record<string, unknown>
-    }
+    const run = runBlender
 
     const blenderBefore = run(source)
     const blenderAfter = run(out)
@@ -120,7 +132,7 @@ describe('FBX encoder conformance', () => {
     // inherits whatever that file already got right. This builds one from bare
     // positions and triangles, where every count, connection, name and
     // polygon-index sign is ours.
-    const blender = '/Applications/Blender.app/Contents/MacOS/Blender'
+    const blender = blenderBinary
     if (!existsSync(blender)) {
       console.warn('WARNING: Blender not found; the builder has no independent check at all here')
       return
@@ -132,15 +144,7 @@ describe('FBX encoder conformance', () => {
       { cwd: repo, stdio: 'pipe' }
     )
 
-    const stdout = execFileSync(
-      blender,
-      ['--background', '--factory-startup', '--python',
-       resolve(repo, 'tools/blender-fbx-import-check.py'), '--', out],
-      { cwd: repo, encoding: 'utf8' }
-    )
-    const line = stdout.split('\n').find((l) => l.startsWith('BLENDER_JSON '))
-    if (line === undefined) throw new Error(`no BLENDER_JSON in:\n${stdout}`)
-    const report = JSON.parse(line.slice('BLENDER_JSON '.length)) as Record<string, unknown>
+    const report = runBlender(out)
 
     // A unit cube: 8 shared corners, 12 triangles, nothing loose. Asserting the
     // shape rather than "it imported" — a polygon-index sign error yields a
@@ -151,5 +155,68 @@ describe('FBX encoder conformance', () => {
     expect(report.mesh_polygons).toEqual([12])
     expect(report.polygon_sizes).toEqual([3])
     expect(report.loose_vertices).toBe(0)
+  })
+
+  it('an existing rig survives a round trip through our own types (O9)', () => {
+    // The acceptance test for O9: importing an already-rigged model must keep
+    // its skeleton, bone names, hierarchy and skin weights. Unlike the round
+    // trip above, this rebuilds the document from the SEMANTIC layers —
+    // model::parse_all, skin::parse_all — so anything they drop shows up here.
+    const blender = blenderBinary
+    if (!existsSync(blender)) {
+      console.warn('WARNING: Blender not found; O9 has no check at all here')
+      return
+    }
+    const out = join(mkdtempSync(join(tmpdir(), 'm2m-rig-')), 'rebuilt.fbx')
+    execFileSync(
+      'cargo',
+      ['run', '-p', 'm2m-io', '--release', '--quiet', '--example', 'rebuild_rig', '--', source, out],
+      { cwd: repo, stdio: 'pipe' }
+    )
+
+    const run = runBlender
+
+    const before = run(source)
+    const after = run(out)
+    expect(after.imported).toBe(true)
+
+    // The skeleton, named bone for named bone — not just a count, because a
+    // rig with the right number of wrongly-named bones retargets onto nothing.
+    expect(after.armatures).toEqual(before.armatures)
+    expect(after.bones).toEqual(before.bones)
+    expect(after.bone_names).toEqual(before.bone_names)
+    // The HIERARCHY, not just the names. Measured: parenting every bone to the
+    // root passes a names-and-counts comparison, and a flattened skeleton is
+    // not the same rig — nothing retargets onto it correctly.
+    expect(after.bone_parents).toEqual(before.bone_parents)
+    expect(after.root_bones).toEqual(before.root_bones)
+    // WHERE the bones are, not just how they are named and connected.
+    // Measured: dropping PreRotation — which 440 of 522 models in the corpus
+    // carry — left every other field here identical.
+    expect(after.bone_rest).toEqual(before.bone_rest)
+
+    // The mesh, and the weights, which are what "the rig survived" means.
+    expect(after.meshes).toEqual(before.meshes)
+    expect(after.mesh_vertices).toEqual(before.mesh_vertices)
+    expect(after.mesh_polygons).toEqual(before.mesh_polygons)
+    expect(after.vertex_groups).toEqual(before.vertex_groups)
+    expect(after.weighted_vertices).toEqual(before.weighted_vertices)
+    expect(after.weight_total).toEqual(before.weight_total)
+    expect(after.influences_per_vertex).toEqual(before.influences_per_vertex)
+
+    // Measured on the reference rig, so a fixture swap that quietly shrinks it
+    // cannot make the comparisons above pass on nothing.
+    expect(before.bones).toBe(65)
+    expect(before.vertex_groups).toBe(52)
+    expect(before.weighted_vertices).toBe(24746)
+    expect(before.root_bones).toEqual(['mixamorig:Hips'])
+    // Quads. Rebuilding from the triangulated form gives [20840, 28272], and
+    // an artist notices a quad mesh coming back as triangles.
+    expect(before.polygon_sizes).toEqual([3, 4])
+
+    // Animation is NOT yet rebuilt (P2-6 b4). Asserted so the gap is explicit
+    // and this test starts failing the moment it is filled in.
+    expect(before.actions).toEqual(['Armature|mixamo.com|Layer0'])
+    expect(after.actions).toEqual([])
   })
 })

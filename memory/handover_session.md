@@ -1530,3 +1530,51 @@ P2-6(b3): skeleton (Model/LimbNode, NodeAttribute, Pose), skin
 (Deformer/SubDeformer), animation (AnimationStack/Layer/CurveNode/Curve plus
 Takes). Build each against the Blender gate, and keep asking which gate would
 catch a given mistake — the answer has been different every time.
+
+---
+
+## Session 023 — 2026-08-30 — P2-6(b3): skeleton + skin builders, and O9
+
+**Done.** `build.rs` now writes bones (Model/LimbNode + NodeAttribute), skins
+and clusters. `examples/rebuild_rig.rs` reads the reference rig through our
+semantic layers and rebuilds it. 210 workspace tests, legacy 107/107, gate 3/3.
+
+### O9 is met for geometry, skeleton and weights
+Blender reports the rebuilt rig **identically** to the original: 1 armature,
+65 bones with the same names and the same parent chains, 2 meshes,
+10,514/14,232 vertices, 11,120/14,222 polygons **including quads**, 52 vertex
+groups, 24,746 weighted vertices, weight total 24,746.0, and the influence
+histogram {1: 23117, 2: 1259, 3: 370}. Animation is the remaining gap (b4).
+
+### The gate earned its keep three times
+1. **Quads were being triangulated.** `geometry::parse` triangulates — right
+   for a solver, wrong for a writer. `build::Faces` now takes `Triangles` or a
+   verbatim `Polygons` array.
+2. **The gate compared names but not hierarchy.** Parenting every bone to the
+   root passed. Now asserts `bone_parents` and `root_bones`.
+3. **It never checked where bones are.** Dropping `PreRotation` passed. Now
+   asserts `bone_rest`.
+
+### Two mistakes of mine worth remembering
+- **I claimed the build was non-deterministic. It is not.** A mutation batch
+  timed out mid-run, I then took a fresh "good" snapshot *while the file was
+  still mutated*, and every later restore restored the mutation. Two builds are
+  byte-identical. **Take the snapshot from a known-clean state and verify its
+  checksum after each restore** — the batch loop does that now.
+- **I wrote that Blender builds no armature without the NodeAttribute
+  connection. False.** It builds all 65 bones from `LimbNode` alone. The
+  reading that misled me came from the contaminated file above. Comment fixed.
+
+### A gate that fails for the wrong reason is worse than no gate
+The Blender report was scraped from stdout, which Blender also writes progress
+to, so the gate once failed with `SyntaxError: Unexpected non-whitespace
+character after JSON at position 5342` instead of the assertion under test. The
+tool now writes its report to a file.
+
+### Environment
+The /code-review subagent still fails with `oauth_org_not_allowed` 403. Reviewed
+this diff myself; said so in the commit.
+
+### Next
+P2-6(b4): animation. The O9 gate asserts the gap explicitly today
+(`after.actions` is `[]`), so it will start failing the moment b4 lands.
