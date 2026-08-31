@@ -114,4 +114,42 @@ describe('FBX encoder conformance', () => {
     expect(blenderAfter).toEqual(blenderBefore)
     expect(blenderBefore.bones).toBe(65)
   })
+
+  it('geometry built from scratch imports as the mesh it describes', () => {
+    // The round trip above re-encodes a document our READER produced, so it
+    // inherits whatever that file already got right. This builds one from bare
+    // positions and triangles, where every count, connection, name and
+    // polygon-index sign is ours.
+    const blender = '/Applications/Blender.app/Contents/MacOS/Blender'
+    if (!existsSync(blender)) {
+      console.warn('WARNING: Blender not found; the builder has no independent check at all here')
+      return
+    }
+    const out = join(mkdtempSync(join(tmpdir(), 'm2m-build-')), 'cube.fbx')
+    execFileSync(
+      'cargo',
+      ['run', '-p', 'm2m-io', '--release', '--quiet', '--example', 'build_cube', '--', out],
+      { cwd: repo, stdio: 'pipe' }
+    )
+
+    const stdout = execFileSync(
+      blender,
+      ['--background', '--factory-startup', '--python',
+       resolve(repo, 'tools/blender-fbx-import-check.py'), '--', out],
+      { cwd: repo, encoding: 'utf8' }
+    )
+    const line = stdout.split('\n').find((l) => l.startsWith('BLENDER_JSON '))
+    if (line === undefined) throw new Error(`no BLENDER_JSON in:\n${stdout}`)
+    const report = JSON.parse(line.slice('BLENDER_JSON '.length)) as Record<string, unknown>
+
+    // A unit cube: 8 shared corners, 12 triangles, nothing loose. Asserting the
+    // shape rather than "it imported" — a polygon-index sign error yields a
+    // file that imports with one giant face or none.
+    expect(report.imported).toBe(true)
+    expect(report.meshes).toBe(1)
+    expect(report.mesh_vertices).toEqual([8])
+    expect(report.mesh_polygons).toEqual([12])
+    expect(report.polygon_sizes).toEqual([3])
+    expect(report.loose_vertices).toBe(0)
+  })
 })

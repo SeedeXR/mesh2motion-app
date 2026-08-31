@@ -1489,3 +1489,44 @@ truncation was silently altering bytes. The truncating variant is deleted.
 P2-6(b2): the builders — scene data to `FbxDocument` — diffed against
 `@comfyorg/fbx-exporter-three`, with the conformance gate above as the
 acceptance test.
+
+---
+
+## Session 022 — 2026-08-30 — P2-6(b2): the mesh builder
+
+**Done.** `crates/m2m-io/src/fbx/build.rs` builds an FBX document from bare
+positions and triangles; `examples/build_cube.rs` writes one. **Blender imports
+a from-scratch cube as 1 mesh, 8 shared vertices, 12 triangles, 0 loose
+vertices**; three.js sees 36 expanded positions. 5 new Rust tests.
+
+### The polygon-index encoding is where a mesh writer goes wrong
+FBX stores no per-face vertex count. A polygon's **last** corner is written
+bitwise-negated, and that sign is the only thing separating one face from the
+next. Get it wrong and the file still imports — as one enormous face, or none.
+
+### The two gates are complementary, and I measured which catches what
+Six mutations against the builder:
+
+| mutation | Rust tests | Blender gate |
+|---|---|---|
+| never negate the last corner | FAIL | FAIL |
+| negate every corner | FAIL | FAIL |
+| drop `\0\x01Class` from names | FAIL | FAIL |
+| no `Geometry->Model` connection | **PASS** | FAIL |
+| no `Model->root` connection | **PASS** | FAIL |
+| `Definitions` understates the count | FAIL | **PASS** |
+
+Two conclusions worth keeping. First, our reader cannot see a missing
+connection: an unparented Model is simply a root, which is legal — Blender
+notices because the mesh vanishes. Second, Blender ignores `Definitions`
+counts entirely, so only our own tests catch a file that misdescribes itself.
+
+**Because Blender is not in CI**, I added the two connection assertions to the
+Rust test as well, and re-ran those mutations to confirm they now fail there.
+Otherwise those two would have shipped on any CI-only run.
+
+### Next
+P2-6(b3): skeleton (Model/LimbNode, NodeAttribute, Pose), skin
+(Deformer/SubDeformer), animation (AnimationStack/Layer/CurveNode/Curve plus
+Takes). Build each against the Blender gate, and keep asking which gate would
+catch a given mistake — the answer has been different every time.

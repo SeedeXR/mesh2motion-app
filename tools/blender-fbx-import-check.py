@@ -42,6 +42,14 @@ def main() -> int:
     out["bones"] = sum(len(a.bones) for a in bpy.data.armatures)
     out["actions"] = sorted(a.name for a in bpy.data.actions)
     out["mesh_vertices"] = sorted(len(m.vertices) for m in bpy.data.meshes)
+    out["mesh_polygons"] = sorted(len(m.polygons) for m in bpy.data.meshes)
+    # Corner counts per face, so a polygon-index encoding that merges or splits
+    # faces shows up rather than only changing a total.
+    out["polygon_sizes"] = sorted({len(poly.vertices) for m in bpy.data.meshes for poly in m.polygons})
+    out["loose_vertices"] = sum(
+        1 for m in bpy.data.meshes for v in m.vertices
+        if not any(v.index in poly.vertices for poly in m.polygons)
+    )
     out["bone_names"] = sorted(b.name for a in bpy.data.armatures for b in a.bones)
     print("BLENDER_JSON " + json.dumps(out))
     return 0

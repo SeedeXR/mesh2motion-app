@@ -34,6 +34,7 @@
 
 pub mod animation;
 pub mod binary;
+pub mod build;
 pub mod dom;
 pub mod encode;
 pub mod geometry;
