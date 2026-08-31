@@ -2324,3 +2324,52 @@ initially survived**:
 The legacy's 7 bone-automap test files as behaviour baselines, and Mixamo/Rigify
 fast paths for rigs whose names *are* meaningful — structure is the fallback that
 was missing, not a replacement for a known-rig table.
+
+## Session 034 — P3-4 known-rig tables
+
+CI confirmed green for 3dfdb20 before starting.
+
+### Measured why a table is worth having
+
+Rather than porting 130 table entries on faith, I compared the structural
+matcher against the legacy's own Mixamo table, which is ground truth:
+
+> **41 of 65 bones agree, 24 differ — and every one of the 24 is a finger.**
+
+Index, middle, ring and pinky are four near-identical chains leaving the same
+hand at nearly the same angle and length. Nothing in a chain's *shape*
+distinguishes them, so structure gets the body right and the hand wrong. That is
+exactly the case for a table when names are meaningful, and it also names the
+structural weakness precisely: fingers are ordered **across** the hand, so
+lateral position along the hand's own axis is the signal to try next.
+
+### What landed
+
+`known-rigs/{mixamo,rigify}.json` (65 and 52 bones) as **data**, matching the
+crate's rule that adding a creature must not need a code change. `KnownRig`
+with `coverage` and `map_bones`, `normalised_bone_name`, `Strategy` and
+`map_bones_best`, which uses a table when one accounts for at least half its own
+bones and falls back to structure otherwise.
+
+These are our own legacy's tables. A list of bone names is a fact about a
+format; nothing here comes from Rigify itself, which is GPL.
+
+### Two things the fixtures told me
+
+- The sample rig writes `mixamorig:Hips` and the legacy's table writes
+  `mixamorigHips`. The separator is an exporter's habit, so comparison strips
+  punctuation and case.
+- `m2m-wrong-bone-names.glb` is not arbitrary noise — it is a **Rigify-named**
+  rig (`DEF-hips`, `DEF-spine.001`), which makes it the natural fixture for
+  Rigify detection rather than for the nameless fallback.
+
+### Gate coverage (4 mutations, 4 caught — one on the data)
+
+normalisation keeping punctuation · tables never consulted · coverage always
+passing · **a finger entry in `mixamo.json` corrupted**. The last is the one
+worth having: the tables are the artifact, so the tables get mutated.
+
+### Next
+
+The legacy's `BoneAutoMapping.test.ts` and `BoneNameTokenizer.test.ts`
+expectations as Rust baselines, and finger ordering for the structural fallback.

@@ -459,3 +459,135 @@ fn two_chains_differing_only_in_direction_are_told_apart() {
     );
     assert_eq!(mapping.get(&4), Some(&2), "and the backward one likewise");
 }
+
+fn known_rigs() -> Vec<m2m_rig::automap::KnownRig> {
+    ["mixamo.json", "rigify.json"]
+        .iter()
+        .map(|file| {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/known-rigs/").to_owned() + file;
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("parses")
+        })
+        .collect()
+}
+
+/// Names that differ only in punctuation or case are the same bone.
+///
+/// The sample rig writes `mixamorig:Hips` and the legacy's table writes
+/// `mixamorigHips`. The separator is an exporter's habit, not information.
+#[test]
+fn bone_names_compare_without_punctuation_or_case() {
+    use m2m_rig::automap::normalised_bone_name as n;
+    assert_eq!(n("mixamorig:Hips"), n("mixamorigHips"));
+    assert_eq!(n("mixamorig:Hips"), n("MIXAMORIG_HIPS"));
+    assert_eq!(n("DEF-spine.001"), n("defspine001"));
+    assert_ne!(n("spine_01"), n("spine_02"));
+}
+
+/// A Mixamo rig is recognised and mapped through its table.
+#[test]
+fn a_mixamo_rig_is_recognised_and_mapped_by_name() {
+    let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
+    let theirs = skeleton_of("test-files/retarget testing/mixamo-sample-rig.glb");
+    let rigs = known_rigs();
+
+    let mixamo = rigs.iter().find(|r| r.name == "mixamo").expect("the table");
+    let coverage = mixamo.coverage(&theirs);
+    assert!(coverage > 0.9, "mixamo table covers only {coverage:.2}");
+
+    let (mapping, strategy) = m2m_rig::automap::map_bones_best(&ours, &theirs, &rigs, 0.5);
+    assert_eq!(strategy, m2m_rig::automap::Strategy::Known("mixamo".into()));
+
+    // The bones structural matching got wrong are exactly the fingers, so check
+    // one of those: it must now be right.
+    let from = ours
+        .names
+        .iter()
+        .position(|n| n == "middle_01_l")
+        .expect("bone");
+    let to = mapping.get(&from).copied().expect("mapped");
+    assert_eq!(
+        m2m_rig::automap::normalised_bone_name(&theirs.names[to]),
+        m2m_rig::automap::normalised_bone_name("mixamorigLeftHandMiddle1"),
+        "got {}",
+        theirs.names[to]
+    );
+}
+
+/// A rig with Rigify's deform names is recognised as Rigify, not Mixamo.
+#[test]
+fn a_rigify_named_rig_is_recognised_as_rigify() {
+    let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
+    let theirs = skeleton_of("test-files/import custom animations/m2m-wrong-bone-names.glb");
+    let rigs = known_rigs();
+
+    // This fixture is named as a Rigify export: DEF-hips, DEF-spine.001, ...
+    assert!(theirs.names.iter().any(|n| n.starts_with("DEF-")));
+
+    let (_, strategy) = m2m_rig::automap::map_bones_best(&ours, &theirs, &rigs, 0.5);
+    assert_eq!(strategy, m2m_rig::automap::Strategy::Known("rigify".into()));
+}
+
+/// A rig no table recognises falls back to structure rather than failing.
+///
+/// The giraffe case: `Bone.000`, `Bone.001`, ... A table matches none of it, and
+/// the fallback still recovers the mapping.
+#[test]
+fn an_unrecognised_rig_falls_back_to_structure() {
+    let ours = skeleton_of("rigs/rig-human.glb");
+    let anonymous = strip_names(&ours);
+    let rigs = known_rigs();
+
+    for rig in &rigs {
+        assert_eq!(
+            rig.coverage(&anonymous),
+            0.0,
+            "{} matched nothing",
+            rig.name
+        );
+    }
+    let (mapping, strategy) = m2m_rig::automap::map_bones_best(&ours, &anonymous, &rigs, 0.5);
+    assert_eq!(strategy, m2m_rig::automap::Strategy::Structural);
+    assert_eq!(
+        mapping.len(),
+        ours.names.len(),
+        "the fallback mapped everything"
+    );
+}
+
+/// Where the two strategies disagree is the fingers, and only the fingers.
+///
+/// Pinned because it is the measured reason the tables exist. If structure ever
+/// learns to order fingers, this test is how that will show up.
+#[test]
+fn structure_and_the_table_differ_only_on_fingers() {
+    let ours = skeleton_of("test-files/retarget testing/m2m-sample-rig.glb");
+    let theirs = skeleton_of("test-files/retarget testing/mixamo-sample-rig.glb");
+    let rigs = known_rigs();
+    let mixamo = rigs.iter().find(|r| r.name == "mixamo").expect("the table");
+
+    let by_table = mixamo.map_bones(&ours, &theirs);
+    let by_structure = map_bones(&ours, &theirs);
+
+    let mut disagreements = Vec::new();
+    for (from, table_to) in &by_table {
+        if by_structure.get(from).is_some_and(|s| s != table_to) {
+            disagreements.push(ours.names[*from].as_str());
+        }
+    }
+    assert!(
+        !disagreements.is_empty(),
+        "they agreed everywhere, which is new"
+    );
+    let non_finger: Vec<&&str> = disagreements
+        .iter()
+        .filter(|name| {
+            !["thumb", "index", "middle", "ring", "pinky"]
+                .iter()
+                .any(|finger| name.starts_with(finger))
+        })
+        .collect();
+    assert!(
+        non_finger.is_empty(),
+        "structure and the table now differ outside the fingers: {non_finger:?}"
+    );
+}

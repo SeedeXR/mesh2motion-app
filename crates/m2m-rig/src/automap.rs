@@ -343,3 +343,117 @@ pub fn match_chains(template: &Template, reference: &Skeleton, incoming: &Skelet
     matches.sort_by(|a, b| a.template_chain.cmp(&b.template_chain));
     matches
 }
+
+/// A rig whose bone names are known, so it can be mapped exactly.
+///
+/// Structural matching is the fallback for rigs whose names mean nothing. When
+/// the names *do* mean something, a table beats it — measured against the
+/// legacy's own Mixamo table, structure agrees on **41 of 65** bones and
+/// differs on 24, and **every one of the 24 is a finger**. Index, middle, ring
+/// and pinky are four near-identical chains leaving the same hand, and nothing
+/// in a chain's shape distinguishes them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KnownRig {
+    /// Identifies the family, e.g. `mixamo`.
+    pub name: String,
+    /// Where the table came from and what it covers.
+    pub note: String,
+    /// Our bone name to theirs.
+    pub bones: HashMap<String, String>,
+}
+
+/// Compares bone names ignoring case and punctuation.
+///
+/// `mixamorig:Hips`, `mixamorigHips` and `mixamorig_hips` are one bone. The
+/// separator varies by exporter and carries no meaning; the sample rig in
+/// `test-files/retarget testing` uses a colon while the legacy's table does not.
+pub fn normalised_bone_name(name: &str) -> String {
+    name.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+impl KnownRig {
+    /// How many of this table's target bones the skeleton actually has, as a
+    /// fraction of the table.
+    pub fn coverage(&self, skeleton: &Skeleton) -> f32 {
+        if self.bones.is_empty() {
+            return 0.0;
+        }
+        let present: std::collections::HashSet<String> = skeleton
+            .names
+            .iter()
+            .map(|n| normalised_bone_name(n))
+            .collect();
+        let found = self
+            .bones
+            .values()
+            .filter(|target| present.contains(&normalised_bone_name(target)))
+            .count();
+        found as f32 / self.bones.len() as f32
+    }
+
+    /// Maps reference bones to incoming bones through this table.
+    ///
+    /// Only bones both skeletons actually have appear in the result.
+    pub fn map_bones(&self, reference: &Skeleton, incoming: &Skeleton) -> HashMap<usize, usize> {
+        let theirs: HashMap<String, usize> = incoming
+            .names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (normalised_bone_name(name), index))
+            .collect();
+        reference
+            .names
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| {
+                let target = self.bones.get(name)?;
+                let to = theirs.get(&normalised_bone_name(target))?;
+                Some((index, *to))
+            })
+            .collect()
+    }
+}
+
+/// How a mapping was arrived at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Strategy {
+    /// A known rig's table, named.
+    Known(String),
+    /// Chain structure, because no table recognised the rig.
+    Structural,
+}
+
+/// Maps one skeleton onto another, by table when the rig is recognised and by
+/// structure when it is not.
+///
+/// A table is used when it accounts for at least `threshold` of its own bones —
+/// 0.5 is a reasonable default, high enough that a rig sharing a few names by
+/// accident does not qualify and low enough to tolerate a rig missing fingers or
+/// a tail.
+///
+/// Structure is the fallback, not the replacement: it reads no names at all, so
+/// it works on a rig whose bones are called `Bone.027`, and it cannot tell one
+/// finger from another.
+pub fn map_bones_best(
+    reference: &Skeleton,
+    incoming: &Skeleton,
+    known: &[KnownRig],
+    threshold: f32,
+) -> (HashMap<usize, usize>, Strategy) {
+    let best = known
+        .iter()
+        .map(|rig| (rig.coverage(incoming), rig))
+        .filter(|(coverage, _)| *coverage >= threshold)
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+
+    match best {
+        Some((_, rig)) => (
+            rig.map_bones(reference, incoming),
+            Strategy::Known(rig.name.clone()),
+        ),
+        None => (map_bones(reference, incoming), Strategy::Structural),
+    }
+}
