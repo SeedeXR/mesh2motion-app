@@ -1759,3 +1759,83 @@ round-trip target, the same shape that worked for FBX. Then **P2-10** (Maya) and
 **P3-0/O9 in the app**, which is still blocked on there being an import pipeline
 in `app/` at all: `app/src` is currently `main.ts`, `backend.ts`, `steps.ts`,
 `ipc/index.ts` and two CSS files, with no model loading to invert.
+
+## Session 026 — Rigify research, and P2-10 finds a real export bug
+
+CI confirmed green for 4c588f4 before starting.
+
+### Rigify (user request) — recorded in `architecture.md` §8a and decision A7
+
+Read from the addon shipped with Blender 5.2; the 2.81 manual URL 403s.
+**GPL-2.0-or-later against our MIT**, so architecture and taxonomy may be
+reimplemented and its code and metarig bone data may not be copied. The decision
+that came out of it: **templates become typed chains**, not flat bone lists.
+`m2m-rig` is a 15-line stub, so adopting it now costs no rewrite.
+
+### P2-10: a third reader found what two could not
+
+Blender and three.js both read our FBX animation perfectly. **assimp read none
+of it** — 0 animations and 0 channels where the reference rig has 1 and 53,
+with the mesh, all 129 bones and all 49,112 faces intact.
+
+**Cause.** A childless FBX node can declare a nested list holding only its
+terminating null record, or declare no list at all. Our reader represented both
+as `children: []`, so re-encoding wrote "no list" for both — and assimp reads an
+`AnimationLayer` without the empty list as *no layer*, so the stack has no
+layers and every keyframe vanishes. `FbxNode::empty_scope` now carries it.
+
+> **Two lenient readers agreeing is not conformance.** The whole existing gate —
+> our reader, Blender, three.js — was blind to this, and the app's exports were
+> broken for anything built on assimp.
+
+### I got it wrong before I got it right, and the wrong version passed a gate
+
+I first made the encoder write a null record after **every** node. assimp then
+read the file perfectly and matched the source on every field. I took the file
+size as confirmation: source 2,179,616 bytes against ours 2,194,048 with the
+records and 2,065,360 without, and that ~128KB gap is about 10,000 nodes times
+the 13 bytes a null record occupies.
+
+**That reasoning was a coincidence and the conclusion was wrong.** Walking the
+source's actual bytes: 5,144 childless nodes declare no list, and exactly **3**
+declare an empty one — `References` and its two `AnimationLayer`s. Always-write
+also broke the three.js loader on materials, which is how I found out.
+
+> **An inference that predicts the observed number is not evidence.** The size
+> delta was consistent with my theory and with the truth. Walking the bytes took
+> one short script and settled in seconds what the size argument could not settle
+> at all. When a claim is about what a file contains, read the file.
+
+### Also fixed: arrays are now deflated
+
+Tested as a hypothesis for the animation loss and **disproved** — kept because
+it is worth keeping. The rebuilt reference rig drops from 1,860,976 to **980,672
+bytes**, and re-encoding the source now yields a file smaller than the source.
+
+### Gate coverage
+
+| mutation | caught by |
+|---|---|
+| encoder ignores `empty_scope` | `empty_scopes_survive_a_round_trip` **and** the pre-existing round-trip test |
+| builder writes the layer with no scope | `the_animation_layer_declares_an_empty_scope` |
+
+`scope_census` walks the encoded bytes, because the distinction is invisible in
+the parsed document — which is exactly why our own tests could not have found it.
+
+`tools/assimp-check.sh` is the new gate. **Its first version compared a file
+against itself and reported a difference**, because `assimp info` prints two
+lines beginning `Meshes:` and the second is a table header. A gate is not
+trustworthy until it has been shown to pass the identity case.
+
+### State
+
+- 243 release tests, 175 debug, 0 failures; clippy and fmt clean; legacy 107;
+  three.js conformance 3/3; 1.17M FBX fuzz runs clean.
+- All three readers now agree on our FBX. glTF was never affected.
+- **Maya itself is still unverified** — no Maya and no FBX SDK on this machine.
+  assimp is the closest available proxy, and P2-10b records the gap.
+
+### Next
+
+**P3-1 templates** with the typed-chain format (A7), or **P3-0/O9 in the app**,
+still blocked on `app/` having any import pipeline at all.
