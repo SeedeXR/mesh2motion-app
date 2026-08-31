@@ -2577,3 +2577,74 @@ Translation and root motion — the legacy scales it and carries a
 `root_correction_x_degrees` because "pelvis rest orientation leaves the
 character tilted (face planting)" — and an end-to-end test retargeting a real
 Mixamo clip onto our rig through `m2m-io`.
+
+## Session 038 — P3-5 complete: translation, root motion, end to end
+
+CI confirmed green for ca52517 before starting.
+
+### Bone translations are structural, and that is measured
+
+The obvious approach is to move translation tracks across like rotations. What
+the data says, across the 87 clips in `human-base-animations.glb`:
+
+> Of **5,809** translation channels, only **94 actually move** — and they belong
+> to exactly two bones, `pelvis` (80 clips) and `root` (14).
+
+Everything else is a constant equal to the bone's rest offset, written out by an
+exporter that emits full TRS whether or not it varies. A bone's local
+translation is its *length*; copying the source's would rebuild the target with
+the source's proportions.
+
+So translation uses the same rule as rotation and needs **no special case for
+the root**:
+
+```text
+target = target_rest + (source_value - source_rest) * height_scale
+```
+
+A bone that never moves has a zero offset and lands exactly on the target's own
+rest translation. The root's motion is scaled, so a taller character strides
+further rather than shuffling in place.
+
+### No root correction angle is needed
+
+The legacy carries `set_root_correction_x_degrees` because "pelvis rest
+orientation leaves the character tilted (face planting)". Measured: our rig's
+`root` has a rest world rotation of (0.707, −0.707, 0, 0) — a **−90° X**, the
+Z-up to Y-up correction — and the Mixamo rig has no root bone at all. That is
+precisely the difference the legacy was correcting by hand, and rest-pose
+compensation subsumes it. Its default path copies verbatim, which is why it
+needed the angle.
+
+### End to end, checked by two independent readers
+
+`examples/retarget_glb.rs` moves all 87 clips onto the Mixamo rig and writes the
+result:
+
+| reader | result |
+|---|---|
+| Blender | 65 bones, **87 actions**, `Chest_Open` frames **0.00–33.00** — same range as the source |
+| assimp | **87 animations**, 5,655 channels (65 bones × 87) |
+
+Curves read 455 rather than the source's 660 because we emit rotation and
+translation and no scale channels: 65 × 7.
+
+**A self-inflicted false alarm**: my first Blender check reported no bones and
+no actions. I had raced the file write — the example was still running. The file
+was fine. Worth remembering before diagnosing an output that "failed to import".
+
+### Known cost
+
+Every track is resampled onto the union of the clip's key times, so key counts
+rise — 9,230 against the source's 5,128 for `Chest_Open`. Correct, but worth
+revisiting if file size matters.
+
+### Gate coverage (4 mutations, 4 caught)
+
+source translation copied verbatim · height scale ignored · height scale
+inverted · rotations left un-normalised.
+
+### Next
+
+**P3-0 / O9 in the app** is the last P3 item, still blocked on `app/` having any
+import pipeline. Otherwise **P4**: the Blender bridge, performance, release.

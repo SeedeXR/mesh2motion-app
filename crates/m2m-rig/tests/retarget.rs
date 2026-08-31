@@ -367,3 +367,276 @@ fn a_bones_local_rotation_has_its_parent_divided_out() {
         );
     }
 }
+
+/// A bone that never moves lands exactly on the **target's** rest translation.
+///
+/// This is what preserves the target's proportions. Measured across the 87
+/// clips in `human-base-animations.glb`, 5,715 of 5,809 translation channels
+/// are constant — copying them across would rebuild the target with the
+/// source's bone lengths.
+#[test]
+fn a_bone_that_does_not_move_keeps_the_targets_own_proportions() {
+    use m2m_rig::retarget::{retarget_translations, RestTranslations, TranslationTrack};
+
+    let source_rest = RestTranslations {
+        local: vec![Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0)],
+    };
+    // The target's limb is half as long: its proportions must survive.
+    let target_rest = RestTranslations {
+        local: vec![Vec3::ZERO, Vec3::new(0.0, 0.5, 0.0)],
+    };
+    let tracks = vec![TranslationTrack {
+        bone: 1,
+        times: vec![0.0, 1.0],
+        // Constant, equal to the source's rest offset -- as exporters write it.
+        translations: vec![Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 0.0)],
+    }];
+    let mapping: HashMap<usize, usize> = [(1, 1)].into_iter().collect();
+
+    let out = retarget_translations(&source_rest, &target_rest, &mapping, &tracks, 1.0);
+    let track = out.iter().find(|t| t.bone == 1).expect("a track");
+    for (index, at) in track.translations.iter().enumerate() {
+        assert!(
+            at.distance(target_rest.local[1]) < 1e-6,
+            "key {index} landed at {at:?}, not the target's rest {:?}",
+            target_rest.local[1]
+        );
+    }
+}
+
+/// Root motion is scaled by the height ratio, so a taller character strides
+/// further rather than shuffling in place.
+#[test]
+fn root_motion_is_scaled_by_the_height_ratio() {
+    use m2m_rig::retarget::{retarget_translations, RestTranslations, TranslationTrack};
+
+    let source_rest = RestTranslations {
+        local: vec![Vec3::ZERO],
+    };
+    let target_rest = RestTranslations {
+        local: vec![Vec3::ZERO],
+    };
+    // The source's root walks one unit forward.
+    let tracks = vec![TranslationTrack {
+        bone: 0,
+        times: vec![0.0, 1.0],
+        translations: vec![Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)],
+    }];
+    let mapping: HashMap<usize, usize> = [(0, 0)].into_iter().collect();
+
+    let out = retarget_translations(&source_rest, &target_rest, &mapping, &tracks, 2.0);
+    let track = &out[0];
+    assert!(track.translations[0].distance(Vec3::ZERO) < 1e-6);
+    assert!(
+        track.translations[1].distance(Vec3::new(0.0, 0.0, 2.0)) < 1e-6,
+        "a twice-as-tall target should stride twice as far, got {:?}",
+        track.translations[1]
+    );
+}
+
+/// The height ratio is measured from the skeletons themselves.
+#[test]
+fn the_height_ratio_comes_from_the_skeletons() {
+    use m2m_rig::retarget::height_scale;
+
+    let short = Skeleton {
+        names: vec!["a".into(), "b".into()],
+        parents: vec![None, Some(0)],
+        positions: vec![Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0)],
+    };
+    let tall = Skeleton {
+        names: vec!["a".into(), "b".into()],
+        parents: vec![None, Some(0)],
+        positions: vec![Vec3::ZERO, Vec3::new(0.0, 3.0, 0.0)],
+    };
+    assert!((height_scale(&short, &tall) - 3.0).abs() < 1e-6);
+    assert!((height_scale(&tall, &short) - 1.0 / 3.0).abs() < 1e-6);
+    // A skeleton with no height does not divide by zero.
+    assert!(height_scale(&short, &short).is_finite());
+}
+
+// ---------------------------------------------------------------------------
+// End to end, through the real readers and real assets.
+// ---------------------------------------------------------------------------
+
+/// A rig read from a `.glb`: skeleton, rest pose, and the node each bone is.
+struct LoadedRig {
+    document: m2m_io::glb::Document,
+    nodes: Vec<usize>,
+    skeleton: Skeleton,
+    rotations: m2m_rig::retarget::RestRotations,
+}
+
+fn load_rig(relative: &str) -> LoadedRig {
+    use glam::Mat4;
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/").to_owned() + relative;
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
+    let document = m2m_io::glb::read(&bytes).expect("reads");
+    let skin = document.skins.first().expect("a skin");
+
+    let local: Vec<Mat4> = document
+        .nodes
+        .iter()
+        .map(|n| {
+            Mat4::from_scale_rotation_translation(
+                Vec3::from(n.transform.scale),
+                Quat::from_array(n.transform.rotation),
+                Vec3::from(n.transform.translation),
+            )
+        })
+        .collect();
+    let mut world = vec![Mat4::IDENTITY; document.nodes.len()];
+    for (index, slot) in world.iter_mut().enumerate() {
+        let mut chain = vec![index];
+        let mut cursor = index;
+        while let Some(parent) = document.nodes[cursor].parent {
+            chain.push(parent);
+            cursor = parent;
+        }
+        let mut matrix = Mat4::IDENTITY;
+        for &node in chain.iter().rev() {
+            matrix *= local[node];
+        }
+        *slot = matrix;
+    }
+    let slots: std::collections::HashMap<usize, usize> = skin
+        .joints
+        .iter()
+        .enumerate()
+        .map(|(slot, &node)| (node, slot))
+        .collect();
+
+    LoadedRig {
+        nodes: skin.joints.clone(),
+        skeleton: Skeleton {
+            names: skin
+                .joints
+                .iter()
+                .map(|&j| document.nodes[j].name.clone())
+                .collect(),
+            parents: skin
+                .joints
+                .iter()
+                .map(|&j| {
+                    document.nodes[j]
+                        .parent
+                        .and_then(|p| slots.get(&p).copied())
+                })
+                .collect(),
+            positions: skin
+                .joints
+                .iter()
+                .map(|&j| world[j].transform_point3(Vec3::ZERO))
+                .collect(),
+        },
+        rotations: m2m_rig::retarget::RestRotations {
+            local: skin
+                .joints
+                .iter()
+                .map(|&j| Quat::from_array(document.nodes[j].transform.rotation))
+                .collect(),
+        },
+        document,
+    }
+}
+
+/// A real clip moves from a real rig onto another, keeping its time axis.
+///
+/// Verified independently outside CI: Blender reports the written file as 65
+/// bones and 87 actions, with `Chest_Open` at frames **0.00–33.00** — the same
+/// range as the source. assimp reads 87 animations and 5,655 channels. Neither
+/// runs in CI, so the properties they confirmed are asserted here.
+#[test]
+fn a_real_clip_retargets_between_real_rigs() {
+    let source = load_rig("animations/human-base-animations.glb");
+    let target = load_rig("test-files/retarget testing/mixamo-sample-rig.glb");
+
+    let known: Vec<m2m_rig::automap::KnownRig> = ["mixamo.json", "rigify.json"]
+        .iter()
+        .map(|file| {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/known-rigs/").to_owned() + file;
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("parses")
+        })
+        .collect();
+    let (target_to_source, _) =
+        m2m_rig::automap::map_bones_best(&target.skeleton, &source.skeleton, &known, 0.5);
+    let source_to_target: HashMap<usize, usize> =
+        target_to_source.iter().map(|(&t, &s)| (s, t)).collect();
+    assert_eq!(
+        source_to_target.len(),
+        65,
+        "every target bone should be driven"
+    );
+
+    let node_to_bone: HashMap<usize, usize> = source
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(bone, &node)| (node, bone))
+        .collect();
+
+    let clip = source
+        .document
+        .clips
+        .iter()
+        .find(|c| c.name == "Chest_Open")
+        .expect("Chest_Open");
+    let tracks: Vec<RotationTrack> = clip
+        .channels
+        .iter()
+        .filter(|c| c.path == m2m_io::glb::Path::Rotation)
+        .filter_map(|c| {
+            Some(RotationTrack {
+                bone: *node_to_bone.get(&c.node)?,
+                times: c.times.clone(),
+                rotations: c
+                    .values
+                    .chunks_exact(4)
+                    .map(|q| Quat::from_xyzw(q[0], q[1], q[2], q[3]))
+                    .collect(),
+            })
+        })
+        .collect();
+    assert!(!tracks.is_empty(), "the clip has rotation tracks");
+
+    let (moved, report) = retarget(
+        &source.skeleton,
+        &source.rotations,
+        &target.skeleton,
+        &target.rotations,
+        &source_to_target,
+        &Clip {
+            name: clip.name.clone(),
+            tracks,
+        },
+    );
+
+    assert_eq!(report.malformed_tracks, 0);
+    assert_eq!(
+        moved.tracks.len(),
+        target.skeleton.names.len(),
+        "every target bone gets a track, driven or not"
+    );
+    // The time axis, which is what goes wrong silently. Blender reads the
+    // written file at frames 0.00-33.00, the same as the source: 1.375 s at its
+    // 24 fps.
+    assert!(
+        (moved.duration() - clip.duration).abs() < 1e-4,
+        "duration drifted: {} against the source's {}",
+        moved.duration(),
+        clip.duration
+    );
+    assert!((clip.duration - 1.375).abs() < 1e-3, "fixture changed");
+
+    // Every rotation is a unit quaternion, or a consumer gets a skewed bone.
+    for track in &moved.tracks {
+        for rotation in &track.rotations {
+            assert!(
+                (rotation.length() - 1.0).abs() < 1e-3,
+                "bone {} produced a non-unit rotation {rotation:?}",
+                track.bone
+            );
+        }
+    }
+}

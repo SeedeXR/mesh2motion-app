@@ -309,3 +309,88 @@ fn hierarchy_order(skeleton: &Skeleton) -> Vec<usize> {
     order.sort_by_key(|&bone| depth[bone]);
     order
 }
+
+/// A skeleton's rest translations, one local offset per bone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestTranslations {
+    /// Local translation of each bone at rest.
+    pub local: Vec<glam::Vec3>,
+}
+
+/// One bone's translation over time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranslationTrack {
+    /// Index of the bone this drives.
+    pub bone: usize,
+    /// Key times, in seconds.
+    pub times: Vec<f32>,
+    /// One local translation per key.
+    pub translations: Vec<glam::Vec3>,
+}
+
+/// How much longer the target is than the source, by overall height.
+///
+/// Root motion has to be scaled by this or a tall character takes a short
+/// character's stride: the same clip on a 2.3x body would shuffle in place.
+pub fn height_scale(source: &Skeleton, target: &Skeleton) -> f32 {
+    let extent = |skeleton: &Skeleton| -> f32 {
+        let ys: Vec<f32> = skeleton.positions.iter().map(|p| p.y).collect();
+        let lo = ys.iter().copied().fold(f32::INFINITY, f32::min);
+        let hi = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        (hi - lo).max(f32::EPSILON)
+    };
+    extent(target) / extent(source)
+}
+
+/// Moves translation tracks from the source skeleton onto the target.
+///
+/// # Why almost every bone comes out at its rest translation
+///
+/// A bone's local translation is its offset from its parent — its *length* —
+/// not something an animation is supposed to change. Copying the source's would
+/// rebuild the target with the source's proportions. Measured across the 87
+/// clips in `human-base-animations.glb`: of **5,809** translation channels,
+/// only **94 actually move**, and they belong to exactly two bones, `pelvis`
+/// (80 clips) and `root` (14). Everything else is a constant equal to the rest
+/// offset, written out by an exporter that emits full TRS whether or not it
+/// varies.
+///
+/// So the same rule as rotations applies, and needs no special case for the
+/// root: take the offset the source moved away from *its* rest translation,
+/// scale it by [`height_scale`], and add it to the target's own rest. A bone
+/// that never moves has a zero offset and lands exactly on the target's rest
+/// translation, which is what preserves the target's proportions.
+pub fn retarget_translations(
+    source_rest: &RestTranslations,
+    target_rest: &RestTranslations,
+    mapping: &HashMap<usize, usize>,
+    tracks: &[TranslationTrack],
+    scale: f32,
+) -> Vec<TranslationTrack> {
+    let mut out = Vec::new();
+    for track in tracks {
+        if track.times.len() != track.translations.len() {
+            continue;
+        }
+        let Some(&target_bone) = mapping.get(&track.bone) else {
+            continue;
+        };
+        let Some(&source_rest_offset) = source_rest.local.get(track.bone) else {
+            continue;
+        };
+        let Some(&target_rest_offset) = target_rest.local.get(target_bone) else {
+            continue;
+        };
+        out.push(TranslationTrack {
+            bone: target_bone,
+            times: track.times.clone(),
+            translations: track
+                .translations
+                .iter()
+                .map(|&at| target_rest_offset + (at - source_rest_offset) * scale)
+                .collect(),
+        });
+    }
+    out.sort_by_key(|t| t.bone);
+    out
+}
