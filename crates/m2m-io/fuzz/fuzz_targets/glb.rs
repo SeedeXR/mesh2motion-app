@@ -38,4 +38,46 @@ fuzz_target!(|data: &[u8]| {
             assert!(channel.node < document.nodes.len(), "channel node out of range");
         }
     }
+
+    // Then write it back. A document assembled from hostile bytes is still a
+    // document the writer may be handed — the app re-exports what it opened —
+    // so the write path is fuzzed through the read path rather than separately.
+    let Ok(bytes) = m2m_io::glb::write(&document) else {
+        return;
+    };
+    // What we write, we must be able to read: an exporter that emits files its
+    // own importer rejects is broken even when nothing panics. This caught a
+    // real one — an empty scene serialized to `{}` and then failed to
+    // deserialize, because `gltf-json`'s `Scene::nodes` has
+    // `skip_serializing_if` and no `serde(default)`.
+    let again = m2m_io::glb::write(&document).expect("writing twice must agree");
+    assert_eq!(bytes, again, "writing is not deterministic");
+    match m2m_io::glb::read(&bytes) {
+        Ok(reread) => {
+            assert_eq!(
+                reread.nodes.len(),
+                document.nodes.len(),
+                "the round trip changed the node count"
+            );
+            // Primitives that draw nothing are not written — see the writer's
+            // note on zero-count accessors — so the invariant is about the ones
+            // that do.
+            let drawable = document
+                .primitives
+                .iter()
+                .filter(|p| !p.indices.is_empty() && !p.positions.is_empty())
+                .count();
+            assert_eq!(
+                reread.primitives.len(),
+                drawable,
+                "the round trip changed the drawable primitive count"
+            );
+            assert_eq!(
+                reread.clips.len(),
+                document.clips.len(),
+                "the round trip changed the clip count"
+            );
+        }
+        Err(error) => panic!("wrote a file we cannot read: {error}"),
+    }
 });

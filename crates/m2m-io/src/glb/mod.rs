@@ -17,6 +17,9 @@
 //! Same rule as the FBX readers: malformed input returns an error, never a
 //! panic, hang, or OOM. See [`crate::fbx`].
 
+mod write;
+pub use write::write;
+
 use std::collections::HashMap;
 
 /// What went wrong reading a `.glb`.
@@ -34,6 +37,13 @@ pub enum GlbError {
         /// Which buffer.
         index: usize,
     },
+    /// The assembled document could not be serialized to JSON.
+    ///
+    /// In practice a count that does not fit where glTF puts it; this writer
+    /// builds the structure itself, so a malformed one is a bug here rather
+    /// than something a caller can provoke with data.
+    #[error("could not serialize glb json: {0}")]
+    Serialize(String),
     /// The GLB container header is malformed.
     ///
     /// Checked here rather than left to the `gltf` crate because that crate
@@ -121,6 +131,12 @@ pub struct Node {
     pub parent: Option<usize>,
     /// Local transform.
     pub transform: Trs,
+    /// The skin that deforms this node's mesh, if it has one.
+    ///
+    /// glTF puts the skin on the node, not the mesh, so a round trip that
+    /// dropped this would write an armature and a mesh with no connection
+    /// between them — the mesh would import unweighted.
+    pub skin: Option<usize>,
 }
 
 /// A skin: the joints that deform a mesh, and their bind pose.
@@ -207,6 +223,15 @@ pub struct GlbReport {
     pub out_of_range_triangles: usize,
     /// Trailing indices that did not complete a triangle.
     pub incomplete_triangles: usize,
+    /// Non-finite floats replaced with zero.
+    ///
+    /// A file can hold NaN or infinity anywhere it holds a float. They are
+    /// replaced at the boundary rather than carried, for two reasons. A NaN
+    /// vertex makes a mesh vanish with nothing to say where it started — the
+    /// FBX reader learned that in session 019 — and JSON has no way to write
+    /// one, so `serde_json` emits `null` and the exported file cannot be read
+    /// back, by us or anyone. Found by fuzzing the round trip.
+    pub non_finite_values: usize,
     /// Accessors skipped for declaring a type glTF does not allow there.
     ///
     /// The `gltf` crate reads an accessor into a fixed Rust type and
@@ -269,11 +294,17 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
             });
         }
     }
-    let blob = gltf.blob.as_deref().ok_or(GlbError::NoBinaryChunk)?;
+    // A file that declares no buffers needs no BIN chunk, and demanding one
+    // would reject a legitimate skeleton-only or empty document.
+    let blob = match gltf.blob.as_deref() {
+        Some(blob) => blob,
+        None if gltf.buffers().len() == 0 => &[],
+        None => return Err(GlbError::NoBinaryChunk),
+    };
     let get_buffer_data = |_: gltf::Buffer| Some(blob);
 
     let mut report = GlbReport::default();
-    let nodes = read_nodes(&gltf);
+    let nodes = read_nodes(&gltf, &mut report);
     let mesh_owner = mesh_owners(&gltf);
     let primitives = read_primitives(&gltf, &mesh_owner, get_buffer_data, &mut report)?;
     let skins = read_skins(&gltf, get_buffer_data, &mut report);
@@ -286,6 +317,19 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
         clips,
         report,
     })
+}
+
+/// Replaces non-finite floats with zero, counting what it replaced.
+///
+/// Individually, not wholesale: a vertex with one bad component keeps its other
+/// two, which matches how the FBX reader repairs a model's transform.
+fn sanitize(values: &mut [f32], count: &mut usize) {
+    for value in values.iter_mut() {
+        if !value.is_finite() {
+            *value = 0.0;
+            *count += 1;
+        }
+    }
 }
 
 /// Rejects a file whose JSON contains an index pointing past the array it
@@ -527,16 +571,20 @@ fn check_glb_header(bytes: &[u8]) -> Result<(), GlbError> {
 ///
 /// glTF stores children, not parents, and guarantees the graph is a forest, so
 /// one pass over every node's children names every parent exactly once.
-fn read_nodes(gltf: &gltf::Gltf) -> Vec<Node> {
+fn read_nodes(gltf: &gltf::Gltf, report: &mut GlbReport) -> Vec<Node> {
     let mut parents: HashMap<usize, usize> = HashMap::new();
     for node in gltf.nodes() {
         for child in node.children() {
             parents.insert(child.index(), node.index());
         }
     }
-    gltf.nodes()
-        .map(|node| {
-            let (translation, rotation, scale) = node.transform().decomposed();
+    let mut out = Vec::new();
+    for node in gltf.nodes() {
+        let (mut translation, mut rotation, mut scale) = node.transform().decomposed();
+        sanitize(&mut translation, &mut report.non_finite_values);
+        sanitize(&mut rotation, &mut report.non_finite_values);
+        sanitize(&mut scale, &mut report.non_finite_values);
+        out.push({
             Node {
                 name: node.name().unwrap_or_default().to_owned(),
                 parent: parents.get(&node.index()).copied(),
@@ -545,9 +593,11 @@ fn read_nodes(gltf: &gltf::Gltf) -> Vec<Node> {
                     rotation,
                     scale,
                 },
+                skin: node.skin().map(|s| s.index()),
             }
-        })
-        .collect()
+        });
+    }
+    out
 }
 
 /// Which node instances each mesh.
@@ -631,7 +681,7 @@ where
             }
 
             let reader = primitive.reader(get_buffer_data.clone());
-            let positions: Vec<f32> = reader
+            let mut positions: Vec<f32> = reader
                 .read_positions()
                 .ok_or(GlbError::NoPositions {
                     mesh: mesh.index(),
@@ -639,6 +689,7 @@ where
                 })?
                 .flatten()
                 .collect();
+            sanitize(&mut positions, &mut report.non_finite_values);
 
             // A primitive with no index buffer draws its vertices in order.
             let vertex_count = positions.len() / 3;
@@ -667,10 +718,11 @@ where
                 .read_joints(0)
                 .map(|j| j.into_u16().flatten().collect())
                 .unwrap_or_default();
-            let weights: Vec<f32> = reader
+            let mut weights: Vec<f32> = reader
                 .read_weights(0)
                 .map(|w| w.into_f32().flatten().collect())
                 .unwrap_or_default();
+            sanitize(&mut weights, &mut report.non_finite_values);
             if joints.is_empty() != weights.is_empty() {
                 report.half_skinned_primitives += 1;
             }
@@ -706,10 +758,14 @@ where
             Skin {
                 joints: skin.joints().map(|j| j.index()).collect(),
                 inverse_bind_matrices: if valid {
-                    reader
+                    let mut matrices: Vec<[f32; 16]> = reader
                         .read_inverse_bind_matrices()
                         .map(|m| m.map(flatten_matrix).collect())
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    for matrix in &mut matrices {
+                        sanitize(matrix, &mut report.non_finite_values);
+                    }
+                    matrices
                 } else {
                     report.invalid_accessors += 1;
                     Vec::new()
@@ -780,8 +836,9 @@ where
                     report.channels_without_data += 1;
                     continue;
                 };
-                let times: Vec<f32> = times.collect();
-                let values: Vec<f32> = match outputs {
+                let mut times: Vec<f32> = times.collect();
+                sanitize(&mut times, &mut report.non_finite_values);
+                let mut values: Vec<f32> = match outputs {
                     gltf::animation::util::ReadOutputs::Translations(v) => v.flatten().collect(),
                     gltf::animation::util::ReadOutputs::Scales(v) => v.flatten().collect(),
                     gltf::animation::util::ReadOutputs::Rotations(v) => {
@@ -791,8 +848,7 @@ where
                         v.into_f32().collect()
                     }
                 };
-                // NaN never wins a comparison, so a non-finite key time cannot
-                // silently become the duration.
+                sanitize(&mut values, &mut report.non_finite_values);
                 duration = times.iter().copied().fold(duration, f32::max);
                 channels.push(Channel {
                     node: channel.target().node().index(),
