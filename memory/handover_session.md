@@ -2137,3 +2137,63 @@ cannot ship as a template. Add it with the first control-bearing rig we own.
 
 278 release tests, 177 in `m2m-io` debug, 0 failures; clippy and fmt clean.
 5 mutations this session, 5 caught.
+
+## Session 031 — limb fitting
+
+CI confirmed green for 702aa8a and 0722787 before starting.
+
+### Result
+
+`fit_limb` / `fit_limbs` swing a limb chain about its attachment onto the limb
+the mesh actually has. Limb joints outside the mesh fell from **53 of 170 to 26
+of 170** across seven bodies, **with no body made worse**.
+
+| model | before | after |
+|---|---|---|
+| human | 8/18 | 5/18 |
+| jay | 10/18 | 6/18 |
+| bunny | 16/18 | 8/18 |
+| sophia | 9/18 | 3/18 |
+| bird | 10/24 | 4/24 |
+| fox | 0/26 | 0/26 (skipped) |
+| horse | 0/28 | 0/28 (skipped) |
+
+### Measuring first killed two assumptions before any code was written
+
+- **Grounding needed no work.** I expected to have to place feet. Leg tips
+  already sat 0.7%–2.4% above the ground after the body fit — exactly where each
+  rig's own tips sit above its own floor, because `fit_uniform` maps the rig's
+  floor onto the mesh's ground and proportions carry. The whole job was
+  direction, not length.
+- **Legs ground regardless of posture.** Spider legs carry no posture and their
+  tips sit 0.5%–1.5% above the rig floor; bird 2.4%, human 0.7%. Arms sit at
+  87.8% and wings at 86.7%. So grounding keys on `role == Leg`, and posture
+  governs proportions *within* a leg — not whether it touches.
+
+### The target rule took three attempts, and the first two broke working bodies
+
+1. **Furthest vertex in a 60° cone.** Helped humans, and put 8 of the fox's 26
+   limb joints outside a body they had all been inside, lifting its leg tips 52%
+   of body height off the floor and the bird's 73%.
+2. **Reach along the limb's own axis, 32° cone.** Fixed the tips and helped
+   everything — but still cost the fox 6 and the horse 5.
+3. **Skip limbs already inside the mesh.** The fox and horse rest poses already
+   match their own meshes, so re-aiming can only move them out. Monotone at last.
+
+> The invariant worth having is not "the fit is good" but **"the fit is never
+> worse"**. `limb_fitting_never_makes_a_body_worse` is the test that would have
+> caught attempts 1 and 2 immediately, and it is the one to write first next
+> time.
+
+### What remains
+
+The residual 26 are the **A-pose/T-pose problem (P3-6)**: `rig-human` is T-posed,
+every human mesh has its arms lower, and re-aiming the chain gets the arm's
+*direction* right while its intermediate joints follow a bend the template does
+not have. Budgets are pinned per model (fox 0, horse 0, sophia 3, bird 4, human
+5, jay 6, bunny 8) so the numbers can only improve.
+
+### Gate coverage (4 mutations, 4 caught)
+
+no skip for already-placed limbs · target by distance instead of reach along the
+axis · limb fitting made a no-op · cone widened back to 60°.

@@ -25,6 +25,7 @@
 
 use glam::Vec3;
 use m2m_core::mesh::Mesh;
+use m2m_core::voxel::{VoxelGrid, VoxelState};
 
 /// glTF fixes +Y as up, so this is a property of the format rather than a guess
 /// about the models. Every asset here is glTF.
@@ -436,4 +437,125 @@ pub fn ankle_height(chain: &crate::template::Chain, rest: &RestPose) -> Option<f
         .map(|(_, y)| *y)
         .fold(f32::NEG_INFINITY, f32::max);
     ankle.is_finite().then_some(ankle)
+}
+
+/// Swings a limb chain onto the limb the mesh actually has.
+///
+/// The body fit scales the whole skeleton uniformly, which keeps a limb's
+/// length in proportion and its **direction** exactly as the template posed it.
+/// That is the problem: `rig-human` is T-posed with its arms straight out, and
+/// a mesh whose arms hang lower is a different pose, not a different size.
+/// Measured before writing this, the body fit alone leaves `upperarm`,
+/// `lowerarm` and `hand` outside the mesh on **every** human body tested, while
+/// the clavicle — the one arm bone close to the torso — stays inside. The
+/// quadrupeds are unaffected: fox 0 of 26 limb joints outside, horse 0 of 28,
+/// because their rest pose already matches their meshes.
+///
+/// So the chain is rotated about its attachment to point at the far end of the
+/// limb the mesh has, and scaled to reach it. The attachment itself does not
+/// move: it is held by the body, and the body fit already placed it.
+///
+/// The far end is the mesh vertex furthest from the attachment **within a cone**
+/// about the template's own direction. The cone matters: without it a left arm
+/// would happily pick the right foot, which is further away.
+///
+/// Does nothing when the mesh offers no vertex in the cone, when the chain has
+/// fewer than two bones, or when the template's own limb has no length.
+pub fn fit_limb(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    grid: &VoxelGrid,
+    chain: &crate::template::Chain,
+) {
+    let (Some(first), Some(last)) = (chain.bones.first(), chain.bones.last()) else {
+        return;
+    };
+
+    // A limb already inside the mesh is already placed, and re-aiming it can
+    // only move it out. Measured: the fox and horse rest poses match their own
+    // meshes exactly — 0 of 26 and 0 of 28 limb joints outside — and swinging
+    // them anyway put 6 and 5 joints outside a body they had been inside. The
+    // human arms are the opposite case: the rig is T-posed and every mesh has
+    // its arms lower, so `upperarm`, `lowerarm` and `hand` all start outside.
+    let already_placed = chain.bones.iter().all(|bone| {
+        fitted.position_of(bone).is_some_and(|at| {
+            matches!(
+                grid.state(grid.coord_of(at)),
+                Some(VoxelState::Interior | VoxelState::Surface)
+            )
+        })
+    });
+    if already_placed {
+        return;
+    }
+    let (Some(attach), Some(tip)) = (fitted.position_of(first), fitted.position_of(last)) else {
+        return;
+    };
+    let reach = tip - attach;
+    if reach.length_squared() <= f32::EPSILON {
+        return;
+    }
+    let direction = reach.normalize();
+
+    // Half-angle of the cone. Wide enough to follow an arm from a T-pose down
+    // to an A-pose, narrow enough that it cannot cross to the other side of the
+    // body or pick up a limb it does not own.
+    const COS_LIMIT: f32 = 0.85; // about 32 degrees
+    let mut best = None;
+    let mut best_reach = 0.0f32;
+    for &vertex in &mesh.positions {
+        let offset = vertex - attach;
+        let distance = offset.length();
+        if distance <= f32::EPSILON {
+            continue;
+        }
+        let along = offset.dot(direction);
+        if along / distance < COS_LIMIT {
+            continue;
+        }
+        // Ranked by how far along the limb's own axis a vertex lies, not by how
+        // far away it is. Distance picks whatever is furthest anywhere in the
+        // cone, which for a leg pointing down is a point diagonally across the
+        // body.
+        if along > best_reach {
+            best_reach = along;
+            best = Some(vertex);
+        }
+    }
+    let Some(target) = best else {
+        return;
+    };
+
+    let wanted = target - attach;
+    if wanted.length_squared() <= f32::EPSILON {
+        return;
+    }
+    let rotation = glam::Quat::from_rotation_arc(direction, wanted.normalize());
+    let scale = wanted.length() / reach.length();
+
+    for bone in &chain.bones {
+        let Some(index) = fitted.bones.iter().position(|b| b == bone) else {
+            continue;
+        };
+        let offset = fitted.positions[index] - attach;
+        fitted.positions[index] = attach + rotation * (offset * scale);
+    }
+}
+
+/// Swings every limb of a template onto the mesh.
+///
+/// Legs, arms, wings and fins alike: the operation is about following the
+/// geometry that is there, and does not depend on posture. Posture governs the
+/// proportions *within* a leg, which uniform scaling already preserves — the
+/// measured leg tips sit 0.5% to 2.4% above the rig's own floor before and
+/// after, because the body fit maps the rig's floor onto the mesh's ground.
+pub fn fit_limbs(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    grid: &VoxelGrid,
+    template: &crate::template::Template,
+) {
+    for chain in template.of_kind(crate::template::ChainKind::Limb) {
+        fit_limb(fitted, mesh, grid, chain);
+    }
 }

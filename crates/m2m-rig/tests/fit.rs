@@ -618,3 +618,274 @@ fn only_legs_carry_a_posture() {
         }
     }
 }
+
+/// Where limb joints land after the body fit, before any limb-specific work.
+///
+/// Run first to find out what limb fitting actually has to fix, rather than
+/// assuming. Reports rather than asserts.
+#[test]
+#[ignore = "diagnostic, not a gate"]
+fn report_limb_placement() {
+    for (model, rig, manifest) in [
+        ("models/model-human.glb", "rigs/rig-human.glb", "human.json"),
+        (
+            "models-variation/human-jay.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-bunny.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-sophia.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
+        ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
+        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+    ] {
+        let mesh = mesh_of(model);
+        let landmarks = Landmarks::of(&mesh).expect("vertices");
+        let rest = rest_pose_of(rig);
+        let spine = spine_of(manifest);
+        let mut fitted = fit_uniform(&rest, &landmarks, &spine).expect("fits");
+        let manifest_data = template(manifest);
+        let grid = VoxelGrid::build(&mesh, 128).expect("voxelises");
+        m2m_rig::fit::fit_limbs(&mut fitted, &mesh, &grid, &manifest_data);
+
+        let mut outside = 0;
+        let mut total = 0;
+        let mut worst_ground = 0.0f32;
+        for chain in manifest_data.of_kind(ChainKind::Limb) {
+            for bone in &chain.bones {
+                let Some(at) = fitted.position_of(bone) else {
+                    continue;
+                };
+                total += 1;
+                if !matches!(
+                    grid.state(grid.coord_of(at)),
+                    Some(VoxelState::Interior | VoxelState::Surface)
+                ) {
+                    outside += 1;
+                }
+            }
+            if chain.role == Some(LimbRole::Leg) {
+                if let Some(tip) = chain.bones.last().and_then(|b| fitted.position_of(b)) {
+                    let above = (tip.y - landmarks.ground) / landmarks.extent().y;
+                    worst_ground = worst_ground.max(above.abs());
+                }
+            }
+        }
+        println!(
+            "{model:44} limb joints {outside:3}/{total:3} outside, worst leg tip {:.1}% off the ground",
+            worst_ground * 100.0
+        );
+        for chain in manifest_data.of_kind(ChainKind::Limb) {
+            let bad: Vec<&str> = chain
+                .bones
+                .iter()
+                .filter(|b| {
+                    fitted.position_of(b).is_none_or(|at| {
+                        !matches!(
+                            grid.state(grid.coord_of(at)),
+                            Some(VoxelState::Interior | VoxelState::Surface)
+                        )
+                    })
+                })
+                .map(String::as_str)
+                .collect();
+            if !bad.is_empty() {
+                println!("      {} ({:?}): {bad:?}", chain.name, chain.role);
+            }
+        }
+    }
+}
+
+/// How many limb joints sit outside the mesh, before and after limb fitting.
+fn limb_joints_outside(model: &str, rig: &str, manifest: &str) -> (usize, usize, usize, f32) {
+    let mesh = mesh_of(model);
+    let landmarks = Landmarks::of(&mesh).expect("vertices");
+    let rest = rest_pose_of(rig);
+    let spine = spine_of(manifest);
+    let manifest_data = template(manifest);
+    let grid = VoxelGrid::build(&mesh, 128).expect("voxelises");
+
+    let placed = fit_uniform(&rest, &landmarks, &spine).expect("fits");
+    let mut swung = placed.clone();
+    m2m_rig::fit::fit_limbs(&mut swung, &mesh, &grid, &manifest_data);
+
+    let count = |fit: &m2m_rig::fit::Fitted| -> usize {
+        manifest_data
+            .of_kind(ChainKind::Limb)
+            .flat_map(|c| c.bones.iter())
+            .filter(|bone| {
+                fit.position_of(bone).is_none_or(|at| {
+                    !matches!(
+                        grid.state(grid.coord_of(at)),
+                        Some(VoxelState::Interior | VoxelState::Surface)
+                    )
+                })
+            })
+            .count()
+    };
+    let total = manifest_data
+        .of_kind(ChainKind::Limb)
+        .map(|c| c.bones.len())
+        .sum();
+
+    // Worst leg tip, as a fraction of body height above the ground plane.
+    let worst = manifest_data
+        .of_kind(ChainKind::Limb)
+        .filter(|c| c.role == Some(LimbRole::Leg))
+        .filter_map(|c| c.bones.last().and_then(|b| swung.position_of(b)))
+        .map(|tip| ((tip.y - landmarks.ground) / landmarks.extent().y).abs())
+        .fold(0.0f32, f32::max);
+
+    (count(&placed), count(&swung), total, worst)
+}
+
+/// Swinging a limb onto the mesh never makes a body worse than leaving it.
+///
+/// The invariant that matters, and one this failed twice while being written.
+/// Picking the target as the furthest vertex in a 60-degree cone put 8 of the
+/// fox's 26 limb joints outside a body they had all been inside, and lifted its
+/// leg tips 52% of its height off the ground. Ranking by reach along the limb's
+/// own axis in a 32-degree cone fixed the tips but still cost the fox 6 and the
+/// horse 5. Only skipping limbs that are already inside makes this hold.
+#[test]
+fn limb_fitting_never_makes_a_body_worse() {
+    for (model, rig, manifest) in [
+        ("models/model-human.glb", "rigs/rig-human.glb", "human.json"),
+        ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
+        ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
+        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+        (
+            "models-variation/human-jay.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-bunny.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-sophia.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-female.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-sintel.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+        (
+            "models-variation/human-zombie.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+    ] {
+        let (before, after, total, _) = limb_joints_outside(model, rig, manifest);
+        assert!(
+            after <= before,
+            "{model}: limb fitting made it worse, {before} -> {after} of {total} outside"
+        );
+    }
+}
+
+/// The measured state of limb placement, pinned so it can only improve.
+///
+/// These are **not** zero, and the reason is understood: `rig-human` is T-posed
+/// and every human mesh has its arms lower, so the arm chain is re-aimed onto
+/// the mesh's arm but its intermediate joints do not all land inside a limb
+/// whose bend differs from the template's. That is the A-pose/T-pose problem —
+/// **P3-6** — and it is the next thing that will move these numbers.
+///
+/// The fox and horse are zero because their rest poses already match their own
+/// meshes, and limb fitting leaves them alone.
+#[test]
+fn limb_placement_is_at_least_this_good() {
+    for (model, rig, manifest, budget) in [
+        ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json", 0),
+        (
+            "models/model-horse.glb",
+            "rigs/rig-horse.glb",
+            "horse.json",
+            0,
+        ),
+        (
+            "models-variation/human-sophia.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+            3,
+        ),
+        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json", 4),
+        (
+            "models/model-human.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+            5,
+        ),
+        (
+            "models-variation/human-jay.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+            6,
+        ),
+        (
+            "models-variation/human-bunny.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+            8,
+        ),
+    ] {
+        let (_, after, total, _) = limb_joints_outside(model, rig, manifest);
+        assert!(
+            after <= budget,
+            "{model}: {after} of {total} limb joints outside, budget {budget}"
+        );
+    }
+}
+
+/// Every leg keeps its foot on the ground.
+///
+/// Grounding comes free from the body fit, which maps the rig's own floor onto
+/// the mesh's ground plane, and limb fitting must not undo it. It did, twice:
+/// the first target rule lifted the fox's leg tips 52% of its height off the
+/// floor and the bird's 73%.
+#[test]
+fn every_leg_keeps_its_foot_on_the_ground() {
+    for (model, rig, manifest) in [
+        ("models/model-human.glb", "rigs/rig-human.glb", "human.json"),
+        ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
+        ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
+        ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+        (
+            "models/model-spider.glb",
+            "rigs/rig-spider.glb",
+            "spider.json",
+        ),
+        (
+            "models-variation/human-bunny.glb",
+            "rigs/rig-human.glb",
+            "human.json",
+        ),
+    ] {
+        let (_, _, _, worst) = limb_joints_outside(model, rig, manifest);
+        // The templates' own leg tips sit 0.5% to 2.4% above their floor, so a
+        // fitted foot is expected near the ground rather than exactly on it.
+        assert!(
+            worst < 0.03,
+            "{model}: a leg tip sits {:.1}% of body height off the ground",
+            worst * 100.0
+        );
+    }
+}
