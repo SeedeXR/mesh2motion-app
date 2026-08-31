@@ -1578,3 +1578,80 @@ this diff myself; said so in the commit.
 ### Next
 P2-6(b4): animation. The O9 gate asserts the gap explicitly today
 (`after.actions` is `[]`), so it will start failing the moment b4 lands.
+
+## Session 024 — P2-6(b4) animation: O9 fully met
+
+**Outcome: the FBX writer is complete and O9 is met in full.** Blender reads the
+rebuilt reference rig identically to the original on every field measured —
+geometry, skeleton, weights, *and* animation.
+
+| field | original | rebuilt |
+|---|---|---|
+| bones / vertex groups / weighted verts | 65 / 52 / 24,746 | identical |
+| polygons (quads preserved) | 11,120 / 14,222 | identical |
+| action name | `Armature\|mixamo.com\|Layer0` | identical |
+| curves / keys | 520 / 76,960 | identical |
+| frame range | 1.00–148.00 | identical |
+| driven paths | location, rotation_quaternion, scale | identical |
+
+### The finding worth carrying forward
+
+`TimeMode` was missing from GlobalSettings. Blender then read the 148-frame clip
+as **123.5 frames**: the same 520 curves, the same 76,960 keys, the same driven
+paths — played 20% slow, because 30fps keys were read at 25fps. **Every count
+matched. Only the time axis was wrong.**
+
+> **For animation, counting keys is not verification.** A gate that checks curve
+> and key counts passes a clip that plays at the wrong speed. The time axis needs
+> its own assertion. `range` was added to `blender-fbx-import-check.py` for this,
+> and the conformance gate now asserts `action_detail` (which carries it).
+
+`TimeMode = 6` is 30fps — **verified empirically**, by writing it and reading
+Blender's frame range back, not recalled from the FBX enum.
+
+### Two process corrections made this session
+
+1. **A dead branch I wrote without checking.** I first read TimeMode via
+   `scene.objects_of_kind("GlobalSettings")`, with a raw-document fallback and
+   `unwrap_or(6)` behind it. All three paths yield 6, so the correct output
+   proved nothing. Probing showed the DOM path returns `None` — GlobalSettings is
+   a *root* node, never an `Objects` child, so `Scene` never held it. Replaced by
+   one path: `Scene::time_mode`, in the library, with a test.
+   **Rule: when several fallbacks can produce the same right answer, the right
+   answer is not evidence any particular one works. Probe which fired.**
+2. **A vacuous test-count check.** I had been summing results with
+   `awk -F'[ ;]' '{p+=$4; f+=$6}'` — splitting on both space and `;` leaves
+   field 6 empty, so it printed `failed=0` unconditionally. It would have
+   reported green through any failure. The 215/0 figure is real (re-counted
+   correctly, and zero `FAILED`/`panicked` lines), but the *check* was broken.
+   **Rule: a gate that cannot print red is not a gate. Verify the parser by
+   feeding it a known failure.**
+
+### Gate coverage, measured (5 mutations, 5 caught)
+
+| mutation | caught by |
+|---|---|
+| `TimeMode` key renamed | `the_frame_rate_is_written_into_global_settings` |
+| layer name hardcoded | `the_layer_keeps_the_name_it_was_given` |
+| Curve→CurveNode reversed | `a_built_clip_reads_back_as_a_track` |
+| CurveNode→Layer dropped | `a_built_clip_reads_back_as_a_track` |
+| CurveNode→Model OP → OO | `a_built_clip_reads_back_as_a_track` |
+
+The animation builder had **zero Rust tests** when b4 first worked — only the
+Blender gate, which does not run in CI. Three were added. Blender is still not in
+CI, so anything only Blender can catch needs a Rust assertion beside it.
+
+### State
+
+- `cargo test --workspace --release`: **215 passed, 0 failed**. clippy `-D warnings`
+  clean, fmt clean. `legacy`: 107 passed. Conformance gate: 3/3 with the animation
+  now **required** (the old `expect(after.actions).toEqual([])` gap assertion is gone).
+- Known limit, commented in `rebuild_rig.rs`: a multi-layer AnimationStack is
+  flattened to one layer. Mixamo exports one; the builder writes one.
+
+### Next
+
+**P2-7** (GLTF/GLB via the `gltf` crate) or **P3-0/O9 in the app** — inverting the
+legacy's `strip_out_all_unecessary_model_data`, which converts `SkinnedMesh` →
+`Mesh` and deletes `skinIndex`/`skinWeight`. The IO layer can now preserve a rig
+end to end, so P3-0 is unblocked.

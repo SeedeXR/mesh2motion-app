@@ -32,6 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         meshes: &[mesh],
         bones: &[],
         skins: &[],
+        clips: &[],
+        time_mode: 6,
     });
     let bytes = m2m_io::fbx::encode::encode(&document)?;
     std::fs::write(&output, &bytes)?;

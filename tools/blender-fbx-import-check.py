@@ -59,6 +59,42 @@ def main() -> int:
     out["meshes"] = sum(1 for o in bpy.data.objects if o.type == "MESH")
     out["bones"] = sum(len(a.bones) for a in bpy.data.armatures)
     out["actions"] = sorted(a.name for a in bpy.data.actions)
+    # "An action exists" is not "the animation survived". These make it
+    # measurable: how many curves, how many keys, over what frame range, and
+    # which properties are driven.
+    #
+    # Blender 4.4 introduced slotted actions and `Action.fcurves` is gone in
+    # 5.2 — the curves live in `layers[].strips[].channelbags[].fcurves`. Both
+    # shapes are handled because this tool has to keep working across versions.
+    def fcurves_of(action):
+        if hasattr(action, "fcurves"):
+            return list(action.fcurves)
+        found = []
+        for layer in getattr(action, "layers", []):
+            for strip in getattr(layer, "strips", []):
+                for bag in getattr(strip, "channelbags", []):
+                    found.extend(bag.fcurves)
+        return found
+
+    out["action_detail"] = sorted(
+        "{}:curves={},keys={},range={:.2f}-{:.2f}".format(
+            action.name,
+            len(fcurves_of(action)),
+            sum(len(fc.keyframe_points) for fc in fcurves_of(action)),
+            *action.frame_range,
+        )
+        for action in bpy.data.actions
+    )
+    # Which properties are driven, so a clip that lost every rotation but kept
+    # its translations does not read as intact.
+    out["animated_paths"] = sorted(
+        {
+            fc.data_path.rsplit(".", 1)[-1]
+            for action in bpy.data.actions
+            for fc in fcurves_of(action)
+        }
+    )
+
     out["mesh_vertices"] = sorted(len(m.vertices) for m in bpy.data.meshes)
     out["mesh_polygons"] = sorted(len(m.polygons) for m in bpy.data.meshes)
     # Corner counts per face, so a polygon-index encoding that merges or splits

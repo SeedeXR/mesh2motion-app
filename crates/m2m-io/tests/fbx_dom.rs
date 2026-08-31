@@ -497,3 +497,29 @@ fn objects_the_scene_cannot_key_are_counted_rather_than_asserted_away() {
     );
     assert_eq!(clean.report, SceneReport::default(), "the reference rig");
 }
+
+/// The frame rate the file's tick times are meant to be read at. Blender is
+/// what actually caught this — omitting TimeMode made it read this rig's
+/// 148-frame clip as 123.5, the same 76,960 keys played 20% slow, with the
+/// curve count, key count and driven paths all still matching. Blender is not
+/// in CI, so the fact it caught is asserted here too.
+#[test]
+fn the_reference_rig_carries_its_frame_rate() {
+    let scene = Scene::from_document(binary::parse(MIXAMO).expect("parses"));
+    assert_eq!(
+        scene.time_mode,
+        Some(6),
+        "TimeMode 6 is 30fps, verified by writing it and reading Blender's frame range"
+    );
+}
+
+/// A file with no GlobalSettings has no frame rate to report, rather than
+/// silently claiming a default one — the caller decides what to assume.
+#[test]
+fn a_file_without_global_settings_reports_no_frame_rate() {
+    let scene = Scene::from_document(binary::FbxDocument {
+        version: 7700,
+        roots: Vec::new(),
+    });
+    assert_eq!(scene.time_mode, None);
+}

@@ -26,6 +26,8 @@ fn build_square() -> binary::FbxDocument {
         }],
         bones: &[],
         skins: &[],
+        clips: &[],
+        time_mode: 6,
     })
 }
 
@@ -109,6 +111,8 @@ fn the_declared_counts_match_the_objects_written() {
         meshes: &meshes,
         bones: &[],
         skins: &[],
+        clips: &[],
+        time_mode: 6,
     });
 
     let definitions = document.root("Definitions").expect("Definitions");
@@ -247,6 +251,8 @@ fn build_rigged() -> binary::FbxDocument {
             mesh: 0,
             clusters: &clusters,
         }],
+        clips: &[],
+        time_mode: 6,
     })
 }
 
@@ -401,4 +407,113 @@ fn a_cluster_with_no_influence_writes_no_arrays() {
             "TransformLink missing"
         );
     }
+}
+
+/// A one-bone rig with one clip: two keys of translation on X.
+///
+/// Times are FBX ticks. 46186158000 ticks is one second, so these two keys are
+/// frame 0 and frame 30 of a 30fps clip.
+const TICK: i64 = 46_186_158_000;
+
+fn build_animated(time_mode: i32) -> binary::FbxDocument {
+    let (positions, triangles) = square();
+    build::build(&build::Scene {
+        meshes: &[build::Mesh {
+            name: "Square",
+            positions: &positions,
+            faces: build::Faces::Triangles(&triangles),
+        }],
+        bones: &[build::Bone {
+            name: "Root",
+            parent: None,
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            pre_rotation: [0.0, 0.0, 0.0],
+        }],
+        skins: &[],
+        clips: &[build::Clip {
+            name: "Walk",
+            duration: TICK,
+            layer: "Layer0",
+            channels: &[build::Channel {
+                bone: 0,
+                property: "Lcl Translation",
+                kind: "T",
+                curves: &[build::Curve {
+                    axis: "d|X",
+                    times: &[0, TICK],
+                    values: &[0.0, 7.0],
+                    default: 0.0,
+                }],
+            }],
+        }],
+        time_mode,
+    })
+}
+
+/// The frame rate is written as asked. This is the one Blender caught: with no
+/// TimeMode, it read the reference rig's 148-frame clip as 123.5 — the same
+/// keys at 25fps instead of 30 — while the curve count, key count and driven
+/// paths all still matched. Blender is not in CI, so assert it here.
+#[test]
+fn the_frame_rate_is_written_into_global_settings() {
+    for time_mode in [6, 11] {
+        let document = build_animated(time_mode);
+        let written = document
+            .root("GlobalSettings")
+            .and_then(|gs| gs.child("Properties70"))
+            .expect("GlobalSettings/Properties70")
+            .children_named("P")
+            .find_map(|p| match (p.properties.first(), p.properties.get(4)) {
+                (Some(FbxProperty::Str(n)), Some(FbxProperty::I32(v))) if n == "TimeMode" => {
+                    Some(*v)
+                }
+                _ => None,
+            });
+        assert_eq!(
+            written,
+            Some(time_mode),
+            "TimeMode {time_mode} was not written"
+        );
+    }
+}
+
+/// A built clip reads back through the animation parser with its name, its
+/// keys and its times intact. Not an independent reader — that is the Blender
+/// gate — but it catches a wrong id, a missing connection or a dropped curve
+/// in CI, where Blender does not run.
+#[test]
+fn a_built_clip_reads_back_as_a_track() {
+    let document = build_animated(6);
+    let bytes = encode::encode(&document).expect("encodes");
+    let scene = Scene::from_document(binary::parse(&bytes).expect("reparses"));
+    let models = m2m_io::fbx::model::parse_all(&scene);
+    let (clips, report) = m2m_io::fbx::animation::parse_all(&scene, &models);
+
+    assert_eq!(clips.len(), 1, "expected one clip, got {clips:?}");
+    let clip = &clips[0];
+    assert_eq!(clip.name, "Walk");
+    assert_eq!(clip.tracks.len(), 1, "the channel did not reach a Model");
+    let track = &clip.tracks[0];
+    assert_eq!(track.times, vec![0.0, 1.0], "key times, in seconds");
+    // Only X was given a curve; Y and Z fall back to the curve node's default.
+    assert_eq!(track.values, vec![0.0, 0.0, 0.0, 7.0, 0.0, 0.0]);
+    assert_eq!(clip.duration, 1.0);
+    assert_eq!(report.curve_nodes_without_model, 0);
+    assert_eq!(report.unattached_curves, 0);
+}
+
+/// The layer name is the source's, not a hardcoded one: Blender names the
+/// imported action `<Armature>|<stack>|<layer>`, so a wrong layer name renames
+/// every action in the file.
+#[test]
+fn the_layer_keeps_the_name_it_was_given() {
+    let document = build_animated(6);
+    let objects = document.root("Objects").expect("Objects");
+    let layers: Vec<&str> = objects
+        .children_named("AnimationLayer")
+        .filter_map(|n| n.properties.get(1).and_then(FbxProperty::as_str))
+        .collect();
+    assert_eq!(layers, vec!["Layer0\u{0}\u{1}AnimLayer"]);
 }

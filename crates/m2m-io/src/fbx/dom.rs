@@ -168,6 +168,13 @@ pub struct Scene {
     pub links: HashMap<i64, Links>,
     /// What had to be dropped.
     pub report: SceneReport,
+    /// `GlobalSettings/TimeMode`, the frame rate every animation tick time in
+    /// the file is meant to be read at. `None` when the file omits it.
+    ///
+    /// Carried on the scene because dropping it silently rescales time: Blender
+    /// reads a 148-frame 30fps clip as 123.5 frames when TimeMode is missing,
+    /// i.e. the same keys played 20% slow, with every other number identical.
+    pub time_mode: Option<i32>,
 }
 
 impl Scene {
@@ -184,12 +191,14 @@ impl Scene {
         // since the document is normally still alive alongside it.
         let links = collect_links(&doc);
         let version = doc.version;
+        let time_mode = read_time_mode(&doc);
         let (objects, report) = collect_objects(doc);
         Self {
             version,
             objects,
             links,
             report,
+            time_mode,
         }
     }
 
@@ -365,6 +374,20 @@ fn flatten_properties(node: &FbxNode) -> HashMap<String, TypedProperty> {
 }
 
 /// Builds the connection graph from the `Connections` section.
+/// `GlobalSettings/Properties70`'s `TimeMode`. A root node, not an `Objects`
+/// child, so it has to be read from the document before the objects are taken.
+fn read_time_mode(doc: &FbxDocument) -> Option<i32> {
+    doc.root("GlobalSettings")?
+        .child("Properties70")?
+        .children_named("P")
+        .find_map(|p| match (p.properties.first(), p.properties.get(4)) {
+            (Some(FbxProperty::Str(name)), Some(FbxProperty::I32(value))) if name == "TimeMode" => {
+                Some(*value)
+            }
+            _ => None,
+        })
+}
+
 fn collect_links(doc: &FbxDocument) -> HashMap<i64, Links> {
     let mut out: HashMap<i64, Links> = HashMap::new();
     let Some(connections) = doc.root("Connections") else {

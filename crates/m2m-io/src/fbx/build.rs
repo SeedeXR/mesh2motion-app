@@ -16,6 +16,10 @@
 use crate::fbx::binary::{FbxDocument, FbxNode, FbxProperty};
 
 /// FBX version this writes. 7500 and later use 64-bit node offsets.
+/// A built clip's ids: its stack, its layer, and per channel the curve-node id
+/// and its curve ids. Threaded to `definitions_node`, which must count them.
+type ClipIds = (i64, i64, Vec<(i64, Vec<i64>)>);
+
 const VERSION: u32 = 7700;
 
 /// How a mesh's faces are supplied.
@@ -88,6 +92,64 @@ pub struct Skin<'a> {
     pub clusters: &'a [Cluster<'a>],
 }
 
+/// One animated axis of one channel.
+pub struct Curve<'a> {
+    /// The FBX axis property: `d|X`, `d|Y` or `d|Z`.
+    pub axis: &'a str,
+    /// Key times in FBX ticks — 1/46186158000 of a second each.
+    pub times: &'a [i64],
+    /// One value per key, in the channel's own units (degrees for a rotation).
+    pub values: &'a [f32],
+    /// The value an importer uses where the curve does not reach.
+    pub default: f64,
+}
+
+/// One animated property of one bone.
+pub struct Channel<'a> {
+    /// Index into [`Scene::bones`].
+    ///
+    /// Bones only for now: all 52 animated models in the reference rig are
+    /// `LimbNode`s. Animating a mesh's own transform needs a target that can
+    /// name either, and nothing asks for it yet.
+    pub bone: usize,
+    /// The property driven: `Lcl Translation`, `Lcl Rotation` or `Lcl Scaling`.
+    pub property: &'a str,
+    /// The curve node's name, which FBX abbreviates: `T`, `R` or `S`.
+    pub kind: &'a str,
+    /// One per animated axis. An axis with no curve is simply absent.
+    pub curves: &'a [Curve<'a>],
+}
+
+/// One animation clip, becoming an `AnimationStack` and its layer.
+///
+/// # Why this is described in FBX's own terms
+///
+/// [`crate::fbx::animation`] hands back quaternion tracks with times in
+/// seconds, which is what a player and a retargeter want. FBX stores Euler
+/// curves with tick times, and converting back is both lossy and ambiguous —
+/// many Euler triples give the same quaternion, and the reader also merges the
+/// three axes onto one time array and can insert sub-keys for large steps.
+///
+/// So for O9, where an existing animation must come back as it went in, the
+/// original curves are passed through unchanged. Same decision as
+/// [`Faces::Polygons`], for the same reason: the semantic layer exists to be
+/// used, not to be re-encoded.
+pub struct Clip<'a> {
+    /// The stack's name, e.g. `mixamo.com`.
+    pub name: &'a str,
+    /// Clip length in FBX ticks.
+    pub duration: i64,
+    /// The layer's name, e.g. `Layer0`.
+    ///
+    /// Carried because an importer can build its own name from it — Blender
+    /// composes `armature|stack|layer`, so writing `Base Layer` where the
+    /// source said `Layer0` renames the action and breaks anything matching on
+    /// it.
+    pub layer: &'a str,
+    /// The animated channels.
+    pub channels: &'a [Channel<'a>],
+}
+
 /// What to write.
 pub struct Scene<'a> {
     /// Meshes, each becoming a `Geometry` and the `Model` that holds it.
@@ -99,6 +161,17 @@ pub struct Scene<'a> {
     pub bones: &'a [Bone<'a>],
     /// Skins, binding meshes to bones.
     pub skins: &'a [Skin<'a>],
+    /// Animation clips.
+    pub clips: &'a [Clip<'a>],
+    /// FBX `TimeMode`, which fixes the frame rate the tick times are read at.
+    ///
+    /// **Not cosmetic.** Key times are stored in ticks, so a reader needs the
+    /// frame rate to turn them into frames. Measured: omitting it made Blender
+    /// read a 148-frame clip as 123.5 — the same keys at 25fps instead of 30,
+    /// i.e. the animation plays 20% slow with every other number identical.
+    ///
+    /// 6 is 30fps, verified by writing it and checking Blender's frame range.
+    pub time_mode: i32,
 }
 
 /// Builds a document from a scene.
@@ -126,6 +199,22 @@ pub fn build(scene: &Scene) -> FbxDocument {
         .skins
         .iter()
         .map(|skin| (id(), skin.clusters.iter().map(|_| id()).collect()))
+        .collect();
+    // Per clip: a stack, a layer, and for each channel a curve node plus one
+    // curve per axis.
+    let clip_ids: Vec<ClipIds> = scene
+        .clips
+        .iter()
+        .map(|clip| {
+            let stack = id();
+            let layer = id();
+            let channels = clip
+                .channels
+                .iter()
+                .map(|channel| (id(), channel.curves.iter().map(|_| id()).collect()))
+                .collect();
+            (stack, layer, channels)
+        })
         .collect();
     let document_id = id();
 
@@ -165,7 +254,30 @@ pub fn build(scene: &Scene) -> FbxDocument {
         }
     }
 
-    let definitions = definitions_node(scene, &skin_ids);
+    for (clip, (stack_id, layer_id, channel_ids)) in scene.clips.iter().zip(&clip_ids) {
+        objects.push(stack_node(*stack_id, clip));
+        objects.push(layer_node(*layer_id, clip.layer));
+        connections.push(connection(*layer_id, *stack_id));
+
+        for (channel, (node_id, curve_ids)) in clip.channels.iter().zip(channel_ids) {
+            objects.push(curve_node(*node_id, channel));
+            connections.push(connection(*node_id, *layer_id));
+            // Object-to-PROPERTY: the curve node drives one named property of
+            // the bone, not the bone itself.
+            connections.push(property_connection(
+                *node_id,
+                bone_ids[channel.bone].0,
+                channel.property,
+            ));
+
+            for (curve, &curve_id) in channel.curves.iter().zip(curve_ids) {
+                objects.push(animation_curve_node(curve_id, curve));
+                connections.push(property_connection(curve_id, *node_id, curve.axis));
+            }
+        }
+    }
+
+    let definitions = definitions_node(scene, &skin_ids, &clip_ids);
 
     FbxDocument {
         version: VERSION,
@@ -178,12 +290,16 @@ pub fn build(scene: &Scene) -> FbxDocument {
                 vec![],
             ),
             node("Creator", vec![FbxProperty::Str(creator())], vec![]),
-            global_settings_node(),
+            global_settings_node(
+                scene.time_mode,
+                scene.clips.iter().map(|c| c.duration).max().unwrap_or(0),
+            ),
             documents_node(document_id),
             node("References", vec![], vec![]),
             definitions,
             node("Objects", vec![], objects),
             node("Connections", vec![], connections),
+            takes_node(scene.clips),
         ],
     }
 }
@@ -249,7 +365,7 @@ fn header_node() -> FbxNode {
 }
 
 /// Y-up, Z-forward, X-right — the axes three.js and Blender's importer expect.
-fn global_settings_node() -> FbxNode {
+fn global_settings_node(time_mode: i32, time_span_stop: i64) -> FbxNode {
     node(
         "GlobalSettings",
         vec![],
@@ -290,6 +406,27 @@ fn global_settings_node() -> FbxNode {
                         "",
                         vec![FbxProperty::F64(1.0)],
                     ),
+                    property(
+                        "TimeMode",
+                        "enum",
+                        "",
+                        "",
+                        vec![FbxProperty::I32(time_mode)],
+                    ),
+                    property(
+                        "TimeSpanStart",
+                        "KTime",
+                        "Time",
+                        "",
+                        vec![FbxProperty::I64(0)],
+                    ),
+                    property(
+                        "TimeSpanStop",
+                        "KTime",
+                        "Time",
+                        "",
+                        vec![FbxProperty::I64(time_span_stop)],
+                    ),
                 ],
             ),
         ],
@@ -322,7 +459,7 @@ fn documents_node(document_id: i64) -> FbxNode {
 ///
 /// Importers use this to size their tables; a count that disagrees with the
 /// `Objects` block is a file that describes itself wrongly.
-fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)]) -> FbxNode {
+fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)], clip_ids: &[ClipIds]) -> FbxNode {
     let object_type = |name: &str, count: usize| {
         node(
             "ObjectType",
@@ -336,7 +473,16 @@ fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)]) -> FbxNode {
     let models = scene.meshes.len() + scene.bones.len();
     let attributes = scene.bones.len();
     let deformers = skin_ids.len() + skin_ids.iter().map(|(_, c)| c.len()).sum::<usize>();
-    let total = 1 + geometries + models + attributes + deformers;
+    let stacks = clip_ids.len();
+    let layers = clip_ids.len();
+    let curve_nodes: usize = clip_ids.iter().map(|(_, _, c)| c.len()).sum();
+    let curves: usize = clip_ids
+        .iter()
+        .flat_map(|(_, _, channels)| channels.iter())
+        .map(|(_, curves)| curves.len())
+        .sum();
+    let total =
+        1 + geometries + models + attributes + deformers + stacks + layers + curve_nodes + curves;
 
     let mut children = vec![
         node("Version", vec![FbxProperty::I32(100)], vec![]),
@@ -354,6 +500,12 @@ fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)]) -> FbxNode {
     }
     if deformers > 0 {
         children.push(object_type("Deformer", deformers));
+    }
+    if stacks > 0 {
+        children.push(object_type("AnimationStack", stacks));
+        children.push(object_type("AnimationLayer", layers));
+        children.push(object_type("AnimationCurveNode", curve_nodes));
+        children.push(object_type("AnimationCurve", curves));
     }
     node("Definitions", vec![], children)
 }
@@ -590,6 +742,183 @@ fn cluster_node(id: i64, bone_name: &str, cluster: &Cluster) -> FbxNode {
             FbxProperty::Str("Cluster".into()),
         ],
         children,
+    )
+}
+
+/// An `AnimationStack`, which is what an importer turns into one action.
+fn stack_node(id: i64, clip: &Clip) -> FbxNode {
+    node(
+        "AnimationStack",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(clip.name, "AnimStack")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![node(
+            "Properties70",
+            vec![],
+            vec![
+                // KTime, so the value is ticks rather than seconds.
+                property(
+                    "LocalStop",
+                    "KTime",
+                    "Time",
+                    "",
+                    vec![FbxProperty::I64(clip.duration)],
+                ),
+                property(
+                    "ReferenceStop",
+                    "KTime",
+                    "Time",
+                    "",
+                    vec![FbxProperty::I64(clip.duration)],
+                ),
+            ],
+        )],
+    )
+}
+
+/// The single layer each stack gets.
+///
+/// FBX allows a stack to blend several, but the reader takes only the first —
+/// as three.js does — so writing more than one would produce a file we cannot
+/// read back.
+fn layer_node(id: i64, name: &str) -> FbxNode {
+    node(
+        "AnimationLayer",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(name, "AnimLayer")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![],
+    )
+}
+
+/// The curve node grouping one property's axes.
+///
+/// Its `Properties70` carries each axis's default, which is the value an
+/// importer uses for an axis that has no curve at all.
+fn curve_node(id: i64, channel: &Channel) -> FbxNode {
+    let defaults: Vec<FbxNode> = channel
+        .curves
+        .iter()
+        .map(|curve| {
+            property(
+                curve.axis,
+                "Number",
+                "",
+                "A",
+                vec![FbxProperty::F64(curve.default)],
+            )
+        })
+        .collect();
+    node(
+        "AnimationCurveNode",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(channel.kind, "AnimCurveNode")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![node("Properties70", vec![], defaults)],
+    )
+}
+
+/// One axis's keys.
+///
+/// `KeyValueFloat` is f32 and `KeyTime` is i64 ticks, which is what the format
+/// specifies — not a narrowing we chose.
+fn animation_curve_node(id: i64, curve: &Curve) -> FbxNode {
+    node(
+        "AnimationCurve",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name("", "AnimCurve")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![
+            node("Default", vec![FbxProperty::F64(curve.default)], vec![]),
+            node("KeyVer", vec![FbxProperty::I32(4009)], vec![]),
+            node(
+                "KeyTime",
+                vec![FbxProperty::I64Array(curve.times.to_vec())],
+                vec![],
+            ),
+            node(
+                "KeyValueFloat",
+                vec![FbxProperty::F32Array(curve.values.to_vec())],
+                vec![],
+            ),
+            // One flag for the whole curve: 24840 is the constant every
+            // exporter in the reference corpus writes for linear keys.
+            node(
+                "KeyAttrFlags",
+                vec![FbxProperty::I32Array(vec![24840])],
+                vec![],
+            ),
+            node(
+                "KeyAttrDataFloat",
+                vec![FbxProperty::F32Array(vec![0.0, 0.0, 0.0, 0.0])],
+                vec![],
+            ),
+            node(
+                "KeyAttrRefCount",
+                vec![FbxProperty::I32Array(vec![curve.times.len() as i32])],
+                vec![],
+            ),
+        ],
+    )
+}
+
+/// The `Takes` section, which names the clips a file contains.
+///
+/// Redundant with the animation stacks for readers that use those, but the
+/// format carries it and some importers read it first.
+fn takes_node(clips: &[Clip]) -> FbxNode {
+    let mut children = vec![node(
+        "Current",
+        vec![FbxProperty::Str(
+            clips.first().map(|c| c.name).unwrap_or("").into(),
+        )],
+        vec![],
+    )];
+    for clip in clips {
+        children.push(node(
+            "Take",
+            vec![FbxProperty::Str(clip.name.into())],
+            vec![
+                node(
+                    "FileName",
+                    vec![FbxProperty::Str(format!("{}.tak", clip.name))],
+                    vec![],
+                ),
+                node(
+                    "LocalTime",
+                    vec![FbxProperty::I64(0), FbxProperty::I64(clip.duration)],
+                    vec![],
+                ),
+                node(
+                    "ReferenceTime",
+                    vec![FbxProperty::I64(0), FbxProperty::I64(clip.duration)],
+                    vec![],
+                ),
+            ],
+        ));
+    }
+    node("Takes", vec![], children)
+}
+
+/// An object-to-PROPERTY connection: `child` drives one named property.
+fn property_connection(child: i64, parent: i64, property: &str) -> FbxNode {
+    node(
+        "C",
+        vec![
+            FbxProperty::Str("OP".into()),
+            FbxProperty::I64(child),
+            FbxProperty::I64(parent),
+            FbxProperty::Str(property.into()),
+        ],
+        vec![],
     )
 }
 

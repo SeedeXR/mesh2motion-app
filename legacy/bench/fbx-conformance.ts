@@ -214,9 +214,16 @@ describe('FBX encoder conformance', () => {
     // an artist notices a quad mesh coming back as triangles.
     expect(before.polygon_sizes).toEqual([3, 4])
 
-    // Animation is NOT yet rebuilt (P2-6 b4). Asserted so the gap is explicit
-    // and this test starts failing the moment it is filled in.
+    // The animation, including its name, its curve and key counts, and its
+    // frame RANGE. The range is what caught a missing TimeMode: the same keys
+    // read at 25fps instead of 30 gave 1-123.5 rather than 1-148, so the clip
+    // played 20% slow with every other number here identical.
+    expect(after.actions).toEqual(before.actions)
+    expect(after.action_detail).toEqual(before.action_detail)
+    expect(after.animated_paths).toEqual(before.animated_paths)
     expect(before.actions).toEqual(['Armature|mixamo.com|Layer0'])
-    expect(after.actions).toEqual([])
+    expect(before.action_detail).toEqual([
+      'Armature|mixamo.com|Layer0:curves=520,keys=76960,range=1.00-148.00'
+    ])
   })
 })
