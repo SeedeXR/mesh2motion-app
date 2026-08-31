@@ -293,12 +293,23 @@ fn resolution_is_the_dominant_cost_not_mesh_density() {
         )
     };
 
+    // The **fastest** of several runs, not one run. This asserts a *ratio* of
+    // wall-clock timings, and load can only ever add time, so the minimum is the
+    // estimator that survives a busy machine. Taking a single sample made this
+    // fail once during a full-workspace run — 122 ms at 64 against 641 ms at
+    // 256, a ratio of 5.3 where 8 is required — while passing three times in a
+    // row in isolation. A gate that reddens under load is as corrosive as one
+    // that cannot redden at all.
     let time_at = |res: u32| -> f32 {
         let _guard = MEASURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let t = std::time::Instant::now();
-        let grid = VoxelGrid::build(&mesh, res).expect("grid");
-        let _ = GeodesicField::compute(&mesh, &grid, &rig.bones).expect("field");
-        t.elapsed().as_secs_f32() * 1000.0
+        (0..3)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let grid = VoxelGrid::build(&mesh, res).expect("grid");
+                let _ = GeodesicField::compute(&mesh, &grid, &rig.bones).expect("field");
+                t.elapsed().as_secs_f32() * 1000.0
+            })
+            .fold(f32::INFINITY, f32::min)
     };
 
     // Discarded: the first call pays rayon pool spin-up and first-touch page

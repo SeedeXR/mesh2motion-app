@@ -16,4 +16,5 @@
 
 pub mod automap;
 pub mod fit;
+pub mod retarget;
 pub mod template;

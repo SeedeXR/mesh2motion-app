@@ -2487,3 +2487,93 @@ and the legacy's behaviour baselines.
 
 **P3-5** (`Retargeter` logic on `glam`), or **P3-0/O9 in the app** — still
 blocked on `app/` having any import pipeline at all.
+
+## Session 037 — P3-5, rotation retargeting
+
+CI confirmed green for 25211ae before starting.
+
+### Reading the legacy first changed the design
+
+Its **default** path is not maths at all: `retarget_animation_clip` copies key
+times and values verbatim and renames the track, with a swing/twist path
+reserved for humans. So the first question was whether renaming suffices.
+
+Measured, between our human rig and a Mixamo rig over the 65 bones their table
+pairs:
+
+| | rest-orientation difference |
+|---|---|
+| median bone | **3.8°** |
+| `thigh_l`, `thigh_r`, `calf_l`, `calf_r`, `foot_r` | **~180°** |
+
+A verbatim copy puts the legs on backwards. Rest-pose compensation is mandatory,
+not a refinement — and that is a measurement, not a preference.
+
+### The algorithm
+
+```text
+motion       = source_animated_world * inverse(source_rest_world)
+target_world = motion * target_rest_world
+target_local = inverse(target_parent_animated_world) * target_world
+```
+
+Working in world space is what makes the 180° legs come out right: each rest
+pose cancels against its own side.
+
+### My first acceptance test asserted the wrong thing
+
+I required the two rigs' limbs to end up pointing the same way in the world.
+That is false by construction: at rest each limb points where its own rest pose
+puts it, and these are 180° apart. **Retargeting preserves the motion a bone
+makes away from its rest pose, not its absolute orientation** — a rig whose
+thigh points down and one whose points up are the same leg described two ways.
+The right property is that the *change* in world orientation between two
+instants matches, which also exercises the local conversion rather than being
+tautological.
+
+### A fixture found a real bug
+
+Three mutations survived at first, all for the same reason — the fixtures could
+not vary the term under test:
+
+| mutation | invisible because |
+|---|---|
+| source rest compensation dropped | the fixture's source rest was identity |
+| parent division skipped | the fixture never animated a parent |
+
+Building a three-bone chain with a rotated, animated middle bone did not just
+catch the mutation — it **failed on the real code**. An undriven bone was pinned
+to its rest *world* rotation, so it fought its parent: an unmapped hand would
+hang in the air while the arm swung. It now keeps its rest *local* rotation and
+follows the parent.
+
+> The fixture that can distinguish a mutation is also the fixture that finds the
+> bug the mutation was standing in for.
+
+### Gate coverage (5 mutations, 5 caught)
+
+verbatim copy · rest compensation dropped · parent division skipped · key times
+replaced by an index ramp · undriven bone pinned in world space.
+
+### A flaky gate, found and fixed
+
+The full-workspace run failed once in `m2m-core/tests/budget.rs`:
+`resolution_is_the_dominant_cost_not_mesh_density`, 122 ms at resolution 64
+against 641 ms at 256 — a ratio of 5.3 where 8 is required. Unrelated to this
+session's code, and it passed three times in a row in isolation: my own
+concurrent background gates had inflated the 64 measurement, which is the
+ratio's *denominator*.
+
+The test asserts a ratio of wall-clock timings, and load can only add time, so
+it now takes the **fastest of three runs** rather than one. Verified by running
+the whole suite with a concurrent release build: 308 tests, 0 failures.
+
+> A gate that reddens under load is as corrosive as one that cannot redden at
+> all — both teach you to stop believing it.
+
+### Next
+
+Translation and root motion — the legacy scales it and carries a
+`root_correction_x_degrees` because "pelvis rest orientation leaves the
+character tilted (face planting)" — and an end-to-end test retargeting a real
+Mixamo clip onto our rig through `m2m-io`.
