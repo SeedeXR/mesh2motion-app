@@ -1,6 +1,7 @@
 {
   "name": "bird",
   "skeleton": "rig-bird.glb",
+  "guidance": "The wing chain runs shoulder → elbow → wrist out to the primaries; keep the keel bone forward of the hips. The legs fold back at the ankle and the tail is a short chain.",
   "chains": [
     {
       "name": "root",

@@ -242,7 +242,15 @@ function renderSkeletonStep(): string {
          </dl>
          <p style="color:var(--fg-2)">The skeleton is drawn over the mesh. Fit it by hand next \u2014 drag any joint that sits outside the body.</p>`
 
-  return `${list}${fitting ? '<p style="color:var(--fg-2)">Fitting\u2026</p>' : outcome}`
+  return `${list}${creatureGuidance()}${fitting ? '<p style="color:var(--fg-2)">Fitting\u2026</p>' : outcome}`
+}
+
+/** The chosen creature's placement tip (design.md \u00a77), shown once one is picked.
+ * The copy is the template's own, carried from its manifest \u2014 not written here. */
+function creatureGuidance(): string {
+  const guide = templates?.find((template) => template.name === chosen)?.guidance
+  if (guide === undefined || guide === '') return ''
+  return `<p class="tip"><i data-lucide="bone" width="14" height="14" aria-hidden="true"></i> ${escape(guide)}</p>`
 }
 
 /** A human-readable pose name, or `null` when there is nothing worth showing

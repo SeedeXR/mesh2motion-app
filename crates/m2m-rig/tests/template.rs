@@ -150,6 +150,7 @@ fn template_of(chains: Vec<Chain>) -> Template {
     Template {
         name: "toy".into(),
         skeleton: "toy.glb".into(),
+        guidance: "toy placement guidance for the test".into(),
         chains,
     }
 }
@@ -607,4 +608,18 @@ fn a_template_round_trips_through_json() {
     let text = serde_json::to_string(&template).expect("serialises");
     let back: Template = serde_json::from_str(&text).expect("deserialises");
     assert_eq!(back, template);
+}
+
+/// Every shipped template carries its own creature-specific guidance
+/// (design.md §7). A creature added without it would fit with no help, and the
+/// generic step copy would be all the user got.
+#[test]
+fn every_template_has_guidance() {
+    for template in m2m_rig::template::all().expect("manifests parse") {
+        assert!(
+            template.guidance.trim().len() > 20,
+            "{} ships without real placement guidance",
+            template.name
+        );
+    }
 }

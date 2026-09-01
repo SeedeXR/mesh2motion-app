@@ -1,6 +1,7 @@
 {
   "name": "shark",
   "skeleton": "rig-shark.glb",
+  "guidance": "The spine follows the body from snout to tail. The fins — dorsal, pectorals, and the tail — are short chains; the tail needs a few segments to swim convincingly.",
   "chains": [
     {
       "name": "root",

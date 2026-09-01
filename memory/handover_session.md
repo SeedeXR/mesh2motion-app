@@ -4108,3 +4108,25 @@ Guard: tsc clean, vitest 34/34, vite build green.
 **Remaining open:** P3-10 (creature guidance content), R-4/R-6/R-7 (research docs),
 P4-1b/P4-2 (Blender add-on). Blocked/deferred: R-5+P3-13 (assets), P4-Q S3776 (essential),
 P4-6 (closed), P3-P1 (metric), P3-P6 detection-labels (fixtures).
+
+## Session 069 — 2026-09-01 — P3-10 creature-specific guidance content
+
+**Done.** design.md §7 "creature-aware guidance". Added a placement tip to each of
+the 9 template manifests (crates/m2m-rig/templates/*.json) — the content lives WITH
+the template definition, not in the UI, exactly as §7 requires. Threaded it through:
+Template.guidance (serde default, so old manifests still parse) → SkeletonTemplate IPC
+→ TS type → the Choose-Skeleton inspector, which shows the chosen creature its own tip
+(human hips at navel height; bird wing-chain + keel forward; horse unguligrade hoof
+tips; snake no-limbs-one-spine; spider 8 legs from the cephalothorax; etc.).
+
+Guards: Rust every_template_has_guidance (all 9 carry >20-char tips) + 2 frontend
+tests (surfaced from `.guidance`, and the copy is NOT hardcoded in main.ts — the
+human tip phrase must be absent from the UI source, proving it came from the template).
+
+Deferred: the §7 labelled diagram / reference imagery per template — the reference
+PNGs live in legacy and a diagram integration is a UI-asset task, lower value than text.
+
+Guard: m2m-rig 88/88, mesh2motion 33/33, frontend 36 vitest, clippy+fmt clean, build.
+
+**Remaining open:** R-4/R-6/R-7 (research docs), P4-1b/P4-2 (Blender add-on).
+Blocked/deferred: R-5+P3-13, P4-Q S3776, P4-6, P3-P1, P3-P6 detection-labels.

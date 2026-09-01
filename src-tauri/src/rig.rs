@@ -28,6 +28,8 @@ pub struct SkeletonTemplate {
     /// A manifest naming a `.glb` that is not embedded would otherwise fail
     /// only when the user picked it.
     pub available: bool,
+    /// A creature-specific tip for placing this skeleton (design.md §7).
+    pub guidance: String,
 }
 
 /// A template skeleton placed on a mesh, ready to draw.
@@ -128,6 +130,7 @@ pub fn templates() -> Result<Vec<SkeletonTemplate>, RigError> {
             bones: template.bones().count(),
             chains: template.chains.iter().map(|c| c.name.clone()).collect(),
             available: skeleton_bytes(&template.skeleton).is_some(),
+            guidance: template.guidance,
             name: template.name,
         })
         .collect())

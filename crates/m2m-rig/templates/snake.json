@@ -1,6 +1,7 @@
 {
   "name": "snake",
   "skeleton": "rig-snake.glb",
+  "guidance": "No limbs at all — the whole animal is one long spine. Give it enough segments to curve smoothly, and let the tail taper to a point.",
   "chains": [
     {
       "name": "root",

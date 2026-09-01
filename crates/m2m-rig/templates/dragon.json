@@ -1,6 +1,7 @@
 {
   "name": "dragon",
   "skeleton": "rig-dragon.glb",
+  "guidance": "Wings and four legs both: fit each wing out to its tip and each leg down to the foot. The long neck and tail each want several segments to bend.",
   "chains": [
     {
       "name": "root",

@@ -1,6 +1,7 @@
 {
   "name": "spider",
   "skeleton": "rig-spider.glb",
+  "guidance": "Eight legs radiate from the cephalothorax — fit each leg out to its tip. There is no real spine: the body is the cephalothorax and the abdomen behind it.",
   "chains": [
     {
       "name": "root",

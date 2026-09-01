@@ -1,6 +1,7 @@
 {
   "name": "human",
   "skeleton": "rig-human.glb",
+  "guidance": "Place the hips at the pelvis, about navel height. The spine runs up to the head; the arms hang from the clavicles, so keep the shoulders where the mesh's shoulders are.",
   "chains": [
     {
       "name": "root",

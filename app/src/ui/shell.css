@@ -237,3 +237,15 @@ body {
   color: var(--warn);
 }
 .warn i { flex: none; transform: translateY(2px); }
+
+/* A creature-specific placement tip (design.md §7). */
+.tip {
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  margin-top: var(--s-2);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg-1);
+}
+.tip i { flex: none; color: var(--accent); transform: translateY(2px); }

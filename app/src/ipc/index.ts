@@ -80,6 +80,8 @@ export interface SkeletonTemplate {
   readonly chains: readonly string[]
   /** False when the manifest names a rig that is not bundled. */
   readonly available: boolean
+  /** A creature-specific tip for placing this skeleton (design.md §7). */
+  readonly guidance: string
 }
 
 /** A template skeleton placed on the imported mesh. */

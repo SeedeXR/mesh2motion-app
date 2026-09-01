@@ -1,6 +1,7 @@
 {
   "name": "fox",
   "skeleton": "rig-fox.glb",
+  "guidance": "A digitigrade quadruped — it stands on its toes, so the ankle sits raised off the ground. The front legs attach at the shoulder blades, higher than they look; the hind legs bend backwards at the hock.",
   "chains": [
     {
       "name": "root",

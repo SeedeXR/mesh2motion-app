@@ -1,6 +1,7 @@
 {
   "name": "horse",
   "skeleton": "rig-horse.glb",
+  "guidance": "Unguligrade — the legs stand on hoof tips at the very end of each limb, so ground the hoof, not the foot. Keep the back level from withers to croup; the hocks bend backwards.",
   "chains": [
     {
       "name": "root",

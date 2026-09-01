@@ -1,6 +1,7 @@
 {
   "name": "kaiju",
   "skeleton": "rig-kaiju.glb",
+  "guidance": "A heavy biped — arms and legs like a human's but bulkier. Sit the hips low over the legs and keep the shoulders wide.",
   "chains": [
     {
       "name": "root",

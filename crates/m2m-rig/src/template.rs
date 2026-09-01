@@ -154,6 +154,13 @@ pub struct Template {
     pub name: String,
     /// The `.glb` the bones live in, relative to the template directory.
     pub skeleton: String,
+    /// A creature-specific tip shown at the Fit step (design.md §7).
+    ///
+    /// Lives with the template, not in the UI, so a new creature carries its own
+    /// guidance. `#[serde(default)]` keeps an older manifest parsing; the test
+    /// suite requires every shipped one to fill it.
+    #[serde(default)]
+    pub guidance: String,
     /// The chains, in no particular order.
     pub chains: Vec<Chain>,
 }
