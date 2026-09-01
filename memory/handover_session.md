@@ -4227,3 +4227,24 @@ lifecycle, port released, scene intact throughout.
 The live bridge is DONE and now genuinely proven, not just headless. No open work
 remains that is doable autonomously; the todo's remaining items stay blocked/deferred
 (R-5, P2-10b, P3-13, P4-Q).
+
+## Session 073 — 2026-09-01 — P4-Q progress + blocked-item research halves
+
+Proceeding on the remaining items at the user's request.
+- **P4-Q S3776:** rotation_track(25) FULLY cleared — subdivision_steps +
+  finalise_quaternions, verified fbx_animation 21/21 (byte-diff vs legacy) + 208
+  both profiles. text.rs parse(62) PARTIAL — close_top/close_to dedup of the 3×
+  node-close pattern + resync extraction, verified fbx_text 17 + fbx_dom 10 + 208
+  both profiles + FBX conformance A/B 3/3. Residuals (geometry.rs face-boundary
+  machine, text.rs 4-arm grammar) kept intact — essential complexity, unit-tested
+  only; fragmenting them for a non-gate-failing metric is poor risk/reward.
+- **R-5** research half done: docs/research/asset-sourcing.md (vetting checklist +
+  CC0 sources + provenance format). Sourcing itself needs a human.
+- **P2-10b** procedure done: docs/verifying-in-maya.md (the reproducible Maya
+  import/skin/anim checks). The run needs Maya, not on this machine.
+
+**FINAL STATE:** every P0-P4 item is done or at its autonomous limit. The 3 items
+still [ ]→now [~] (R-5, P2-10b, P3-13) are blocked on external inputs a person must
+provide: licensed 3D assets, and Maya software. P3-13 (new templates) is ready to
+execute the moment R-5's assets land — the template machinery is role-agnostic and
+proven. Nothing doable autonomously remains.
