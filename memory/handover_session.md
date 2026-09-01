@@ -4150,3 +4150,41 @@ Blocked/deferred: R-5+P3-13, P4-Q S3776, P4-6, P3-P1, P3-P6 detection-labels.
 (external CC0 assets), P4-Q S3776 (essential complexity), P4-6 (closed, R-7 confirms),
 P3-P1 (deferred metric), P3-P6 detection-labels (fixtures). After the Blender add-on
 (or if judged too big for the autonomous loop), only blocked/deferred remain → STOP.
+
+## Session 071 — 2026-09-01 — P4-2/P4-1b Blender live bridge; TODO EXHAUSTED
+
+**Done.** The Blender live-round-trip add-on and m2m-bridge LIVE mode — the last
+open, doable item.
+- **P4-2** blender-addon/mesh2motion_bridge.py: a Blender add-on (bl_info +
+  Start/Stop operators) running a localhost TCP server; accepts on a background
+  thread, imports on the main thread via bpy.app.timers. Also runs headless
+  single-shot for the test. README with install + protocol.
+- **P4-1b** crates/m2m-bridge/src/live.rs: inspect_live() — length-prefixed
+  protocol (JSON header line + raw .glb bytes, no base64 dep), parses the reply
+  into the same BlenderReport as headless inspect(). 4 pure protocol tests +
+  an #[ignore]d live test VERIFIED end-to-end (launched Blender + add-on, pushed
+  rig-human.glb, got 66 bones / 0 meshes / 1 armature back).
+- **Gotcha:** a port-probe to check readiness was consumed as the server's single
+  accept; switched to waiting for the add-on's stdout "listening" line.
+
+**Also reconciled stale todo duplicates:** P2-7 (GLB write) and P2-9 (hostile
+corpus) had leftover [ ] summary lines duplicating their real [x]/[~] entries —
+GLB write is done (glb::write + 12 tests + visual-regression), P2-9 is done.
+
+Guard: m2m-bridge 7/7 both profiles, clippy+fmt clean, add-on py_compile clean.
+
+## LOOP END — TODO EXHAUSTED
+
+Every actionable P0-P4 item is complete. The 4 remaining open items are all
+genuinely blocked or deferred, none doable autonomously:
+- **R-5** — source external CC0/CC-BY rigged creatures (needs a human to find + licence assets).
+- **P2-10b** — verify in Maya / Autodesk FBX SDK (no Maya on this machine; assimp is the proxy used).
+- **P3-13** — new templates from R-5 assets (blocked on R-5).
+- **P4-Q** — the last 2 S3776 smells (fbx/text.rs parse 62, rotation_track 25): essential
+  complexity guarded by unit tests only; deliberately deferred (poor risk/reward, per the
+  geometry.rs finding).
+Plus deferred [~]: P4-4 (perf measured, within budget), P4-7 (signing — not a goal, open
+source), P3-8b (no operation slow enough), P4-6 (ONNX closed by R-7), P3-P1 (subtle weight
+metric), P3-P6 detection-labels (need folded/spread fixtures).
+
+The autonomous loop stops here.

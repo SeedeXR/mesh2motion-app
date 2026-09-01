@@ -23,6 +23,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod live;
+
 use std::path::{Path, PathBuf};
 
 /// The inspection script, embedded so the crate is self-contained and cannot
