@@ -1,7 +1,7 @@
 import './ui/tokens.css'
 import './ui/shell.css'
 
-import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
+import { createIcons, AlertTriangle, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
   animationClips,
@@ -123,8 +123,9 @@ function renderInspector(step: StepDef): string {
   const rigged = model.bones.length > 0
   const truncated =
     model.over_influence_limit > 0
-      ? `<p style="color:var(--warn)">${model.over_influence_limit} of them carry more
-           than four bone influences; only the strongest four are kept.</p>`
+      ? `<p class="warn"><i data-lucide="alert-triangle" width="14" height="14" aria-hidden="true"></i>
+           ${model.over_influence_limit} of them carry more than four bone influences;
+           only the strongest four are kept.</p>`
       : ''
 
   return `${button}
@@ -479,7 +480,7 @@ function renderRail(): string {
 
 function renderGuidance(step: StepDef): string {
   return `
-    <i data-lucide="${step.icon}" width="18" height="18"></i>
+    <i data-lucide="${step.icon}" width="18" height="18" aria-hidden="true"></i>
     <div>
       <strong>${step.label}</strong>
       <p>${step.goal} <span style="color:var(--fg-2)">${step.success}</span></p>
@@ -496,6 +497,7 @@ function render(): void {
   app.innerHTML = `
     <div class="shell">
       <div class="titlebar"></div>
+      <h1 class="visually-hidden">Mesh2Motion</h1>
 
       <nav class="rail" aria-label="Rigging steps">
         <h2>Steps</h2>
@@ -504,7 +506,7 @@ function render(): void {
 
       <main class="viewport">
         <div class="viewport-empty">
-          <i data-lucide="bone" width="40" height="40" stroke-width="1"></i>
+          <i data-lucide="bone" width="40" height="40" stroke-width="1" aria-hidden="true"></i>
           <div>
             <div style="color:var(--fg-1);font-size:var(--fs-lg)">${loaded === null ? 'No model loaded' : escape(loaded.name)}</div>
             <div>${loaded === null ? 'Import a mesh to begin' : 'Viewport rendering arrives with the model preview step'}</div>
@@ -533,7 +535,7 @@ function render(): void {
     stage?.prepend(ensureViewport().canvas)
   }
 
-  createIcons({ icons: { Bone, Upload, Link, Play, Download, Move3d } })
+  createIcons({ icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d } })
 
   const importButton = app.querySelector<HTMLButtonElement>('#import')
   if (importButton !== null) {

@@ -4068,3 +4068,23 @@ extends the same detect + limb-aim pattern; would need per-creature pose fixture
 P3-P2/P3-P4/P3-P5 done. The epic's hard part (P3-P3) is finished and verified.
 
 **Guard:** m2m-rig 86/86 both profiles, full workspace 398/398, clippy+fmt clean.
+
+## Session 067 — 2026-09-01 — P3-12 accessibility pass
+
+**Done.** Audited the frontend against design.md §10 (mostly compliant already —
+semantic nav/aside, role=status, aria-current, focus-visible rings) and closed the gaps:
+- **prefers-reduced-motion** block (the non-negotiable gap) taking every transition/
+  animation to ~instant.
+- **32px min hit targets** (min-height: var(--s-6)) on .step and .action (were ~30px).
+- **aria-hidden** on all decorative Lucide icons (text carries the meaning).
+- A visually-hidden **<h1>Mesh2Motion</h1>** landmark (+ .visually-hidden utility).
+- Warnings now pair colour with an **alert-triangle icon + text** (never colour alone).
+- 8 new vitest guards (app/tests/accessibility.test.ts) reading the CSS/markup — pin
+  reduced-motion, focus rings, no bare `outline:none`, landmarks, aria-hidden icons,
+  the warning pattern, and the hit-target floor.
+
+**Honest scope note:** the core six-step flow is fully keyboard-operable (native
+buttons + focus-visible). The OPTIONAL transform gizmo (joint drag) is mouse-only;
+keyboard joint-nudge is a follow-up, not core-flow-blocking (automatic fit needs no gizmo).
+
+Guard: tsc clean, vitest 29/29, vite build green.

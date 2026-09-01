@@ -493,7 +493,7 @@ What our readers make of them, and what it taught us:
   - Mutations 4/4 Rust (flag, dominant-bone-is-max, golden-angle hue, colours-baked) + 1/1 TS (`hasVertexColors`).
 - [ ] **P3-10** Creature-specific guidance content for all templates (`design.md` §7)
 - [ ] **P3-11** Undo/redo across every step
-- [ ] **P3-12** Accessibility pass — keyboard, contrast, reduced-motion, ARIA (`design.md` §10)
+- [x] **P3-12** DONE (session 067): accessibility pass per design.md §10 — prefers-reduced-motion block (transitions→instant), 32px min hit targets on .step/.action, aria-hidden on all decorative Lucide icons, a visually-hidden <h1> landmark, warnings paired with an alert-triangle icon + text (never colour alone), and the existing focus-visible rings/nav+aside labels/role=status guarded. 8 new a11y vitest guards (app/tests/accessibility.test.ts). NOTE: the core six-step flow is fully keyboard-operable (native buttons + focus-visible); the OPTIONAL manual transform gizmo (joint drag) remains mouse-only — keyboard joint-nudge is a follow-up enhancement, not core-flow-blocking (the automatic fit needs no gizmo).
 - [ ] **P3-13** New creature templates from R-5 assets
 
 ### P3-P — Pose-agnostic humans: A-pose **and** T-pose *(added 2026-08-29, user requirement)*
