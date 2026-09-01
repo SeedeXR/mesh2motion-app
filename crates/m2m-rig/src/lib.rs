@@ -16,6 +16,7 @@
 
 pub mod automap;
 pub mod fit;
+pub mod orient;
 pub mod pose;
 pub mod retarget;
 pub mod template;

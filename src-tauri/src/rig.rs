@@ -181,16 +181,40 @@ pub fn fit(template_name: &str, model: &[u8]) -> Result<FittedSkeleton, RigError
         .map(String::as_str)
         .zip(rest_rotations)
         .collect();
-    let rotations = fitted
+    // The template's rest data, in the fitted skeleton's bone order.
+    let template_local: Vec<glam::Quat> = fitted
         .bones
         .iter()
         .map(|bone| {
-            rotation_of
-                .get(bone.as_str())
-                .copied()
-                .unwrap_or([0.0, 0.0, 0.0, 1.0])
+            glam::Quat::from_array(
+                rotation_of
+                    .get(bone.as_str())
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 0.0, 1.0]),
+            )
         })
         .collect();
+    let template_positions: Vec<glam::Vec3> = fitted
+        .bones
+        .iter()
+        .map(|bone| rest.position_of(bone).unwrap_or(glam::Vec3::ZERO))
+        .collect();
+
+    // Reorient the rest rotations to match where the arms actually landed, so a
+    // template fitted onto a mismatched pose (T-pose rig, A-pose mesh) exports
+    // and retargets correctly instead of turning the arms around the template's
+    // axis (P3-P3). A fit that already agrees with its template is unchanged.
+    let aim = m2m_rig::orient::limb_aims(&template, &fitted.bones);
+    let rotations: Vec<[f32; 4]> = m2m_rig::orient::pose_matched_local_rotations(
+        &parents,
+        &template_positions,
+        &template_local,
+        &fitted.positions,
+        &aim,
+    )
+    .iter()
+    .map(glam::Quat::to_array)
+    .collect();
 
     // The mesh's own up is +Y; the fitted arms drop from horizontal by pose.
     let pose = m2m_rig::pose::pose_of_fitted(&fitted, glam::Vec3::Y)
