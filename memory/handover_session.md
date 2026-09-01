@@ -3550,3 +3550,54 @@ the `VoxelGrid` the limb fitter builds; `refine_spine` does not take one),
 **P3-9** weight paint, the **23 rust:S3776** cognitive-complexity smells in the
 parsers, **P3-7b** transform gizmo, **P3-3d** move the rigs out of `legacy/`,
 **P4** (Blender bridge, perf pass, release), and the solver A/B.
+
+---
+
+## Session 053 — 2026-09-01 — spine fitting for the tapering tail (P3-3b)
+
+**HEAD in: `ea4b1d8` (CI green, 7/7).**
+
+### The measurement reframed the problem
+The premise was "refine_spine's slice y-range is too weak; use the VoxelGrid".
+True, but measuring the 11 outside joints on snake/shark showed most are
+**genuinely past the end of the mesh tail** — the template tail carries more
+bones than the shorter, tapering mesh tail reaches (dz 6–23 voxels; some have NO
+interior voxel within 25). Forcing those in would bunch the chain, worse than a
+bone a little past a tapering tip. Only a few are barely-outside (dz≈0).
+
+*A probe lied first: it never populated `mesh.indices`, so the VoxelGrid had no
+triangles and reported 21/10 outside instead of the true 6/5. Rebuilt the probe
+to call `fit_template` directly — no divergence from the real pipeline.*
+
+### What shipped
+`snap_spine_into_mesh` corrects a barely-outside joint **within its own Z
+cross-section** — keeping its position along the body, moving only X/Y onto the
+nearest interior voxel — using the grid the limb fitter already builds. Fixing Z
+is the safety: a joint is only ever pulled sideways onto the body it is level
+with, never dragged back along the chain. A joint whose cross-section is empty
+(past the tail) is left alone. **Snake 6→5, shark 5→3**; the seven zeros are
+untouched (structurally — the snap only moves voxel-outside joints, and the
+seven creatures have none).
+
+### Verification
+- 378 Rust tests both profiles (was 377), 0 failures; 17 frontend; fmt, clippy
+  clean; **SonarQube gate OK**.
+- Two-sided test: a moved joint kept its Z and landed inside; a past-tip joint
+  did not move; an already-inside joint was untouched.
+- Mutations 4/6 caught. Two survivors, both honest no-ops on the fixtures: a
+  `map_or` rewrite behaviourally identical to the original, and the
+  upright-axis guard no upright fixture exercises (all upright creatures already
+  have 0 outside spine joints).
+- **Sonar caught 1 CRITICAL** after tests were green — `snap_spine_into_mesh`
+  at cognitive complexity 19 > 15. Extracted `nearest_interior_in_slab`; re-scan
+  clean. Fifth time a gate reddened after a "final" green run — re-running after
+  the last edit keeps paying off.
+- Touched only `crates/`; Sonar not required but run anyway.
+- Disk: `target/` ~7.5 GB, under the guard.
+
+### Next
+Remaining polish: **P3-9** weight paint, the **23 rust:S3776** parser
+complexity smells (Sonar-flagged), **P3-7b** transform gizmo, **P3-3d** move the
+rigs out of `legacy/`, **P4** (Blender bridge, perf, release), the solver A/B.
+The snake/shark tail-past-tip is a template-proportion matter, not a fitting
+bug — a future template revision could shorten those tails.

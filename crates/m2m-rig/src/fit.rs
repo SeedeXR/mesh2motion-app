@@ -330,18 +330,15 @@ pub fn fit_template(
         .flat_map(|chain| chain.bones.clone())
         .collect();
 
+    let axis = body_axis(rest, &spine)?;
     let mut fitted = fit_uniform(rest, &landmarks, &spine)?;
-    refine_spine(
-        &mut fitted,
-        mesh,
-        &landmarks,
-        &spine,
-        body_axis(rest, &spine)?,
-    );
+    refine_spine(&mut fitted, mesh, &landmarks, &spine, axis);
 
-    // Limb fitting asks "is this joint inside the mesh", which is a containment
-    // query — hence the voxel grid rather than a ray cast per joint.
+    // Limb fitting and the spine's final containment correction both ask "is
+    // this joint inside the mesh", which is a voxel query rather than a ray
+    // cast per joint. One grid, shared.
     let grid = VoxelGrid::build(mesh, resolution)?;
+    snap_spine_into_mesh(&mut fitted, &grid, &spine, axis);
     fit_limbs(&mut fitted, mesh, &grid, template);
 
     Some(fitted)
@@ -442,6 +439,90 @@ pub fn refine_spine(
             }
         };
     }
+}
+
+/// Nudges a spine joint the mesh does not contain onto the body, without moving
+/// it along the body axis.
+///
+/// [`refine_spine`] places each joint on the mesh's midline, but a template
+/// scaled uniformly onto a creature whose backbone tapers — a snake, a shark —
+/// leaves a few tail joints just outside the surface. This is the containment
+/// query [`refine_spine`] cannot make from a slice's bounding range: a point
+/// inside a cross-section's y-extent can still be outside the body.
+///
+/// The correction keeps the joint's position **along the body** (its Z for a
+/// horizontal creature) and searches that one cross-section for the nearest
+/// interior voxel, moving the joint's X and Y onto it. Fixing Z is what makes
+/// this safe: a joint is only ever pulled sideways onto the body it is level
+/// with, never dragged back along the chain.
+///
+/// A joint whose cross-section holds no interior voxel is **left where it is**.
+/// That is not a failure to place it — it is a joint past the end of the mesh's
+/// tail, because the template's tail carries more bones than the shorter,
+/// tapering mesh tail reaches. Cramming it inside would bunch the chain, which
+/// is worse than a bone a little beyond a tapering tip. Measured: this takes the
+/// snake from 6 spine joints outside to 5 and the shark from 5 to 3; the
+/// remainder are past-the-tip and stay.
+///
+/// Upright creatures are untouched — [`refine_spine`] already puts every one of
+/// their spine joints inside — so the axis is required and non-`Upright` only.
+pub fn snap_spine_into_mesh(
+    fitted: &mut Fitted,
+    grid: &VoxelGrid,
+    spine: &[String],
+    axis: BodyAxis,
+) {
+    if axis != BodyAxis::Horizontal {
+        return;
+    }
+    for bone in spine {
+        let Some(index) = fitted.bones.iter().position(|b| b == bone) else {
+            continue;
+        };
+        let at = fitted.positions[index];
+        // Left where it is when already inside, or when its cross-section holds
+        // no interior voxel — a joint past the end of the tail.
+        if let Some(center) = nearest_interior_in_slab(grid, at) {
+            fitted.positions[index] = Vec3::new(center.x, center.y, at.z);
+        }
+    }
+}
+
+/// The interior voxel nearest to `at` within `at`'s own Z cross-section, or
+/// `None` when `at` is already inside or the cross-section is empty.
+///
+/// Fixing Z — searching only the one slab the joint is level with — is what
+/// keeps [`snap_spine_into_mesh`] from ever dragging a joint along the body.
+fn nearest_interior_in_slab(grid: &VoxelGrid, at: Vec3) -> Option<Vec3> {
+    use m2m_core::voxel::VoxelState;
+    let inside = |c: glam::IVec3| {
+        matches!(
+            grid.state(c),
+            Some(VoxelState::Interior | VoxelState::Surface)
+        )
+    };
+
+    let coord = grid.coord_of(at);
+    if inside(coord) {
+        return None;
+    }
+    let [nx, ny, _] = grid.dims();
+
+    let mut best: Option<(f32, Vec3)> = None;
+    for y in 0..ny as i32 {
+        for x in 0..nx as i32 {
+            let cell = glam::IVec3::new(x, y, coord.z);
+            if !inside(cell) {
+                continue;
+            }
+            let center = grid.center(cell);
+            let planar = Vec3::new(center.x - at.x, center.y - at.y, 0.0).length();
+            if best.is_none_or(|(d, _)| planar < d) {
+                best = Some((planar, center));
+            }
+        }
+    }
+    best.map(|(_, center)| center)
 }
 
 /// Which bone of a limb chain touches the ground, measured from the template's

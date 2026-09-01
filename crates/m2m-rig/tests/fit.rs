@@ -974,12 +974,15 @@ fn the_pipeline_puts_the_spine_inside_the_mesh() {
         ("spider", 0),
         ("kaiju", 0),
         ("dragon", 0),
-        // A long tapering tail is where a uniform scale diverges most, and the
-        // containment test refinement uses is a slice's y-range, which a point
-        // can sit inside while still being outside the body. These are the
-        // joints nearest the tip; see P3-3b.
-        ("snake", 6),
-        ("shark", 5),
+        // A long tapering tail is where a uniform scale diverges most. The
+        // joints that remain outside are past the END of the mesh's tail: the
+        // template's tail carries more bones than the shorter, tapering mesh
+        // tail reaches, so `snap_spine_into_mesh` correctly leaves them rather
+        // than bunching the chain. It took the snake from 6 to 5 and the shark
+        // from 5 to 3 by nudging the barely-outside ones onto the body without
+        // moving them along its length; the rest are genuinely beyond the tip.
+        ("snake", 5),
+        ("shark", 3),
     ];
 
     for (creature, allowed) in budget {
@@ -1007,5 +1010,65 @@ fn the_pipeline_puts_the_spine_inside_the_mesh() {
             "{creature} has {} spine joints outside its mesh: {outside:?}",
             outside.len()
         );
+    }
+}
+
+/// The spine snap nudges a barely-outside joint onto the body but never drags a
+/// past-the-tip joint back along the chain.
+#[test]
+fn the_spine_snap_pulls_joints_in_without_moving_them_along_the_body() {
+    // Snake and shark are the creatures whose backbone IS a long tapering tail,
+    // so they are where this matters. The invariant is two-sided: a joint the
+    // snap moves must have kept its position along the body (its Z), and a joint
+    // past the end of the tail — whose cross-section holds no interior voxel —
+    // must not have moved at all.
+    for creature in ["snake", "shark"] {
+        let mesh = mesh_of(&format!("models/model-{creature}.glb"));
+        let rest = rest_pose_of(&format!("rigs/rig-{creature}.glb"));
+        let spine = spine_of(&format!("{creature}.json"));
+        let landmarks = Landmarks::of(&mesh).expect("vertices");
+        let axis = body_axis(&rest, &spine).expect("axis");
+        let grid = VoxelGrid::build(&mesh, 128).expect("voxelises");
+
+        let mut before = fit_uniform(&rest, &landmarks, &spine).expect("fits");
+        refine_spine(&mut before, &mesh, &landmarks, &spine, axis);
+        let mut after = before.clone();
+        m2m_rig::fit::snap_spine_into_mesh(&mut after, &grid, &spine, axis);
+
+        let inside = |p: glam::Vec3| {
+            matches!(
+                grid.state(grid.coord_of(p)),
+                Some(VoxelState::Interior | VoxelState::Surface)
+            )
+        };
+
+        let mut moved = 0;
+        for bone in &spine {
+            let a = before.position_of(bone).expect("bone");
+            let b = after.position_of(bone).expect("bone");
+
+            if inside(a) {
+                // A joint already inside is never touched.
+                assert_eq!(a, b, "{creature}:{bone} moved an already-inside joint");
+                continue;
+            }
+            if a == b {
+                continue; // past the tip, left alone
+            }
+            moved += 1;
+            // A moved joint kept its position along the body …
+            assert!(
+                (a.z - b.z).abs() < 1e-6,
+                "{creature}:{bone} was dragged along the body from z={} to z={}",
+                a.z,
+                b.z
+            );
+            // … and actually landed inside.
+            assert!(
+                inside(b),
+                "{creature}:{bone} was moved but is still outside"
+            );
+        }
+        assert!(moved > 0, "{creature}: the snap moved nothing");
     }
 }
