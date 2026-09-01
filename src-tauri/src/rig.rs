@@ -104,6 +104,9 @@ pub enum RigError {
     /// Writing the FBX failed.
     #[error(transparent)]
     Fbx(#[from] m2m_io::fbx::FbxError),
+    /// The library has no clip by that name.
+    #[error("no clip named {0}")]
+    UnknownClip(String),
     /// The fitting pipeline could not place the skeleton.
     #[error("cannot fit {template}: the mesh or the template has nothing to work with")]
     CannotFit {
@@ -369,6 +372,7 @@ pub fn export_glb(
     model: &[u8],
     skeleton: &FittedSkeleton,
     falloff: f32,
+    animation: Option<(&[u8], &str)>,
 ) -> Result<Vec<u8>, RigError> {
     check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
@@ -435,6 +439,13 @@ pub fn export_glb(
         skin: Some(0),
     });
 
+    let clips = match animation {
+        Some((library, clip)) => {
+            vec![retarget_clip(&m2m_io::glb::read(library)?, skeleton, clip)?]
+        }
+        None => Vec::new(),
+    };
+
     let document = m2m_io::glb::Document {
         primitives: vec![m2m_io::glb::Primitive {
             mesh: 0,
@@ -449,11 +460,263 @@ pub fn export_glb(
             inverse_bind_matrices,
         }],
         nodes,
-        clips: Vec::new(),
+        clips,
         report: m2m_io::glb::GlbReport::default(),
     };
 
     Ok(m2m_io::glb::write(&document)?)
+}
+
+/// One clip in a creature's animation library.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ClipSummary {
+    /// The clip's name, as the library gives it.
+    pub name: String,
+    /// Longest key time, in seconds.
+    pub duration: f32,
+    /// Channels the clip drives.
+    pub tracks: usize,
+}
+
+/// The clips a library offers.
+///
+/// # Errors
+///
+/// [`RigError::Read`] if the library will not parse.
+pub fn library_clips(library: &[u8]) -> Result<Vec<ClipSummary>, RigError> {
+    Ok(m2m_io::glb::read(library)?
+        .clips
+        .into_iter()
+        .map(|clip| ClipSummary {
+            name: clip.name,
+            duration: clip.duration,
+            tracks: clip.channels.len(),
+        })
+        .collect())
+}
+
+/// A rig read into the pieces retargeting needs.
+struct RetargetSource {
+    skeleton: m2m_rig::automap::Skeleton,
+    rotations: m2m_rig::retarget::RestRotations,
+    translations: m2m_rig::retarget::RestTranslations,
+    /// Bone index for each node, so a channel can be pointed at a bone.
+    bone_of_node: std::collections::HashMap<usize, usize>,
+}
+
+/// Reads a library's own rig: names, parents, positions and rest pose.
+fn retarget_source(document: &m2m_io::glb::Document) -> Result<RetargetSource, RigError> {
+    let skin = document
+        .skins
+        .first()
+        .ok_or_else(|| RigError::NoSkin("the animation library".to_owned()))?;
+    let world = document.world_transforms();
+    let slot_of_node: std::collections::HashMap<usize, usize> = skin
+        .joints
+        .iter()
+        .enumerate()
+        .map(|(slot, &node)| (node, slot))
+        .collect();
+
+    Ok(RetargetSource {
+        skeleton: m2m_rig::automap::Skeleton {
+            names: skin
+                .joints
+                .iter()
+                .map(|&j| document.nodes[j].name.clone())
+                .collect(),
+            parents: skin
+                .joints
+                .iter()
+                .map(|&j| {
+                    document.nodes[j]
+                        .parent
+                        .and_then(|p| slot_of_node.get(&p).copied())
+                })
+                .collect(),
+            positions: skin
+                .joints
+                .iter()
+                .map(|&j| world[j].transform_point3(glam::Vec3::ZERO))
+                .collect(),
+        },
+        rotations: m2m_rig::retarget::RestRotations {
+            local: skin
+                .joints
+                .iter()
+                .map(|&j| glam::Quat::from_array(document.nodes[j].transform.rotation))
+                .collect(),
+        },
+        translations: m2m_rig::retarget::RestTranslations {
+            local: skin
+                .joints
+                .iter()
+                .map(|&j| glam::Vec3::from(document.nodes[j].transform.translation))
+                .collect(),
+        },
+        bone_of_node: slot_of_node,
+    })
+}
+
+/// Moves one clip from a library onto a fitted skeleton.
+///
+/// # Why retargeting rather than a copy
+///
+/// The library and the template look like the same rig and are not. Measured
+/// between `rig-human.glb` and `human-base-animations.glb`: **62 of 66 bones
+/// carry a different local rest rotation**, the worst by 179.9996 degrees, and
+/// the skeletons stand 1.638 m and 1.651 m tall. Copying tracks across would
+/// put limbs on backwards.
+///
+/// Bones are paired **by name**. For the human template that is exactly the
+/// identity — measured, the two joint lists match in name *and order* — which
+/// means **no fixture here can tell name-pairing from index-pairing**, and a
+/// mutation swapping one for the other survives. It stays by name because
+/// pairing by position is wrong the moment a library and a template order their
+/// joints differently, which nothing prevents; the survivor is a gap in the
+/// fixtures, not in the reasoning, and is recorded rather than papered over.
+///
+/// # Errors
+///
+/// [`RigError::UnknownClip`] when the library has no such clip.
+fn retarget_clip(
+    library: &m2m_io::glb::Document,
+    skeleton: &FittedSkeleton,
+    clip_name: &str,
+) -> Result<m2m_io::glb::Clip, RigError> {
+    use m2m_rig::retarget::{RotationTrack, TranslationTrack};
+
+    let source = retarget_source(library)?;
+    let clip = library
+        .clips
+        .iter()
+        .find(|c| c.name == clip_name)
+        .ok_or_else(|| RigError::UnknownClip(clip_name.to_owned()))?;
+
+    let target = m2m_rig::automap::Skeleton {
+        names: skeleton.bones.clone(),
+        parents: skeleton.parents.clone(),
+        positions: skeleton
+            .positions
+            .iter()
+            .map(|p| glam::Vec3::from(*p))
+            .collect(),
+    };
+    let target_rotations = m2m_rig::retarget::RestRotations {
+        local: skeleton
+            .rotations
+            .iter()
+            .map(|r| glam::Quat::from_array(*r))
+            .collect(),
+    };
+    let target_translations = m2m_rig::retarget::RestTranslations {
+        local: (0..skeleton.bones.len())
+            .map(|bone| {
+                let position = |i: usize| {
+                    skeleton
+                        .positions
+                        .get(i)
+                        .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
+                };
+                let parent = skeleton.parents.get(bone).copied().flatten();
+                position(bone) - parent.map_or(glam::Vec3::ZERO, position)
+            })
+            .collect(),
+    };
+
+    // Source bone to target bone, by name.
+    let target_of_name: std::collections::HashMap<&str, usize> = skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    let mapping: std::collections::HashMap<usize, usize> = source
+        .skeleton
+        .names
+        .iter()
+        .enumerate()
+        .filter_map(|(bone, name)| target_of_name.get(name.as_str()).map(|&t| (bone, t)))
+        .collect();
+
+    let mut rotations = Vec::new();
+    let mut translations = Vec::new();
+    for channel in &clip.channels {
+        let Some(&bone) = source.bone_of_node.get(&channel.node) else {
+            continue;
+        };
+        match channel.path {
+            m2m_io::glb::Path::Rotation => rotations.push(RotationTrack {
+                bone,
+                times: channel.times.clone(),
+                rotations: channel
+                    .values
+                    .chunks_exact(4)
+                    .map(|q| glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]))
+                    .collect(),
+            }),
+            m2m_io::glb::Path::Translation => translations.push(TranslationTrack {
+                bone,
+                times: channel.times.clone(),
+                translations: channel
+                    .values
+                    .chunks_exact(3)
+                    .map(|t| glam::Vec3::new(t[0], t[1], t[2]))
+                    .collect(),
+            }),
+            _ => {}
+        }
+    }
+
+    let (moved, _) = m2m_rig::retarget::retarget(
+        &source.skeleton,
+        &source.rotations,
+        &target,
+        &target_rotations,
+        &mapping,
+        &m2m_rig::retarget::Clip {
+            name: clip.name.clone(),
+            tracks: rotations,
+        },
+    );
+    let scale = m2m_rig::retarget::height_scale(&source.skeleton, &target);
+    let moved_translations = m2m_rig::retarget::retarget_translations(
+        &source.translations,
+        &target_translations,
+        &mapping,
+        &translations,
+        scale,
+    );
+
+    // In the export, bone `i` IS node `i`, so a track's bone is its node.
+    let mut channels: Vec<m2m_io::glb::Channel> = moved
+        .tracks
+        .iter()
+        .map(|track| m2m_io::glb::Channel {
+            node: track.bone,
+            path: m2m_io::glb::Path::Rotation,
+            times: track.times.clone(),
+            values: track.rotations.iter().flat_map(|q| q.to_array()).collect(),
+        })
+        .collect();
+    channels.extend(moved_translations.iter().map(|track| {
+        m2m_io::glb::Channel {
+            node: track.bone,
+            path: m2m_io::glb::Path::Translation,
+            times: track.times.clone(),
+            values: track
+                .translations
+                .iter()
+                .flat_map(|t| t.to_array())
+                .collect(),
+        }
+    }));
+
+    Ok(m2m_io::glb::Clip {
+        name: clip.name.clone(),
+        duration: clip.duration,
+        channels,
+    })
 }
 
 /// Each bone's world rest rotation, composed down the hierarchy.
@@ -1063,8 +1326,8 @@ mod tests {
     #[test]
     fn the_export_carries_the_mesh_the_skeleton_and_the_weights() {
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
 
         // Written so the Blender and assimp checks have something to open.
         let path = std::env::temp_dir().join("m2m-export-check.glb");
@@ -1118,8 +1381,8 @@ mod tests {
         // world positions as local ones would look right in a flat scene and
         // pile every bone on top of the last in a deep chain.
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
         let world = back.world_transforms();
 
@@ -1137,8 +1400,8 @@ mod tests {
         // `jointWorld * IBM` must be the identity, or the model deforms the
         // instant it is opened — which no count of bones or vertices reveals.
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
         let world = back.world_transforms();
 
@@ -1231,8 +1494,8 @@ mod tests {
             .count();
         assert_eq!(turned, 66, "the fit dropped the template's rest rotations");
 
-        let bytes =
-            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
         for (bone, expected) in skeleton.rotations.iter().enumerate() {
             let written = glam::Quat::from_array(back.nodes[bone].transform.rotation);
@@ -1242,6 +1505,217 @@ mod tests {
                 "bone {bone} was written as {written:?}, not {expected:?}"
             );
         }
+    }
+
+    fn library() -> Vec<u8> {
+        model("animations/human-base-animations.glb")
+    }
+
+    #[test]
+    fn the_library_offers_its_clips() {
+        let clips = super::library_clips(&library()).expect("lists");
+
+        assert_eq!(clips.len(), 87);
+        assert_eq!(clips[0].name, "Chest_Open");
+        assert!((clips[0].duration - 1.375).abs() < 1e-3, "{:?}", clips[0]);
+        assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));
+    }
+
+    /// An animated export keeps the clip's TIME AXIS, not merely its keys.
+    #[test]
+    fn an_animated_export_keeps_the_clips_time_axis() {
+        // Counting keys proves nothing: retargeting resamples onto the union of
+        // key times, so the count legitimately changes. What must NOT change is
+        // when the motion starts and ends — a clip that plays 20% slow has
+        // every other number identical.
+        let source = m2m_io::glb::read(&library()).expect("reads");
+        let chest = source
+            .clips
+            .iter()
+            .find(|c| c.name == "Chest_Open")
+            .expect("the fixture has this clip");
+        // PER PATH. Taking min/max across every channel lets one path's
+        // untouched times hide another's: scaling only the rotation times by
+        // 0.8 left the span correct, because the translation channels still
+        // reached the end.
+        let span = |clip: &m2m_io::glb::Clip, path: m2m_io::glb::Path| {
+            let times: Vec<f32> = clip
+                .channels
+                .iter()
+                .filter(|c| c.path == path)
+                .flat_map(|c| c.times.clone())
+                .collect();
+            assert!(!times.is_empty(), "no {path:?} channels to measure");
+            (
+                times.iter().copied().fold(f32::MAX, f32::min),
+                times.iter().copied().fold(f32::MIN, f32::max),
+            )
+        };
+
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some((&library(), "Chest_Open")),
+        )
+        .expect("exports");
+
+        let path = std::env::temp_dir().join("m2m-animated.glb");
+        std::fs::write(&path, &bytes).expect("writes");
+
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        assert_eq!(back.clips.len(), 1);
+        let out = &back.clips[0];
+        assert_eq!(out.name, "Chest_Open");
+
+        for path in [m2m_io::glb::Path::Rotation, m2m_io::glb::Path::Translation] {
+            let (source_start, source_end) = span(chest, path);
+            let (out_start, out_end) = span(out, path);
+            assert!(
+                (out_start - source_start).abs() < 1e-4,
+                "{path:?} starts at {out_start}, source at {source_start}"
+            );
+            assert!(
+                (out_end - source_end).abs() < 1e-4,
+                "{path:?} ends at {out_end}, source at {source_end}"
+            );
+        }
+        assert!((out.duration - chest.duration).abs() < 1e-4);
+
+        // 66 rotation and 66 translation channels. The source's 66 SCALE
+        // channels are dropped: `retarget` moves rotation and translation, and
+        // a scaled bone is not something the fitter or the solver produce.
+        assert_eq!(out.channels.len(), 132);
+        assert!(out.channels.iter().all(|c| matches!(
+            c.path,
+            m2m_io::glb::Path::Rotation | m2m_io::glb::Path::Translation
+        )));
+
+        // Every channel drives a bone node that exists.
+        assert!(out.channels.iter().all(|c| c.node < skeleton.bones.len()));
+    }
+
+    /// Retargeting actually moves the motion; it is not a rename.
+    #[test]
+    fn the_exported_rotations_are_retargeted_not_copied() {
+        // The decisive property, and the one every count misses: a verbatim
+        // copy produces the same clip name, the same channel count and the same
+        // time axis, while putting limbs up to 180 degrees wrong. Two-sided on
+        // purpose — bones whose rest poses AGREE must come through unchanged,
+        // so a retarget that mangles everything fails this too.
+        let library_document = m2m_io::glb::read(&library()).expect("reads");
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let source = super::retarget_source(&library_document).expect("reads the rig");
+
+        let bytes = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some((&library(), "Chest_Open")),
+        )
+        .expect("exports");
+        let read_back = m2m_io::glb::read(&bytes).expect("reads back");
+        let out = &read_back.clips[0];
+
+        let chest = library_document
+            .clips
+            .iter()
+            .find(|c| c.name == "Chest_Open")
+            .expect("clip");
+        let first_source: std::collections::HashMap<usize, glam::Quat> = chest
+            .channels
+            .iter()
+            .filter(|c| c.path == m2m_io::glb::Path::Rotation)
+            .filter_map(|c| {
+                let bone = *source.bone_of_node.get(&c.node)?;
+                let q = c.values.get(..4)?;
+                Some((bone, glam::Quat::from_xyzw(q[0], q[1], q[2], q[3])))
+            })
+            .collect();
+
+        let angle = |a: glam::Quat, b: glam::Quat| {
+            let (a, b) = (a.normalize(), b.normalize());
+            a.angle_between(if a.dot(b) < 0.0 { -b } else { b })
+                .to_degrees()
+        };
+
+        let mut moved = 0usize;
+        let mut held_where_rest_agrees = 0usize;
+        for channel in out
+            .channels
+            .iter()
+            .filter(|c| c.path == m2m_io::glb::Path::Rotation)
+        {
+            let (Some(before), Some(q)) =
+                (first_source.get(&channel.node), channel.values.get(..4))
+            else {
+                continue;
+            };
+            let after = glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]);
+            let rest_gap = angle(
+                source.rotations.local[channel.node],
+                glam::Quat::from_array(skeleton.rotations[channel.node]),
+            );
+
+            if angle(*before, after) > 1.0 {
+                moved += 1;
+            } else if rest_gap < 0.01 {
+                held_where_rest_agrees += 1;
+            }
+        }
+
+        // 62 of 66 rest rotations differ, so most bones must have moved.
+        assert!(
+            moved > 50,
+            "only {moved} rotations changed — this is a copy"
+        );
+        assert!(
+            held_where_rest_agrees > 0,
+            "every bone moved, including those whose rest poses already agree"
+        );
+    }
+
+    #[test]
+    fn a_clip_the_library_does_not_have_is_refused() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let err = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some((&library(), "Moonwalk")),
+        )
+        .expect_err("refused");
+
+        assert!(
+            matches!(err, super::RigError::UnknownClip(name) if name == "Moonwalk"),
+            "wrong error"
+        );
+    }
+
+    /// Retargeting is not a copy: the two rigs' rest poses genuinely differ.
+    #[test]
+    fn the_library_and_the_template_do_not_share_a_rest_pose() {
+        // Measured: 62 of 66 bones carry a different local rest rotation, the
+        // worst by 179.9996 degrees. If this ever became 0, retargeting would
+        // be a copy and the machinery would be unnecessary — which is worth
+        // knowing rather than assuming in either direction.
+        let library = m2m_io::glb::read(&library()).expect("reads");
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let source = super::retarget_source(&library).expect("reads the rig");
+
+        let differing = source
+            .rotations
+            .local
+            .iter()
+            .zip(skeleton.rotations.iter())
+            .filter(|(a, b)| {
+                let b = glam::Quat::from_array(**b).normalize();
+                let a = a.normalize();
+                a.angle_between(if a.dot(b) < 0.0 { -b } else { b }) > 0.01_f32.to_radians()
+            })
+            .count();
+        assert_eq!(differing, 62, "the rest poses moved relative to each other");
     }
 
     /// The Euler order we write is the one the reader reads back.

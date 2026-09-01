@@ -3258,3 +3258,74 @@ written that test. Now pinned by its own round-trip test so it cannot drift.
 - `fbx::build::Clip` wants Euler curves in **ticks** while `retarget` produces
   quaternions, and `build.rs` calls that conversion "lossy and ambiguous" — FBX
   clip export needs its own thought, and asserting the TIME AXIS is mandatory.
+
+---
+
+## Session 048 — 2026-09-01 — retargeted clips reach the export
+
+**HEAD in: `5c1c80b` (CI green, 7/7). The Rust half of Animate landed; the UI
+did not, and the reason is packaging (below).**
+
+### What shipped
+`rig::library_clips` lists a library's clips; `export_glb` takes an optional
+`(library, clip)` and retargets it onto the fitted skeleton.
+
+**Retargeting is genuinely required — measured, not assumed.** Between
+`rig-human.glb` and `human-base-animations.glb`, **62 of 66 bones carry a
+different local rest rotation**, the worst by 179.9996 degrees, and the
+skeletons stand 1.638 m and 1.651 m. A verbatim copy would put limbs backwards.
+That is now its own test, so if the two rigs ever converge, we find out.
+
+**Blender confirms the time axis**: action `Chest_Open`, `curves=462`,
+`keys=9468`, **`range=0.00-33.00`** — 1.375 s at Blender's 24 fps is exactly 33
+frames.
+
+### Three mutation survivors, all real test gaps
+1. **A verbatim copy passed everything.** Same clip name, same channel count,
+   same time axis — the exact failure the whole retarget machinery exists to
+   prevent, and nothing I had written could see it. The new check is two-sided:
+   bones whose rest poses differ must move, and bones whose rest poses agree
+   must not, so a retarget that mangles everything fails too.
+2. **The time-axis check was too coarse.** Scaling only the ROTATION times by
+   0.8 passed, because the untouched translation channels still reached the end.
+   Taking min/max across all channels lets one path hide another — the span is
+   now measured **per path**.
+3. **Dropping translation tracks passed**, for the same reason as (2).
+
+*Lesson 26 said "assert the time axis". I did, and it was still too coarse to
+catch a 20% slowdown on half the channels. Assert it per path.*
+
+### One survivor documented, not covered
+Bones are paired **by name**, and for the human template that is exactly the
+identity — the two joint lists match in name **and order** — so no fixture here
+can tell name-pairing from index-pairing. Name-pairing stays, because pairing by
+position is wrong the moment a library and a template order their joints
+differently. The gap is in the fixtures, not the reasoning.
+
+### Why the UI did not land
+The animation libraries total **~16 MB** (human alone 5.7 MB) — far too large to
+embed in the binary the way the 158 KB rigs are. They need to become Tauri
+**resources**, against a 40 MB bundle budget, and that packaging decision
+deserves its own session rather than being rushed at the end of this one.
+Nothing in the app can read them yet, so the Animate step stays inert.
+
+Also deliberately deferred: **FBX clip export**. `fbx::build::Clip` wants Euler
+curves in **ticks** while `retarget` produces quaternions, and `build.rs` itself
+calls that conversion "lossy and ambiguous". Guessing at it would be worse than
+naming it.
+
+### Verification
+- 369 Rust tests both profiles, 0 failures (was 364); 12 frontend; fmt, clippy,
+  tsc, vite clean. Disk: `target/` 7.25 GB, under the 8 GB guard.
+- Mutations **4/5 caught**, the fifth documented as fixture-limited.
+- Self-reviewed; `/code-review` still 403s. It caught a stray CJK character that
+  had slipped into a doc comment.
+- **SonarQube not run — ninth session owed.** Touched `src-tauri/src`.
+  **Ask the user for a token; do not guess one.**
+
+### Next
+**Package the animation libraries as Tauri resources**, then the Animate UI and
+viewport playback fall out of it. After that: **P3-9** weight paint, **P3-7b**
+gizmo, **P3-3b** 11 spine joints on snake and shark, **P3-8c** welding,
+**P3-3d** move the rigs out of `legacy/`, **P4-1** Blender bridge, and the
+solver A/B.

@@ -195,7 +195,7 @@ async fn export_model(
         let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
         let bytes = match extension {
             "fbx" => rig::export_fbx(&source, &skeleton, falloff),
-            _ => rig::export_glb(&source, &skeleton, falloff),
+            _ => rig::export_glb(&source, &skeleton, falloff, None),
         }
         .map_err(|e| e.to_string())?;
         std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
