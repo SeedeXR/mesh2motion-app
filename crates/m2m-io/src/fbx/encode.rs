@@ -31,6 +31,14 @@ const FOOTER_MAGIC: [u8; 16] = [
     0xf8, 0x5a, 0x8c, 0x6a, 0xde, 0xf5, 0xd9, 0x7e, 0xec, 0xe9, 0x0c, 0xe3, 0x75, 0x8f, 0x29, 0x0b,
 ];
 
+/// The footer's leading 16-byte id. The Autodesk FBX SDK validates it as a CRC
+/// over the file's `CreationTime` and `FileId`, so the three are one fixed set:
+/// this id is valid only with `CREATION_TIME`/`FILE_ID` in `build.rs`. These are
+/// the constants Blender writes (its "timedate hack"), a triple the SDK accepts.
+const FOOTER_ID: [u8; 16] = [
+    0xfa, 0xbc, 0xab, 0x09, 0xd0, 0xc8, 0xd4, 0x66, 0xb1, 0x76, 0xfb, 0x83, 0x1c, 0xf7, 0x26, 0x7e,
+];
+
 /// From this version on, node offsets and counts are 64-bit.
 const WIDE_OFFSETS_FROM: u32 = 7500;
 
@@ -152,7 +160,7 @@ fn write_null_record(out: &mut Vec<u8>, wide: bool) {
 /// the end" as the footer and stops parsing nodes there, so a trailer shorter
 /// than that would make the last node unreachable.
 fn write_footer(out: &mut Vec<u8>, version: u32) {
-    out.extend_from_slice(&[0u8; 16]); // file id, unused by every reader here
+    out.extend_from_slice(&FOOTER_ID); // CRC over CreationTime/FileId; see FOOTER_ID.
                                        // Pad to a 16-byte boundary, as the format does.
     let padding = (16 - (out.len() % 16)) % 16;
     out.extend(std::iter::repeat_n(0u8, padding));

@@ -22,6 +22,15 @@ type ClipIds = (i64, i64, Vec<(i64, Vec<i64>)>);
 
 const VERSION: u32 = 7700;
 
+/// The Autodesk FBX SDK validates the footer id as a CRC over `CreationTime` and
+/// `FileId`, so all three are one fixed set — these two must stay in step with
+/// `FOOTER_ID` in `encode.rs`. These are the values Blender writes (its "timedate
+/// hack"), a triple the SDK is known to accept.
+const CREATION_TIME: &str = "1970-01-01 10:00:00:000";
+const FILE_ID: [u8; 16] = [
+    0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2, 0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1,
+];
+
 /// How a mesh's faces are supplied.
 ///
 /// Two forms because there are two callers with genuinely different data, and
@@ -283,10 +292,10 @@ pub fn build(scene: &Scene) -> FbxDocument {
         version: VERSION,
         roots: vec![
             header_node(),
-            node("FileId", vec![FbxProperty::Raw(vec![0; 16])], vec![]),
+            node("FileId", vec![FbxProperty::Raw(FILE_ID.to_vec())], vec![]),
             node(
                 "CreationTime",
-                vec![FbxProperty::Str("1970-01-01 00:00:00:000".into())],
+                vec![FbxProperty::Str(CREATION_TIME.into())],
                 vec![],
             ),
             node("Creator", vec![FbxProperty::Str(creator())], vec![]),
@@ -584,17 +593,29 @@ fn mesh_model_node(id: i64, name: &str) -> FbxNode {
             node(
                 "Properties70",
                 vec![],
-                vec![property(
-                    "Lcl Translation",
-                    "Lcl Translation",
-                    "",
-                    "A",
-                    vec![
-                        FbxProperty::F64(0.0),
-                        FbxProperty::F64(0.0),
-                        FbxProperty::F64(0.0),
-                    ],
-                )],
+                vec![
+                    // Binds the Geometry (the Model's node attribute) to the
+                    // Model. Without it Maya imports the transform but no mesh
+                    // shape — the same attribute-binding the bones need.
+                    property(
+                        "DefaultAttributeIndex",
+                        "int",
+                        "Integer",
+                        "",
+                        vec![FbxProperty::I32(0)],
+                    ),
+                    property(
+                        "Lcl Translation",
+                        "Lcl Translation",
+                        "",
+                        "A",
+                        vec![
+                            FbxProperty::F64(0.0),
+                            FbxProperty::F64(0.0),
+                            FbxProperty::F64(0.0),
+                        ],
+                    ),
+                ],
             ),
         ],
     )
@@ -626,7 +647,20 @@ fn bone_model_node(id: i64, bone: &Bone) -> FbxNode {
             ],
         )
     };
-    let mut properties = vec![vector("Lcl Translation", bone.translation, "A")];
+    // The Autodesk FBX SDK binds a Model to its NodeAttribute through this
+    // property; without it the SDK ignores the skeleton attribute and the joint
+    // imports as a plain transform (0 bones). Blender does not need it — LimbNode
+    // alone is enough there — which is why its absence went unseen until Maya.
+    let mut properties = vec![
+        property(
+            "DefaultAttributeIndex",
+            "int",
+            "Integer",
+            "",
+            vec![FbxProperty::I32(0)],
+        ),
+        vector("Lcl Translation", bone.translation, "A"),
+    ];
     if bone.rotation != [0.0; 3] {
         properties.push(vector("Lcl Rotation", bone.rotation, "A"));
     }

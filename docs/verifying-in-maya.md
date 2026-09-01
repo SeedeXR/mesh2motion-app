@@ -1,13 +1,28 @@
 # P2-10b: Verifying an export in Maya
 
-**Status: procedure ready; the run needs Maya.** Maya / the Autodesk FBX SDK is
-not on the build machine, so this cannot be executed here — assimp
-(`tools/assimp-check.sh`) is the independent-reader proxy used instead (P2-10).
-This is the exact procedure to run on a machine that *does* have Maya, and what
-"passes" means, so the check is reproducible rather than ad hoc.
+**Status: DONE — verified against the Autodesk FBX SDK and Maya 2027 headless.**
+Both are now on the build machine (SDK 2020.3.9, Maya 2027 `mayapy`). The
+procedure below is what was run; the results are recorded at the end. `mayapy`
+`FBXImport` and the raw SDK (`tools/fbx-sdk-check.sh`) are the reproducible gate;
+assimp (`tools/assimp-check.sh`) and Blender remain the CI-side proxies.
 
-**Date:** 2026-09-01 · **Proxy in use:** assimp (an independent importer, but not
-Autodesk's SDK, so not proof Maya opens a file)
+**Date:** 2026-09-01 · **Verified with:** Autodesk FBX SDK 2020.3.9 and Maya
+2027 (`mayapy` + `fbxmaya`), cross-checked against Blender 5.2.
+
+## Two bugs this found, and the fix
+
+Getting an export to open in Maya specifically (not just Blender) surfaced two
+container bugs the lenient readers hid:
+
+1. **Footer id.** The 16-byte footer id was written as zeros; the SDK validates
+   it as a CRC over `CreationTime` and `FileId`, so it rejected the file as
+   "corrupted". Fixed by writing the fixed triple Blender uses — `FOOTER_ID` in
+   `encode.rs` with the matching `CREATION_TIME`/`FILE_ID` in `build.rs`.
+2. **`DefaultAttributeIndex`.** Every joint Model and the mesh Model needs this
+   property to bind its node attribute (the skeleton attribute, or the geometry).
+   Without it Maya imported the transforms but built **0 bones and no mesh
+   shape**; Blender was unaffected (`LimbNode` alone is enough there, and it
+   computes mesh normals itself). Added to both Models in `build.rs`.
 
 ## Why Maya specifically
 
@@ -55,8 +70,29 @@ five checks' outcome, in `handover_session.md`. If a check fails, capture the ex
 error text — an FBX SDK rejection message is specific and points at the container
 field at fault, which is what the encoder work needs.
 
-## Until then
+## Recorded result (2026-09-01)
 
-`tools/assimp-check.sh <reference> <ours>` remains the automated independent-reader
-gate, and the Blender path (headless + the new live bridge) is the primary visual
-check. Both pass today; P2-10b stays open only for the Autodesk-SDK confirmation.
+A rebuild of `mixamo-original-rig.fbx` through the full semantic layers
+(`cargo run -p m2m-io --release --example rebuild_rig`) — mesh + skeleton +
+weights + one clip — imported cleanly in all three readers, and the Maya numbers
+match the original file exactly:
+
+| Reader | imported | joints/bones | meshes | vertices | skinClusters | anim |
+|--------|----------|--------------|--------|----------|--------------|------|
+| Autodesk FBX SDK 2020.3.9 | ✅ | 65 | 2 | 24 746 | — | 1 stack, 4.9 s |
+| Maya 2027 (`mayapy`/`fbxmaya`) | ✅ | 65 | 4* | 49 492* | 2 | 159 curves |
+| Blender 5.2 | ✅ | 65 | 2 | 24 746 (weighted) | — | 1 action |
+
+*Maya reports 4 mesh shapes / 49 492 verts because each skinned mesh carries an
+`Orig` intermediate shape — the original file reports the identical numbers, so
+this is Maya's skinCluster bookkeeping, not a discrepancy. Root joint
+`mixamorig:Hips`, hierarchy intact.
+
+Reproduce: `mayapy` with the script in the scratchpad, or
+`tools/fbx-sdk-check.sh <file.fbx>` for the raw SDK.
+
+## CI proxies
+
+`tools/assimp-check.sh <reference> <ours>` and the Blender path (headless + the
+live bridge) stay the automated gates on machines without Maya. The SDK/Maya run
+above is the one-time Autodesk-SDK confirmation P2-10b existed to get.
