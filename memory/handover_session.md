@@ -3864,3 +3864,39 @@ if still over. **Session start:** disk 2554 MB, CI green 6a237eb.
 **Next:** fbx/geometry.rs:391 (cx 54) is the largest remaining tractable one — read it
 first to judge decomposability; or P4-4 perf (measure first). The text.rs:62 state
 machine is the last/riskiest. Loop continues.
+
+## Session 061 — 2026-09-01 — P4-4 perf MEASURED (within budget); S3776 remainder judged too risky
+
+**No code change.** Two findings:
+
+**1. Remaining S3776 are essential complexity — stopping the mechanical refactors.**
+Read the three remaining flagged production fns and judged them poor risk/reward for
+a non-gate-failing metric:
+- fbx/geometry.rs `parse` (54): core mesh triangulation, heavy shared mutable state
+  (corner buffers, out, unresolved, polygon, oversized) with continue/return flow;
+  guarded by FBX unit tests only (the Blender visual-regression uses .glb inputs, so
+  it does NOT cover the FBX read path).
+- fbx/text.rs `parse` (62): subtle line-by-line state machine.
+- fbx/animation.rs `rotation_track` (25): intricate quaternion continuity/unwrapping.
+The 6 already cleared were accidental complexity that extracted cleanly; these three
+are essential complexity where forcing <15 risks subtle bugs or fragments cohesive
+algorithms into something HARDER to read. Left at 6/23 (todo P4-Q) by choice.
+
+**2. P4-4 perf pass — MEASURED, within budget, no work needed.** Release, avg 5 runs:
+human(7399v) fit(incl GLB read) 14.1ms / bind 26.7ms / export 26.6ms; dragon 4.0/18.3/18.7;
+shark 5.8/19.5/19.4. Linear extrapolation to the budget's 50k-vert target: load ~95ms
+(≤400ms), bind ~180ms (≤3s; ≤1.2s even if quadratic), export ~180ms (≤2s) — 4-16x
+headroom. Binary 7.81 MB (≤40 MB). Peak RSS NOT profiled (no 50k model + needs
+Instruments; tiny vertex data vs GB budgets makes it a non-concern but it is unmeasured)
+— so todo P4-4 is [~] not [x]. Measurement reframes P4-4: no hot-path optimization is
+warranted. Caveat honestly recorded: no 50k-vert model exists, so the size-budget rows
+are extrapolated, not measured at target size.
+
+**Session start:** disk 2553 MB, CI green 190397f.
+
+**Next / STOP assessment:** perf is measured (within budget); S3776 remainder is the
+risky essential-complexity trio. Still genuinely open + NOT blocked + low-risk: **P3-3d**
+(move the 9 rigs out of legacy/static/rigs/ — a real chore worth doing). Also open but
+bigger: P3-7b (gizmo, UI), P4-9 (user docs). So NOT yet "only blocked items remain" —
+P3-3d is real safe work for next iteration. If P3-3d is done and only bigger/blocked
+items + the risky S3776 remain, STOP.
