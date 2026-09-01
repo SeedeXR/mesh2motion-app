@@ -15,12 +15,24 @@ fn asset(rel: &str) -> Vec<u8> {
     std::fs::read(format!("../{rel}")).unwrap_or_else(|e| panic!("reading {rel}: {e}"))
 }
 
-/// The animated `.glb` for a human fitted onto `mesh_path` with `clip` retargeted.
-fn animated_export(mesh_path: &str, clip: &str) -> Vec<u8> {
+/// The animated `.glb` for `template` fitted onto `mesh_path`, with `clip` from
+/// `library` retargeted onto it.
+fn animated_export(template: &str, mesh_path: &str, library_path: &str, clip: &str) -> Vec<u8> {
     let model = asset(mesh_path);
-    let skeleton = rig::fit("human", &model).expect("fits");
-    let library = asset("legacy/static/animations/human-base-animations.glb");
+    let skeleton = rig::fit(template, &model).expect("fits");
+    let library = asset(library_path);
     rig::export_glb(&model, &skeleton, 2.0, Some((&library, clip))).expect("exports")
+}
+
+/// The first clip a library offers, for tests that only need "some real motion".
+fn first_clip(library_path: &str) -> String {
+    let library = asset(library_path);
+    rig::library_clips(&library)
+        .expect("reads the library")
+        .first()
+        .expect("a clip")
+        .name
+        .clone()
 }
 
 /// Every bone's world position at time `t`, from the rest pose with the clip's
@@ -84,6 +96,12 @@ fn nearest_key(times: &[f32], t: f32) -> Option<usize> {
 /// Verifies an animated export: it parses, carries the clip, and no bone leaves
 /// a box far larger than the character at any sample across the clip.
 fn assert_animates_cleanly(bytes: &[u8], clip_name: &str, label: &str) {
+    // A human is ~1.8 m; 5 m from the origin in any axis is well past anywhere a
+    // bone should be, so a limb that has flown off trips this.
+    assert_animates_cleanly_within(bytes, clip_name, label, 5.0);
+}
+
+fn assert_animates_cleanly_within(bytes: &[u8], clip_name: &str, label: &str, limit: f32) {
     let document = m2m_io::glb::read(bytes).expect("the export reads");
     let clip = document
         .clips
@@ -97,25 +115,29 @@ fn assert_animates_cleanly(bytes: &[u8], clip_name: &str, label: &str) {
         "{label}: the clip drives no rotations"
     );
 
-    // A human is ~1.8 m; 5 m from the origin in any axis is well past anywhere a
-    // bone should be, so a limb that has flown off trips this.
-    const LIMIT: f32 = 5.0;
     let samples = 16;
     for step in 0..=samples {
         let t = clip.duration * step as f32 / samples as f32;
         for (bone, position) in bone_positions_at(&document, clip, t).iter().enumerate() {
             assert!(
-                position.is_finite() && position.abs().max_element() < LIMIT,
+                position.is_finite() && position.abs().max_element() < limit,
                 "{label}: bone {bone} reached {position:?} at t={t:.2}s"
             );
         }
     }
 }
 
+const HUMAN_LIB: &str = "legacy/static/animations/human-base-animations.glb";
+
 #[test]
 #[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
 fn a_clip_retargets_cleanly_onto_a_t_pose_human() {
-    let glb = animated_export("legacy/static/models/model-human.glb", "Chop_Tree");
+    let glb = animated_export(
+        "human",
+        "legacy/static/models/model-human.glb",
+        HUMAN_LIB,
+        "Chop_Tree",
+    );
     assert_animates_cleanly(&glb, "Chop_Tree", "t-pose");
 }
 
@@ -124,8 +146,27 @@ fn a_clip_retargets_cleanly_onto_a_t_pose_human() {
 fn a_t_pose_clip_retargets_cleanly_onto_an_a_pose_human() {
     // The case the whole epic is for: a T-pose Mixamo clip on an A-pose bind.
     let glb = animated_export(
+        "human",
         "legacy/static/test-files/bone-correction-tests/human-a-pose.glb",
+        HUMAN_LIB,
         "Chop_Tree",
     );
     assert_animates_cleanly(&glb, "Chop_Tree", "a-pose");
+}
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_a_non_human_rig() {
+    // P3-P6: the dragon reorients its wings and legs by ~44°, so its animation
+    // exercises the pose-matched rotations on non-human limbs. A larger box —
+    // a dragon is a big creature — but the same "nothing flies off" bar.
+    let lib = "legacy/static/animations/dragon-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export(
+        "dragon",
+        "legacy/static/models/model-dragon.glb",
+        lib,
+        &clip,
+    );
+    assert_animates_cleanly_within(&glb, &clip, "dragon", 12.0);
 }

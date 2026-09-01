@@ -193,3 +193,27 @@ fn an_a_pose_mesh_reorients_the_arms() {
         "an A-pose fit should reorient the arms; largest arm change was only {arm_delta:.1}°"
     );
 }
+
+#[test]
+fn non_human_limbs_are_pose_matched_too() {
+    // P3-P6: the reorientation is role-agnostic — it aims wings, fins and legs
+    // by the same rule as arms. Bird wings, shark fins and dragon wings sit at a
+    // real angle off their templates, so a non-trivial correction proves the
+    // treatment reaches non-human limbs, not just the human arm chain.
+    for (rig, manifest, model) in [
+        ("rigs/rig-bird.glb", "bird.json", "models/model-bird.glb"),
+        ("rigs/rig-shark.glb", "shark.json", "models/model-shark.glb"),
+        (
+            "rigs/rig-dragon.glb",
+            "dragon.json",
+            "models/model-dragon.glb",
+        ),
+    ] {
+        let (r, new) = reoriented(rig, manifest, model);
+        let delta = max_delta_degrees(&r.local_rotations, &new);
+        assert!(
+            delta > 10.0,
+            "{manifest} should pose-match its limbs, but nothing moved more than {delta:.1}°"
+        );
+    }
+}
