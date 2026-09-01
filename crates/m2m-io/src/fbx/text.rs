@@ -197,6 +197,34 @@ fn number_array(text: &str) -> Result<Vec<f64>, FbxError> {
         .collect()
 }
 
+/// Pops the innermost open node onto its parent, or into `roots` if it had no
+/// parent. A stack that is already empty is left alone.
+fn close_top(stack: &mut Vec<FbxNode>, roots: &mut Vec<FbxNode>) {
+    if let Some(node) = stack.pop() {
+        match stack.last_mut() {
+            Some(parent) => parent.children.push(node),
+            None => roots.push(node),
+        }
+    }
+}
+
+/// Closes open blocks down to `target` depth, flushing each one's pending array
+/// and its declared length as it goes.
+fn close_to(
+    stack: &mut Vec<FbxNode>,
+    roots: &mut Vec<FbxNode>,
+    declared_len: &mut Vec<Option<usize>>,
+    pending_array: &mut Option<Vec<f64>>,
+    target: usize,
+) -> Result<(), FbxError> {
+    while stack.len() > target {
+        finish_array(stack, pending_array)?;
+        declared_len.pop();
+        close_top(stack, roots);
+    }
+    Ok(())
+}
+
 /// Parses an ASCII FBX document.
 ///
 /// # Errors
@@ -244,16 +272,13 @@ pub fn parse(text: &str) -> Result<FbxDocument, FbxError> {
             Line::BlockStart { .. } | Line::Property { .. } => indent,
             Line::Ignored | Line::Continuation(_) => stack.len(),
         };
-        while stack.len() > target {
-            finish_array(&mut stack, &mut pending_array)?;
-            declared_len.pop();
-            if let Some(node) = stack.pop() {
-                match stack.last_mut() {
-                    Some(parent) => parent.children.push(node),
-                    None => roots.push(node),
-                }
-            }
-        }
+        close_to(
+            &mut stack,
+            &mut roots,
+            &mut declared_len,
+            &mut pending_array,
+            target,
+        )?;
 
         if !matches!(classified, Line::Continuation(_) | Line::Ignored) {
             pending_content = false;
@@ -295,12 +320,7 @@ pub fn parse(text: &str) -> Result<FbxDocument, FbxError> {
                 // A stray closing brace with nothing open is skipped: the
                 // legacy parser warns rather than failing, and its regression
                 // test asserts the nodes after it survive.
-                if let Some(node) = stack.pop() {
-                    match stack.last_mut() {
-                        Some(parent) => parent.children.push(node),
-                        None => roots.push(node),
-                    }
-                }
+                close_top(&mut stack, &mut roots);
             }
 
             Line::Property { name, value } => {
@@ -370,11 +390,8 @@ pub fn parse(text: &str) -> Result<FbxDocument, FbxError> {
     // Close anything left open, so a truncated document still yields the nodes
     // it did contain rather than dropping them entirely.
     finish_array(&mut stack, &mut pending_array)?;
-    while let Some(node) = stack.pop() {
-        match stack.last_mut() {
-            Some(parent) => parent.children.push(node),
-            None => roots.push(node),
-        }
+    while !stack.is_empty() {
+        close_top(&mut stack, &mut roots);
     }
 
     Ok(FbxDocument { version, roots })
