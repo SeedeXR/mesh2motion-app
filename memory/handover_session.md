@@ -2990,3 +2990,73 @@ now has a real caller (the Fit Skeleton step). After that, Bind Weights is the
 next inert step, and `m2m_core::skinning` is already built for it. Also open:
 **P3-3b** (11 spine joints on snake and shark tails), **P3-8c** (vertex
 welding), **P3-3d** (move the rigs out of `legacy/`), **P4-1** (Blender bridge).
+
+---
+
+## Session 044 — 2026-09-01 — Bind Weights: the app rigs a model
+
+**HEAD in: `526c098` (CI green, 7/7).**
+
+### The choice
+Took **Bind Weights** over the transform gizmo. The gizmo is largely pointer
+glue against a GPU canvas — almost nothing a test here can look at — while
+binding is the product's core and is mostly Rust standing on
+`m2m_core::{geodesic, voxel, skinning}`, all built and tested. Value and
+verifiability pointed the same way.
+
+### What shipped
+`rig::bind(model, skeleton, falloff)` → mesh, voxel grid, geodesic field per
+bone, `assign_weights`. Command `bind_weights` on `spawn_blocking`; a
+`BindReport` of what a person can act on. The step reports the influence
+spread and warns about anything the solver had to guess.
+
+**Measured: fit 21 ms, whole bind 56 ms** on 7,399 vertices and 66 bones. That
+is the evidence P3-8b (progress events) stays deferred on — not a hope.
+
+### Findings worth keeping
+1. **A convention had to be invented, so it got its own test.** Nothing in the
+   codebase established bone head/tail: the `m2m-core` fixtures read pre-baked
+   segments from a binary. A bone runs from its joint **towards its first
+   child** — the alternative (parent's joint down to this one) is off by one and
+   would weight the shoulder to the upper arm. Branching joints take the first
+   child, which is a judgement call recorded as one.
+2. **I found a flaw in my own report before asserting on it.**
+   `count.saturating_sub(1)` put 0-influence and 1-influence vertices in the
+   same bucket, so a fully detached vertex would have looked normal — the exact
+   invariant `m2m_core::skinning` cares about. Separated before it could hide
+   anything.
+3. **The geodesic field spreads through the VOXEL GRID, not mesh topology.**
+   Nine separate meshes touching each other report **zero** fallbacks. Getting a
+   fixture for the fallback path meant building one: two unit cubes 10 apart,
+   written with `glb::write`. It reports exactly the far cube's 8 corners, and
+   turned a surviving mutation into a caught one.
+4. **A survivor kept and documented, not covered.** `unweighted_vertices` can
+   never be non-zero — `assign_weights` always writes at least one influence —
+   so a mutation folding it into the histogram survives *by construction*. It
+   stays as a canary on another crate's invariant and the doc comment says
+   exactly that. Honest beats either silently keeping or deleting.
+5. **A measured difference worth an A/B, recorded not judged.** Our solver gives
+   **96%** of vertices the full four influences; the reference Mixamo export
+   gives **93%** of its vertices exactly one. That is a large difference in
+   character, and `memory/test.md` §9's legacy A/B is what settles it.
+6. **The gate caught what I could not see.** Clippy came back 3, not 0, after
+   the "final" run — `manual_contains`. Re-running gates after the last edit is
+   what stopped a red CI.
+
+### Verification
+- 355 Rust tests both profiles, 0 failures (was 350); 12 frontend; fmt, clippy,
+  tsc, vite all clean.
+- Mutations **5/6 caught**, the sixth proven unreachable and documented.
+- Self-reviewed; `/code-review` still 403s (`oauth_org_not_allowed`). It caught
+  a `bound!` non-null assertion inside a closure that a local capture removes.
+- **SonarQube not run — fifth session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next
+The app now imports, draws, fits a skeleton and binds weights. Remaining inert
+steps: **Animate** (`m2m_rig::retarget` is built and tested) and **Export**
+(`m2m_io` writes both formats — this is the one that makes the app produce
+something a user keeps). Also open: **P3-9** weight paint (needs weights on the
+bulk channel), **P3-7b** the gizmo, **P3-3b** 11 spine joints on snake and
+shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`, **P4-1**
+Blender bridge.

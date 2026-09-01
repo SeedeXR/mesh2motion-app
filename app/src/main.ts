@@ -4,6 +4,7 @@ import './ui/shell.css'
 import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
+  bindWeights,
   buildInfo,
   fitSkeleton,
   importModel,
@@ -11,6 +12,7 @@ import {
   loadModel,
   reportStartup,
   skeletonTemplates,
+  type BindReport,
   type FittedSkeleton,
   type ImportedFile,
   type SkeletonTemplate
@@ -56,6 +58,10 @@ let fitted: FittedSkeleton | null = null
 /** Set while a fit is running — voxelising takes a moment. */
 let fitting = false
 
+/** What binding the mesh to the skeleton produced. */
+let bound: BindReport | null = null
+let binding = false
+
 let viewport: Viewport | null = null
 
 function ensureViewport(): Viewport {
@@ -84,6 +90,8 @@ function escape(text: string): string {
  */
 function renderInspector(step: StepDef): string {
   if (step.id === StepId.LoadSkeleton) return renderSkeletonStep()
+  if (step.id === StepId.EditSkeleton) return renderEditStep()
+  if (step.id === StepId.BindWeights) return renderBindStep()
   if (step.id !== StepId.LoadModel) {
     return '<p style="color:var(--fg-2)">Properties for this step appear here.</p>'
   }
@@ -154,6 +162,69 @@ function renderSkeletonStep(): string {
   return `${list}${fitting ? '<p style="color:var(--fg-2)">Fitting\u2026</p>' : outcome}`
 }
 
+/** The Fit Skeleton step, which so far only reports what the automatic fit did. */
+function renderEditStep(): string {
+  if (fitted === null) {
+    return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
+  }
+  return `<dl class="facts">
+      <dt>Bones</dt><dd>${fitted.bones.length}</dd>
+      <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
+    </dl>
+    <p style="color:var(--fg-2)">Moving bones by hand is not built yet, so the automatic placement is used as it stands. Check it in the viewport before binding.</p>`
+}
+
+/** The Bind Weights step: solve which bones deform which vertices. */
+function renderBindStep(): string {
+  if (fitted === null || loaded === null) {
+    return '<p style="color:var(--fg-2)">Fit a skeleton first — weights are solved against one.</p>'
+  }
+
+  const button = `<button id="bind" class="action" ${binding ? 'disabled' : ''}>${
+    binding ? 'Solving\u2026' : bound === null ? 'Bind weights' : 'Bind again'
+  }</button>`
+  const report = bound
+  if (report === null) return button
+
+  const [one, two, three, four] = report.influence_histogram
+  const share = (n: number): string => `${((n / Math.max(report.vertices, 1)) * 100).toFixed(1)}%`
+  const problems: string[] = []
+  if (report.unweighted_vertices > 0) {
+    problems.push(
+      `<p style="color:var(--err)">${report.unweighted_vertices} vertices got no weight at all and will detach when the rig moves.</p>`
+    )
+  }
+  if (report.fallback_vertices > 0) {
+    problems.push(
+      `<p style="color:var(--warn)">${report.fallback_vertices} vertices are on a disconnected island; their nearest bone was guessed in a straight line.</p>`
+    )
+  }
+
+  return `${button}
+    <dl class="facts">
+      <dt>Vertices</dt><dd>${report.vertices}</dd>
+      <dt>Bones used</dt><dd>${report.weighted_bones} <span style="color:var(--fg-2)">(${report.excluded_bones} root and leaf)</span></dd>
+      <dt>1 influence</dt><dd>${one} <span style="color:var(--fg-2)">${share(one)}</span></dd>
+      <dt>2</dt><dd>${two} <span style="color:var(--fg-2)">${share(two)}</span></dd>
+      <dt>3</dt><dd>${three} <span style="color:var(--fg-2)">${share(three)}</span></dd>
+      <dt>4</dt><dd>${four} <span style="color:var(--fg-2)">${share(four)}</span></dd>
+    </dl>
+    ${problems.join('') || '<p style="color:var(--ok)">Every vertex is attached.</p>'}`
+}
+
+/** Solves the weights for the fitted skeleton. */
+async function runBind(): Promise<void> {
+  if (loaded === null || fitted === null || binding) return
+  binding = true
+  render()
+  try {
+    bound = await bindWeights(loaded.path, fitted, 2.0)
+  } finally {
+    binding = false
+    render()
+  }
+}
+
 /** Fetches the template list once, then re-renders with it. */
 async function ensureTemplates(): Promise<void> {
   if (templates !== null || !isDesktop()) return
@@ -169,7 +240,11 @@ async function runFit(name: string): Promise<void> {
   render()
   try {
     fitted = await fitSkeleton(name, loaded.path)
+    bound = null
     ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents)
+    // A placed skeleton is what binding needs. The Fit step in between has
+    // nothing to complete yet, so it does not gate the one after it.
+    furthestStep = Math.max(furthestStep, 3)
   } finally {
     fitting = false
     render()
@@ -287,6 +362,9 @@ function render(): void {
   if (importButton !== null) {
     importButton.addEventListener('click', () => void runImport(importButton))
   }
+
+  const bindButton = app.querySelector<HTMLButtonElement>('#bind')
+  bindButton?.addEventListener('click', () => void runBind())
 
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']

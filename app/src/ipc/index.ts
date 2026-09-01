@@ -105,3 +105,31 @@ export async function skeletonTemplates(): Promise<SkeletonTemplate[]> {
 export async function fitSkeleton(template: string, path: string): Promise<FittedSkeleton> {
   return await invoke<FittedSkeleton>('fit_skeleton', { template, path })
 }
+
+/** What binding produced, without the weights themselves. */
+export interface BindReport {
+  readonly vertices: number
+  readonly weighted_bones: number
+  readonly excluded_bones: number
+  /** Vertices no bone reached through the mesh — a disconnected island. */
+  readonly fallback_vertices: number
+  /** Vertices with 1, 2, 3 and 4 influences. */
+  readonly influence_histogram: readonly [number, number, number, number]
+  /** Vertices with no influence at all. Non-zero is a solver bug. */
+  readonly unweighted_vertices: number
+}
+
+/**
+ * Binds the mesh to the fitted skeleton.
+ *
+ * The weights themselves stay on the Rust side: they are vertices x 4 indices
+ * and vertices x 4 floats, which belongs on the bulk channel beside the
+ * geometry, not in a JSON reply. What comes back is what a person can act on.
+ */
+export async function bindWeights(
+  path: string,
+  skeleton: FittedSkeleton,
+  falloff: number
+): Promise<BindReport> {
+  return await invoke<BindReport>('bind_weights', { path, skeleton, falloff })
+}

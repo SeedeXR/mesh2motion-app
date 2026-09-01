@@ -135,6 +135,27 @@ async fn fit_skeleton(template: String, path: String) -> Result<rig::FittedSkele
     .map_err(|e| e.to_string())?
 }
 
+/// Binds the mesh to the fitted skeleton.
+///
+/// Off the main thread for the same reason as fitting, and more so: this
+/// voxelises, solves a geodesic field per bone and then assigns weights.
+/// Measured on the reference body — 7,399 vertices, 66 bones — the whole thing
+/// takes about 56 ms, which is why there is still no progress event to report
+/// (todo P3-8b). A model an order of magnitude larger will change that.
+#[tauri::command]
+async fn bind_weights(
+    path: String,
+    skeleton: rig::FittedSkeleton,
+    falloff: f32,
+) -> Result<rig::BindReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+        rig::bind(&bytes, &skeleton, falloff).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -157,7 +178,8 @@ pub fn run() {
             import_model,
             load_model,
             skeleton_templates,
-            fit_skeleton
+            fit_skeleton,
+            bind_weights
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");
