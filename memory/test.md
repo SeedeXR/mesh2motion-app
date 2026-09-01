@@ -91,23 +91,39 @@ Use `cargo instruments` / Instruments.app on macOS; record the trace path in
 
 ## 7. SonarQube
 
-Not currently installed (verified 2026-08-29). Install as `todo.md` P0-6.
+**UNBLOCKED 2026-09-01** (session 050, at the user's direction to get a token via
+docker). Server is `m2m-sonarqube` (`docker/sonarqube.yml`), SonarQube 26.8.0
+Community on http://localhost:9000, status UP.
 
 ```bash
-brew install sonar-scanner          # scanner
-docker compose -f docker/sonarqube.yml up -d   # local server
-sonar-scanner -Dsonar.projectKey=mesh2motion-app -Dsonar.token="$SONAR_TOKEN"
+set -a; . ./.sonar-token; set +a      # SONAR_TOKEN, SONAR_HOST_URL, admin creds
+sonar-scanner                          # reads sonar-project.properties
+```
 
-# BLOCKED since session 016 (2026-08-30): the scanner needs a token, the one
-# used on 2026-08-29 was passed on the command line and never persisted, and
-# the container's admin password is not admin/admin any more and is recorded
-# nowhere. Minting a new token needs the password from the user, or an admin
-# reset inside the container (destructive, so not done unasked).
-#
-# This did NOT gate session 016's commit: Community Edition has no Rust
-# analyser, and that change was entirely Rust, so the scan could not have
-# produced a finding about it either way. It DOES gate any session that
-# touches the TypeScript frontend -- resolve it before then.
+**Secrets live only in `./.sonar-token` (gitignored — never commit).** It holds
+the analysis token, host URL, and the admin login.
+
+### How the block was cleared
+The admin password had been lost, and SonarQube's embedded H2 uses a password
+generated per-install (so `sonar/sonar` and `admin/admin` both fail at the H2
+level — confirmed via the trace file, and H2's `Recover` tool showed the DB was
+only a default install plus one project registration, no analysis history). The
+fix was **reversible**: the old `sonar.mv.db` and `es9/` were renamed to
+`*.bak.<ts>` inside the `docker_sonarqube_data` volume, SonarQube reinitialised
+a fresh DB on restart (back to `admin/admin`), the password was changed, and a
+`GLOBAL_ANALYSIS_TOKEN` was minted and verified. To roll back: stop the
+container, restore the `.bak.<ts>` files, restart.
+
+### What the first scan found (HEAD 5b10d46, gate OK)
+- **0 bugs, 0 vulnerabilities, 0 security hotspots.** 28 code smells, 23 of them
+  CRITICAL — all `rust:S3776` cognitive complexity, threshold-of-one-over in the
+  FBX/GLB parsers (e.g. 16 vs 15). Non-blocking; a refactor task, not a gate
+  failure.
+- **Correction to a long-standing assumption**: SonarQube 26.8 Community **does**
+  ship a Rust analyser (`sonar-rust-plugin`) and analyses the crates on a plain
+  scan — the earlier "no Rust analyser" note (and `sonar-project.properties`
+  comment, now fixed) was true of older Community but not this version. clippy
+  `-D warnings` stays the CI gate; Sonar is advisory locally.
 ```
 
 Quality gate: no new bugs, no new vulnerabilities, no new code smells above Minor,

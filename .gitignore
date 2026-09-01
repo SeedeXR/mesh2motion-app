@@ -34,3 +34,4 @@ bench/results/
 # redistributing content under a licence the repo does not claim.
 # Contributors supply their own; see memory/test.md §4.
 references/
+.sonar-token
