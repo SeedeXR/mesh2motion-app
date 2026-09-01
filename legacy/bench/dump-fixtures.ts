@@ -166,7 +166,7 @@ describe('dump fixtures', () => {
   for (const [name, asset] of TEMPLATES) {
     it(`writes template-${name}`, async () => {
       await dumpMesh(`static/models/model-${asset}.glb`, `template-${name}-mesh.bin`)
-      await dumpRig(`static/rigs/rig-${asset}.glb`, `template-${name}-rig.bin`)
+      await dumpRig(`../assets/rigs/rig-${asset}.glb`, `template-${name}-rig.bin`)
     }, 180000)
   }
 })

@@ -162,7 +162,7 @@ describe('legacy solver baseline', () => {
     for (const t of TEMPLATES) {
       const label = `${t.label ?? t.type} (${t.model})`
       try {
-        const rig = await loadGlbHeadless(resolve(ROOT, `static/rigs/${t.rig}.glb`))
+        const rig = await loadGlbHeadless(resolve(ROOT, `../assets/rigs/${t.rig}.glb`))
         const model = await loadGlbHeadless(
           resolve(ROOT, t.modelPath ?? `static/models/${t.model}.glb`)
         )

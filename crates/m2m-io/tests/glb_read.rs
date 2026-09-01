@@ -10,7 +10,11 @@ use m2m_io::glb::{self, GlbError, Path};
 /// Fixtures live in the legacy tree and some are several megabytes, so they are
 /// read at run time rather than embedded in the test binary.
 fn fixture(relative: &str) -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/").to_owned() + relative;
+    // Rig `.glb` files moved to `assets/rigs/` (P3-3d); other fixtures stay in legacy.
+    let path = match relative.strip_prefix("rigs/") {
+        Some(rig) => concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/rigs/").to_owned() + rig,
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/").to_owned() + relative,
+    };
     std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
 }
 

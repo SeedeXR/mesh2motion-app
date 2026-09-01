@@ -15,8 +15,7 @@ use m2m_rig::template::{
 /// part of the scene graph, not the skeleton, so the root bone's parent is
 /// reported as `None` rather than as a bone that does not exist.
 fn skeleton_of(relative: &str) -> (Vec<(String, Option<String>)>, usize) {
-    let path =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/rigs/").to_owned() + relative;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/rigs/").to_owned() + relative;
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let document = m2m_io::glb::read(&bytes).expect("the template reads");
     let skin = document.skins.first().expect("the template has a skin");
@@ -455,14 +454,14 @@ fn every_template_describes_its_skeleton_exactly() {
     }
 }
 
-/// There is a manifest for every rig in `static/rigs`, and no manifest without
+/// There is a manifest for every rig in `assets/rigs`, and no manifest without
 /// one.
 ///
 /// Without this, adding a tenth rig and forgetting its manifest would pass
 /// every other test in this file, because they all iterate the manifests.
 #[test]
 fn every_rig_has_a_manifest_and_every_manifest_a_rig() {
-    let rigs = concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/rigs");
+    let rigs = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/rigs");
     let mut skeletons: Vec<String> = std::fs::read_dir(rigs)
         .expect("the rigs directory")
         .filter_map(|e| e.ok())

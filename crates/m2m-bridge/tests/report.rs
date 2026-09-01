@@ -58,7 +58,7 @@ fn blender_reads_a_real_rig_end_to_end() {
     };
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../legacy/static/rigs/rig-human.glb"
+        "/../../assets/rigs/rig-human.glb"
     ))
     .expect("the reference rig");
 

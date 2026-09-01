@@ -9,7 +9,7 @@
 //! `.glb` container, and reports any external reference as
 //! [`GlbError::ExternalBuffer`] rather than fetching it.
 //!
-//! That is not a limitation for this app: the templates in `static/rigs` and
+//! That is not a limitation for this app: the templates in `assets/rigs` and
 //! everything the exporter writes are self-contained `.glb`.
 //!
 //! # Trust boundary

@@ -16,13 +16,14 @@ fn main() {
 /// machinery to find them on disk would. Globbed rather than listed, matching
 /// `m2m-rig`'s manifests: adding a creature stays a matter of adding files.
 ///
-/// They still live under `legacy/static/rigs/` — they are product assets in the
-/// legacy tree, and moving them is churn for another day (todo P3-3d).
+/// They live under `assets/rigs/` — product assets in their own tree, moved
+/// out of `legacy/static/` in P3-3d. The reference thumbnails stay in legacy:
+/// only its UI uses them.
 fn embed_skeletons() {
     use std::{fs, path::PathBuf};
 
     let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets this"))
-        .join("../legacy/static/rigs");
+        .join("../assets/rigs");
     println!("cargo:rerun-if-changed={}", dir.display());
 
     let mut rigs: Vec<PathBuf> = fs::read_dir(&dir)

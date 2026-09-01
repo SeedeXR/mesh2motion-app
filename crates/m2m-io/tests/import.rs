@@ -11,7 +11,7 @@ use m2m_io::import::{inspect, Format, ImportError};
 
 const MIXAMO_FBX: &[u8] =
     include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
-const RIG_ONLY: &[u8] = include_bytes!("../../../legacy/static/rigs/rig-human.glb");
+const RIG_ONLY: &[u8] = include_bytes!("../../../assets/rigs/rig-human.glb");
 const PLAIN_MESH: &[u8] = include_bytes!("../../../legacy/static/models/model-human.glb");
 const ANIMATED: &[u8] =
     include_bytes!("../../../legacy/static/animations/human-base-animations.glb");
