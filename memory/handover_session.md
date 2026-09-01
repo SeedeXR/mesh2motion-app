@@ -3800,3 +3800,35 @@ Sonar container up 4h.
 
 **Next:** more S3776 (the big FBX parser ones — text.rs/geometry.rs), or P4-4 perf
 (measure first). Loop continues.
+
+## Session 059 — 2026-09-01 — two FBX read-path S3776 smells (4 of 23 cleared)
+
+**Done.** Split two more Sonar rust:S3776 functions (commit c3cd7bb, pushed),
+`crates/m2m-io/src/fbx/`:
+- `Skin::bind` (was **29**): phases → methods `gather_influences` / `normalize_influences`
+  / `expand`; `bind` keeps only its two identity guards + the phase calls. The f32
+  narrow-before-test and bone-0 fallback preserved verbatim.
+- `curve_nodes` (was **23**): filter_map body → `classify_curve_node`, per-curve loop
+  → `attach_curve`. Added `Object` to the dom import (was only `Scene`).
+
+**Guard:** m2m-io 208/208 both profiles, clippy+fmt clean; fbx_skin (20) +
+fbx_animation (21) parse real fixtures and assert output directly — the correct
+guard for read-path motion. (The FBX conformance bench guards the *encoder* via a
+different reader, so it does NOT guard these read-path changes — didn't run it.)
+
+**Gotchas:**
+- First animation splice aborted on an over-strict boundary assert (`layer_tracks`
+  is at end+3, not end+2 — a doc comment + blank sit between), leaving the `Object`
+  import added but unused (clippy caught it). Re-ran with a looser check over
+  lines[end+1:end+4]. Lesson: after a splice shifts line numbers, don't chase the
+  NEXT edit by absolute line — search by content.
+- Line numbers from the (stale) Sonar scan shift after each splice; find target fns
+  by signature, not the reported line.
+
+**Progress:** 4 of 23 (todo P4-Q). Remaining worst: fbx/text.rs:209 (**62**, subtle
+line-by-line state machine — highest risk, needs a ParserState struct),
+fbx/geometry.rs:391 (54), glb/mod.rs:761 (51). **Session start:** disk 2394 MB, CI
+green fab7830.
+
+**Next:** more S3776 (geometry.rs:391/glb/mod.rs:761 before the scary text.rs:62), or
+P4-4 perf (measure first). Loop continues.
