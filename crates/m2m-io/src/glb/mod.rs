@@ -115,6 +115,14 @@ pub struct Primitive {
     pub joints: Vec<u16>,
     /// Four weights per vertex, matching `joints`.
     pub weights: Vec<f32>,
+    /// Four floats per vertex — `COLOR_0`, RGBA — empty when the primitive
+    /// carries no vertex colours.
+    ///
+    /// The reader does not populate this (a mesh's colours are not part of what
+    /// the rig pipeline needs), so it is written but not read back: it exists
+    /// for overlays the app bakes in, such as the weight-paint view, where the
+    /// viewer's loader reads the colours we write.
+    pub colors: Vec<f32>,
 }
 
 /// A node's local transform, kept as TRS rather than a matrix so a bone's
@@ -876,6 +884,7 @@ where
                 indices,
                 joints,
                 weights,
+                colors: Vec::new(),
             });
         }
     }

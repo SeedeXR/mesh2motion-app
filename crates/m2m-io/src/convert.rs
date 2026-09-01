@@ -148,6 +148,7 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
                 indices: welded.indices,
                 joints: welded.joints,
                 weights: welded.weights,
+                colors: Vec::new(),
             });
         }
     }

@@ -8,6 +8,7 @@ import {
   bindWeights,
   buildInfo,
   exportModel,
+  weightOverlay,
   fitSkeleton,
   previewAnimation,
   importModel,
@@ -225,7 +226,16 @@ function renderBindStep(): string {
       <dt>3</dt><dd>${three} <span style="color:var(--fg-2)">${share(three)}</span></dd>
       <dt>4</dt><dd>${four} <span style="color:var(--fg-2)">${share(four)}</span></dd>
     </dl>
-    ${problems.join('') || '<p style="color:var(--ok)">Every vertex is attached.</p>'}`
+    ${problems.join('') || '<p style="color:var(--ok)">Every vertex is attached.</p>'}
+    <button id="paint" class="action">Show weight paint</button>
+    <p style="color:var(--fg-2)">Each vertex is coloured by the bone that moves it; guessed regions are flagged red.</p>`
+}
+
+/** Bakes the weight-paint overlay and shows it in the viewport. */
+async function runPaint(): Promise<void> {
+  if (loaded === null || fitted === null) return
+  const glb = await weightOverlay(loaded.path, fitted, 2.0)
+  await ensureViewport().showOverlay(glb)
 }
 
 /** Solves the weights for the fitted skeleton. */
@@ -502,6 +512,8 @@ function render(): void {
 
   const bindButton = app.querySelector<HTMLButtonElement>('#bind')
   bindButton?.addEventListener('click', () => void runBind())
+
+  app.querySelector<HTMLButtonElement>('#paint')?.addEventListener('click', () => void runPaint())
 
   app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
     const format = button.dataset['format']

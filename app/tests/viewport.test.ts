@@ -14,6 +14,7 @@ import {
   applyFraming,
   findClip,
   frameBounds,
+  hasVertexColors,
   parseAnimated,
   parseModel,
   skeletonSegments
@@ -206,5 +207,21 @@ describe('parseAnimated and findClip', () => {
   test('findClip returns undefined rather than guessing', () => {
     const clips = [{ name: 'Walk' }] as unknown as Parameters<typeof findClip>[0]
     expect(findClip(clips, 'Chest_Open')).toBeUndefined()
+  })
+})
+
+describe('hasVertexColors', () => {
+  test('true when a mesh carries a color attribute, false otherwise', async () => {
+    const { Group, Mesh, BufferGeometry, BufferAttribute, MeshBasicMaterial } = await import('three')
+
+    const plain = new Group()
+    plain.add(new Mesh(new BufferGeometry(), new MeshBasicMaterial()))
+    expect(hasVertexColors(plain)).toBe(false)
+
+    const painted = new Group()
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('color', new BufferAttribute(new Float32Array([1, 0, 0, 1]), 4))
+    painted.add(new Mesh(geometry, new MeshBasicMaterial()))
+    expect(hasVertexColors(painted)).toBe(true)
   })
 })

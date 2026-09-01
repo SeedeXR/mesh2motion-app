@@ -210,6 +210,19 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
                     push(&mut accessors, weights),
                 );
             }
+            if !primitive.colors.is_empty() {
+                let view = bin.push(&as_bytes(&primitive.colors));
+                let colors = accessor(
+                    view,
+                    primitive.colors.len() / 4,
+                    json::accessor::ComponentType::F32,
+                    json::accessor::Type::Vec4,
+                );
+                attributes.insert(
+                    Checked::Valid(json::mesh::Semantic::Colors(0)),
+                    push(&mut accessors, colors),
+                );
+            }
 
             let view = bin.push(&as_bytes(&primitive.indices));
             let indices = accessor(

@@ -368,15 +368,80 @@ fn solve(
 /// # Errors
 ///
 /// Whatever the solve produces, plus a write failure from `glb::write`.
-pub fn export_glb(
-    model: &[u8],
-    skeleton: &FittedSkeleton,
-    falloff: f32,
-    animation: Option<(&[u8], &str)>,
-) -> Result<Vec<u8>, RigError> {
-    check_bone_order(skeleton)?;
-    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+/// A per-vertex RGBA weight-paint overlay, four floats per vertex.
+///
+/// Two things a person needs to see after binding, in one image:
+///
+/// - **Which bone owns each vertex** — coloured by the vertex's dominant
+///   influence, a stable hue per bone index, so the weight regions are visible
+///   and a vertex assigned to the wrong bone stands out as a wrong-coloured
+///   patch.
+/// - **Where the solver guessed** — a vertex the geodesic field could not reach
+///   through the mesh took a straight-line fallback, and those are painted a
+///   flat flag colour rather than a bone hue. These are the regions to check by
+///   hand; `bind` counts them, this shows *where* they are.
+///
+/// The hue comes from the bone index by the golden-ratio walk of the colour
+/// wheel, which keeps adjacent bones far apart in hue without a palette to
+/// maintain.
+fn weight_colors(weights: &m2m_core::skinning::SkinWeights) -> Vec<f32> {
+    // Fallback vertices are a red flag, literally.
+    const FLAG: [f32; 4] = [1.0, 0.15, 0.15, 1.0];
+    let flagged: std::collections::HashSet<u32> =
+        weights.fallback_vertices.iter().copied().collect();
 
+    let mut colors = Vec::with_capacity(weights.vertex_count() * 4);
+    for vertex in 0..weights.vertex_count() {
+        if flagged.contains(&(vertex as u32)) {
+            colors.extend_from_slice(&FLAG);
+            continue;
+        }
+        // The dominant influence: the bone with the greatest weight.
+        let dominant = weights
+            .influences(vertex)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(0, |(bone, _)| bone);
+        let [r, g, b] = bone_hue(dominant);
+        colors.extend_from_slice(&[r, g, b, 1.0]);
+    }
+    colors
+}
+
+/// A stable, well-spread RGB colour for a bone index.
+///
+/// The hue advances by the golden angle (0.618 of the wheel) per bone, so
+/// consecutive bones — which are usually neighbours in the body — never share a
+/// hue, and no palette has to be kept in step with the bone count.
+fn bone_hue(bone: u16) -> [f32; 3] {
+    let hue = (f32::from(bone) * 0.618_034) % 1.0;
+    // HSV to RGB at full saturation and value.
+    let h = hue * 6.0;
+    let x = 1.0 - (h % 2.0 - 1.0).abs();
+    let (r, g, b) = match h as u32 {
+        0 => (1.0, x, 0.0),
+        1 => (x, 1.0, 0.0),
+        2 => (0.0, 1.0, x),
+        3 => (0.0, x, 1.0),
+        4 => (x, 0.0, 1.0),
+        _ => (1.0, 0.0, x),
+    };
+    [r, g, b]
+}
+
+/// Assembles the rigged model into a glTF document: one node per bone, the mesh
+/// on a skinned node, plus optional per-vertex `colors` and animation `clips`.
+///
+/// The exports and the weight-paint overlay all funnel through here, so a bone's
+/// placement, its inverse bind matrix and the bind pose are defined once. The
+/// mesh's own node carries the skin and the identity transform, which glTF
+/// ignores for a skinned node.
+fn rigged_document(
+    skeleton: &FittedSkeleton,
+    mesh: &m2m_core::mesh::Mesh,
+    weights: &m2m_core::skinning::SkinWeights,
+    colors: Vec<f32>,
+    clips: Vec<m2m_io::glb::Clip>,
+) -> m2m_io::glb::Document {
     let position = |index: usize| {
         skeleton
             .positions
@@ -387,8 +452,8 @@ pub fn export_glb(
 
     // One node per bone. A child's local translation is expressed in its
     // PARENT'S rotated frame, so the composed world lands back on the fitted
-    // position — writing the raw world offset would work only if every bone
-    // sat unrotated, which none of them do.
+    // position — the raw world offset would only work if every bone sat
+    // unrotated, which none do.
     let mut nodes: Vec<m2m_io::glb::Node> = skeleton
         .bones
         .iter()
@@ -425,8 +490,6 @@ pub fn export_glb(
         })
         .collect();
 
-    // The mesh hangs off its own node, which carries the skin. glTF ignores a
-    // skinned node's transform, so the identity here is not a simplification.
     let mesh_node = nodes.len();
     nodes.push(m2m_io::glb::Node {
         name: "mesh".into(),
@@ -439,14 +502,7 @@ pub fn export_glb(
         skin: Some(0),
     });
 
-    let clips = match animation {
-        Some((library, clip)) => {
-            vec![retarget_clip(&m2m_io::glb::read(library)?, skeleton, clip)?]
-        }
-        None => Vec::new(),
-    };
-
-    let document = m2m_io::glb::Document {
+    m2m_io::glb::Document {
         primitives: vec![m2m_io::glb::Primitive {
             mesh: 0,
             node: Some(mesh_node),
@@ -454,6 +510,7 @@ pub fn export_glb(
             indices: mesh.indices.clone(),
             joints: weights.indices.clone(),
             weights: weights.weights.clone(),
+            colors,
         }],
         skins: vec![m2m_io::glb::Skin {
             joints: (0..skeleton.bones.len()).collect(),
@@ -462,8 +519,45 @@ pub fn export_glb(
         nodes,
         clips,
         report: m2m_io::glb::GlbReport::default(),
-    };
+    }
+}
 
+/// Writes the bound model with a weight-paint overlay baked into vertex colours.
+///
+/// Shares [`solve`] with the exports, so the overlay always shows the weights
+/// the export would write — the same one solve, three destinations now.
+///
+/// # Errors
+///
+/// Whatever the solve produces, plus a `glb::write` failure.
+pub fn overlay_glb(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+) -> Result<Vec<u8>, RigError> {
+    check_bone_order(skeleton)?;
+    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+    let colors = weight_colors(&weights);
+    let document = rigged_document(skeleton, &mesh, &weights, colors, Vec::new());
+    Ok(m2m_io::glb::write(&document)?)
+}
+
+pub fn export_glb(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+    animation: Option<(&[u8], &str)>,
+) -> Result<Vec<u8>, RigError> {
+    check_bone_order(skeleton)?;
+    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+
+    let clips = match animation {
+        Some((library, clip)) => {
+            vec![retarget_clip(&m2m_io::glb::read(library)?, skeleton, clip)?]
+        }
+        None => Vec::new(),
+    };
+    let document = rigged_document(skeleton, &mesh, &weights, Vec::new(), clips);
     Ok(m2m_io::glb::write(&document)?)
 }
 
@@ -1470,6 +1564,7 @@ mod tests {
                 indices,
                 joints: Vec::new(),
                 weights: Vec::new(),
+                colors: Vec::new(),
             });
         }
         m2m_io::glb::write(&document).expect("writes")
@@ -2080,6 +2175,99 @@ mod tests {
             travel > 1.0,
             "the largest vertical travel is {travel} file units, which is metres not centimetres"
         );
+    }
+
+    /// The overlay flags exactly the fallback vertices and colours the rest.
+    #[test]
+    fn weight_colors_flag_the_guessed_vertices_and_colour_the_rest() {
+        use m2m_core::skinning::SkinWeights;
+
+        // Three vertices: two solved, one fallback. Build the weights directly
+        // so the fallback set is known, rather than depending on a real mesh
+        // happening to have an island.
+        let mut w = SkinWeights::zeroed(3);
+        // vertex 0 dominated by bone 5, vertex 1 by bone 9.
+        w.indices[0] = 5;
+        w.weights[0] = 0.7;
+        w.indices[1] = 2;
+        w.weights[1] = 0.3;
+        w.indices[4] = 9;
+        w.weights[4] = 1.0;
+        // vertex 2 is a fallback (bone 0, weight 1) AND listed as such.
+        w.indices[8] = 0;
+        w.weights[8] = 1.0;
+        w.fallback_vertices.push(2);
+
+        let colors = super::weight_colors(&w);
+        assert_eq!(colors.len(), 3 * 4);
+
+        // The flagged vertex is the flag red, opaque.
+        assert_eq!(&colors[8..12], &[1.0, 0.15, 0.15, 1.0]);
+
+        // The two solved vertices carry their DOMINANT bone's hue, and it
+        // differs between bone 5 and bone 9 — a vertex on the wrong bone would
+        // be a wrong colour.
+        let hue5 = super::bone_hue(5);
+        let hue9 = super::bone_hue(9);
+        assert_ne!(hue5, hue9);
+        assert_eq!(&colors[0..3], &hue5[..]);
+        assert_eq!(&colors[4..7], &hue9[..]);
+        // Not the flag colour, and opaque.
+        assert_ne!(&colors[0..4], &[1.0, 0.15, 0.15, 1.0]);
+        assert_eq!(colors[3], 1.0);
+    }
+
+    /// Bone hues are stable, in-gamut, and spread apart for neighbours.
+    #[test]
+    fn bone_hues_are_valid_and_neighbours_differ() {
+        for bone in 0u16..66 {
+            let [r, g, b] = super::bone_hue(bone);
+            for c in [r, g, b] {
+                assert!(
+                    (0.0..=1.0).contains(&c),
+                    "bone {bone} channel {c} out of gamut"
+                );
+            }
+            // A fully-saturated hue always has one channel at 0 and one at 1.
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            assert!(
+                (max - 1.0).abs() < 1e-6 && min.abs() < 1e-6,
+                "bone {bone} not full-sat"
+            );
+            // Adjacent bones are far apart on the wheel (golden angle ~222deg).
+            let next = super::bone_hue(bone + 1);
+            assert_ne!(
+                [r, g, b],
+                next,
+                "bone {bone} shares a hue with its neighbour"
+            );
+        }
+    }
+
+    /// The overlay is a rigged glb whose vertices carry colours.
+    #[test]
+    fn the_overlay_bakes_colours_into_the_mesh() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::overlay_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("overlays");
+
+        // The colours travel in the file's JSON as a COLOR_0 accessor — our own
+        // reader does not surface them, so assert against the JSON chunk that
+        // the viewer's loader will read.
+        let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes[20..20 + json_len]).expect("json chunk");
+        let attrs = &json["meshes"][0]["primitives"][0]["attributes"];
+        assert!(
+            attrs.get("COLOR_0").is_some(),
+            "no COLOR_0 attribute written"
+        );
+
+        // And it is still a valid rigged model our own reader accepts.
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        assert_eq!(back.skins.len(), 1);
+        assert!(back.nodes.iter().any(|n| n.name == "pelvis"));
     }
 
     /// The Euler order we write is the one the reader reads back.

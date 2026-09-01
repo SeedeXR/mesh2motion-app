@@ -3601,3 +3601,52 @@ complexity smells (Sonar-flagged), **P3-7b** transform gizmo, **P3-3d** move the
 rigs out of `legacy/`, **P4** (Blender bridge, perf, release), the solver A/B.
 The snake/shark tail-past-tip is a template-proportion matter, not a fitting
 bug — a future template revision could shorten those tails.
+
+---
+
+## Session 054 — 2026-09-01 — weight paint, and the bad regions flagged (P3-9)
+
+**HEAD in: `d3c6422` (CI green, 7/7).**
+
+### What shipped
+`rig::overlay_glb` bakes a per-vertex `COLOR_0` into the bound model: each
+vertex the **hue of its dominant bone** (golden-angle walk of the wheel — no
+palette to maintain, neighbours never share a hue), and each **fallback vertex**
+— one the geodesic field could not reach, guessed by straight line — flagged
+flat red. That is the design's "auto-flag bad regions": `bind` counts them,
+this shows *where*. Command `weight_overlay`; viewport `showOverlay` draws it
+unlit (`MeshBasicMaterial{vertexColors:true}`) so the flag reads as a flag.
+
+`glb::Primitive` gained a `colors` field and `glb::write` emits `COLOR_0` — a
+general glTF vertex-colour capability. The reader does not surface it, so the
+test asserts the accessor in the JSON chunk directly.
+
+### Verified without pixels
+three's GLTFLoader in Node reads all 7,399 vertices' colours, **0 exact
+fallback-flags** (matching `bind`'s `fallback_vertices: 0` for the human), 19
+distinct dominant-bone hues. A first loose "red" probe over-counted because bone
+hues in the red sextant have B=0 while the flag has B=0.15 — tightened the match
+to the exact flag colour. *A probe's own threshold can lie; check all channels.*
+
+### Sonar caught duplication, and the fix was worth making
+0 new violations, but `new_duplicated_lines_density 5.66 > 3`: `overlay_glb` and
+`export_glb` built the same nodes/skin/bind-matrices. Extracted
+`rigged_document(skeleton, mesh, weights, colors, clips)` — one place defines a
+bone's placement, its inverse bind matrix, and the mesh-on-skinned-node. All 33
+rig tests unchanged (behaviour preserved), duplication → 0%. Sixth time a gate
+reddened after a "final" green test run; this one improved the design.
+
+### Verification
+- 381 Rust tests both profiles (was 378), 0 failures; 18 frontend (was 17);
+  fmt, clippy clean; **SonarQube gate OK**, 0 new violations, 0% new duplication.
+- Mutations 4/4 Rust (flag, dominant=max, golden-angle hue, colours-baked) +
+  1/1 TS (`hasVertexColors`).
+- Disk: `target/` ~7.6 GB, under the guard but close — **clean before next full
+  rebuild.**
+
+### Next
+Remaining: the **23 rust:S3776** parser complexity smells (Sonar backlog,
+low-risk refactor), **P3-7b** transform gizmo, **P3-3d** move rigs out of
+`legacy/`, **P4** (Blender bridge, perf pass, release), the solver A/B. The
+six-step product is complete and both export formats carry a full rig; what
+remains is quality, tooling and release.

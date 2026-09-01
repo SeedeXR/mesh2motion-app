@@ -11,6 +11,7 @@ import {
   type AnimationClip,
   Bone,
   Box3,
+  Mesh,
   type Camera,
   Group,
   type Object3D,
@@ -144,6 +145,17 @@ export function skeletonSegments(
     points.push(from[0], from[1], from[2], to[0], to[1], to[2])
   })
   return new Float32Array(points)
+}
+
+/** Whether any mesh under a parsed model carries per-vertex colours. */
+export function hasVertexColors(root: Object3D): boolean {
+  let found = false
+  root.traverse((object) => {
+    if (object instanceof Mesh && object.geometry.getAttribute('color') !== undefined) {
+      found = true
+    }
+  })
+  return found
 }
 
 /**

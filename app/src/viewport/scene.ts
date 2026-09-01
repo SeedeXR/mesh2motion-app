@@ -30,6 +30,7 @@ import {
   LineSegments,
   type Material,
   Mesh,
+  MeshBasicMaterial,
   type Object3D,
   PerspectiveCamera,
   Scene,
@@ -42,6 +43,7 @@ import {
   applyFraming,
   findClip,
   frameBounds,
+  hasVertexColors,
   parseAnimated,
   parseModel,
   skeletonSegments,
@@ -77,6 +79,12 @@ export interface Viewport {
   playAnimated(data: ArrayBuffer, clipName: string): Promise<number | null>
   /** Stops playback and returns to the event-driven, zero-idle-cost renderer. */
   stop(): void
+  /**
+   * Draws a weight-paint overlay: a colour-baked model shown with its vertex
+   * colours, replacing whatever was on screen. Returns to `showFittedSkeleton`
+   * territory when the user leaves; call `show` again to restore the plain mesh.
+   */
+  showOverlay(data: ArrayBuffer): Promise<void>
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
   /** Releases the GPU resources this viewport holds. */
@@ -113,6 +121,7 @@ export function createViewport(): Viewport {
   // imported mesh — so playing a clip does not disturb what the earlier steps
   // put on screen; it is removed again on `stop`.
   let animated: Object3D | null = null
+  let overlay: Object3D | null = null
   let mixer: AnimationMixer | null = null
   // Elapsed-time tracked with performance.now() rather than three's Clock,
   // which is deprecated. `lastFrame` is the timestamp the mixer last advanced
@@ -246,7 +255,33 @@ export function createViewport(): Viewport {
       return clip.duration
     },
 
+    async showOverlay(data): Promise<void> {
+      const contents = await parseModel(data)
+      if (overlay !== null) {
+        scene.remove(overlay)
+        release(overlay)
+      }
+      overlay = contents.root
+      // A material that actually shows the baked vertex colours, lit flat so
+      // the hues read true rather than shaded. Unlit keeps the flag colour a
+      // flag regardless of where the light is.
+      overlay.traverse((object) => {
+        if (object instanceof Mesh && hasVertexColors(object)) {
+          object.material = new MeshBasicMaterial({ vertexColors: true })
+        }
+      })
+      if (model !== null) model.visible = false
+      scene.add(overlay)
+      requestRender()
+    },
+
     stop(): void {
+      if (overlay !== null) {
+        scene.remove(overlay)
+        release(overlay)
+        overlay = null
+        if (model !== null) model.visible = true
+      }
       playing = false
       if (mixer !== null) {
         mixer.stopAllAction()
@@ -292,6 +327,7 @@ export function createViewport(): Viewport {
 
     dispose(): void {
       playing = false
+      if (overlay !== null) release(overlay)
       if (animated !== null) release(animated)
       if (model !== null) release(model)
       if (fittedSkeleton !== null) {

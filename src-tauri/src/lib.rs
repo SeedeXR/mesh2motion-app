@@ -165,6 +165,25 @@ async fn animation_clips(
     .map_err(|e| e.to_string())?
 }
 
+/// Returns the bound model with a weight-paint overlay baked into vertex colours.
+///
+/// Bulk channel: a whole model whose vertices carry a `COLOR_0` the viewer draws
+/// directly — dominant bone as a hue, the solver's straight-line guesses flagged.
+#[tauri::command]
+async fn weight_overlay(
+    path: String,
+    skeleton: rig::FittedSkeleton,
+    falloff: f32,
+) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+        let glb = rig::overlay_glb(&source, &skeleton, falloff).map_err(|e| e.to_string())?;
+        Ok(tauri::ipc::Response::new(glb))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Returns the rigged model with a clip retargeted onto it, as a `.glb`.
 ///
 /// The **bulk channel** again: this is a whole animated model, and the viewport
@@ -330,7 +349,8 @@ pub fn run() {
             bind_weights,
             export_model,
             animation_clips,
-            preview_animation
+            preview_animation,
+            weight_overlay
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

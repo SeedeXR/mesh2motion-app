@@ -195,3 +195,17 @@ export async function previewAnimation(
     clip
   })
 }
+
+/**
+ * Returns the bound model with a weight-paint overlay baked into vertex colours.
+ *
+ * Bulk channel: a whole model whose `COLOR_0` the viewport's material shows —
+ * dominant bone as a hue, the solver's guessed regions flagged.
+ */
+export async function weightOverlay(
+  path: string,
+  skeleton: FittedSkeleton,
+  falloff: number
+): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>('weight_overlay', { path, skeleton, falloff })
+}
