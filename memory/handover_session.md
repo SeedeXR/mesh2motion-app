@@ -3988,3 +3988,43 @@ assets), R-4/R-6/R-7 (research writing).
 **Recommendation:** the product is feature-complete and polished; the epics are genuine
 features that deserve focused sessions. Take them one at a time — start with P3-P1..P6
 (highest user value) or the Blender add-on (P4-2), whichever the user wants first.
+
+## Session 064 — 2026-09-01 — started the pose epic (P3-P1..P6); P3-P2 done, P3-P4 already built, P3-P3 diagnosed
+
+**User: "start P3-P1..P6, the pose handling epic; for signing, this is open source so everyone will compile on their own."**
+
+**Signing (P4-7):** notarised signing dropped as a non-goal (open source, users compile
+locally). The release workflow stays and builds unsigned; Apple-secret hooks remain for forks.
+
+**Pose epic — the state is far better than the todo implied:**
+- **P3-P2 DONE (6fd2edd):** new m2m-rig `pose` module. `detect_pose(shoulder, wrist, up)`
+  = arm drop angle below horizontal → T/A/arms-down/other; `pose_of_fitted` averages both
+  arms. 6 unit + 2 integration tests (fits the real T-pose and A-pose human meshes and
+  proves they read differently). Wired rig::fit → FittedSkeleton.pose → UI "Pose:" row.
+  Also fixed the stale Fit-step text (the P3-7b gizmo shipped; "not built yet" was wrong).
+- **P3-P4 ALREADY IMPLEMENTED (verified):** retarget.rs does world-space motion transfer
+  with per-bone rest-pose delta (source_rest⁻¹ then target_rest). 11 tests pass. The todo
+  predated this being built.
+- **P3-P5 N/A:** ArmExtensionControl was never ported — the legacy workaround the geodesic
+  solver + retargeting replace. Nothing to do.
+- **P3-P1 partial:** A-pose fits+binds cleanly (0 fallback). The rigorous weight metric is
+  deferred — it needs the P1-8 A/B infra and is where a prior attempt measured the wrong thing.
+
+**THE REMAINING CRUX — P3-P3 (precisely diagnosed, NOT yet fixed):** the limb fitter places
+arms at A-pose POSITIONS, but `FittedSkeleton.rotations` still come from the TEMPLATE (T-pose
+orientations). `retarget_clip` (rig.rs:722) builds `target_rotations` from those template
+rotations while `target_translations` come from the fitted A-pose positions — so
+`target_rest_world` for an arm bone mixes a T-pose orientation with an A-pose direction. A
+T-pose clip retargeted onto an A-pose character will sit wrong for exactly this reason.
+**FIX:** after fitting, recompute each limb bone's local rest rotation to orient it toward
+its fitted child (look-at + roll), making target_rest self-consistent. **RISK:** touches ALL
+retargeting (9 currently-working creatures) — must not regress T-pose, and needs
+animation-correctness verification (Blender playing a retargeted clip), which bone-count
+checks don't give. This is a focused next-session task, not a quick edit — held rather than
+rushed into core retargeting.
+
+**P3-P6** (non-human pose ambiguity: folded/spread wings, standing/splayed quadrupeds) —
+future, extends the same detect+recompute pattern once P3-P3 lands.
+
+**Verification this session:** m2m-rig 80/80, retarget 11/11, frontend tsc + 21 vitest +
+build, clippy + fmt clean.
