@@ -478,6 +478,18 @@ pub struct ClipSummary {
     pub tracks: usize,
 }
 
+/// The file names a template's animation library might have, in order.
+///
+/// Most creatures use `<name>-animations.glb`; the human's base library is
+/// `human-base-animations.glb`. Both are tried rather than kept in a table that
+/// would drift from the files on disk.
+pub fn library_names(template: &str) -> [String; 2] {
+    [
+        format!("{template}-animations.glb"),
+        format!("{template}-base-animations.glb"),
+    ]
+}
+
 /// The clips a library offers.
 ///
 /// # Errors
@@ -1509,6 +1521,73 @@ mod tests {
 
     fn library() -> Vec<u8> {
         model("animations/human-base-animations.glb")
+    }
+
+    /// Every template the app offers has an animation library to draw on.
+    #[test]
+    fn every_shipped_template_has_a_library_the_bundle_will_carry() {
+        // `tauri.conf.json` globs `legacy/static/animations/*.glb` into the
+        // bundle. A template whose library is missing would list no clips only
+        // when a user picked that creature — the same failure mode `available`
+        // exists to prevent for rigs.
+        let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../legacy/static/animations");
+        for template in templates().expect("manifests parse") {
+            let found = super::library_names(&template.name)
+                .iter()
+                .any(|name| std::path::Path::new(directory).join(name).is_file());
+            assert!(found, "no animation library for {}", template.name);
+        }
+    }
+
+    /// The bundle config actually ships the libraries the app looks for.
+    #[test]
+    fn the_bundle_config_carries_the_animation_libraries() {
+        // `library_bytes` prefers the bundled copy and falls back to the
+        // repository, so a wrong glob here would pass every test on this
+        // machine and ship an app with no clips at all.
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
+                .expect("reads the config"),
+        )
+        .expect("parses");
+
+        let resources = config["bundle"]["resources"]
+            .as_object()
+            .expect("bundle.resources is a source-to-target map");
+        let (source, target) = resources
+            .iter()
+            .find(|(source, _)| source.contains("animations"))
+            .expect("no resource entry mentions the animation libraries");
+        assert_eq!(target.as_str(), Some("animations/"));
+
+        // The glob must match the files, not merely mention the word.
+        let pattern = source.rsplit('/').next().expect("a file pattern");
+        assert_eq!(pattern, "*.glb", "the glob is {source}");
+        let directory = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR")))
+            .join(source.trim_end_matches("/*.glb"));
+        assert!(
+            directory.join("human-base-animations.glb").is_file(),
+            "{} does not hold the libraries",
+            directory.display()
+        );
+    }
+
+    /// The human's library is the `-base-` one, which is why two names are tried.
+    #[test]
+    fn the_human_library_is_found_under_its_second_name() {
+        let directory = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../legacy/static/animations"
+        ));
+        let [first, second] = super::library_names("human");
+
+        assert!(
+            !directory.join(&first).is_file(),
+            "{first} exists, so the fallback is no longer exercised"
+        );
+        assert!(directory.join(&second).is_file(), "{second} is missing");
+        // And a creature that uses the FIRST name, so both branches are live.
+        assert!(directory.join(&super::library_names("fox")[0]).is_file());
     }
 
     #[test]

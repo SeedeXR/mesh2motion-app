@@ -111,6 +111,60 @@ fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(glb))
 }
 
+/// Reads a creature's animation library.
+///
+/// The libraries are **bundled resources**, not embedded in the binary: they
+/// total about 16 MB against a measured 8 MB bundle and a 40 MB budget, so
+/// carrying them in the executable would be wasteful where the rigs' 158 KB was
+/// not. The bundled copy is preferred and the repository is the fallback, so
+/// `tauri dev` works from a checkout with nothing staged.
+///
+/// Most creatures use `<name>-animations.glb`; the human's is
+/// `human-base-animations.glb`. Both are tried rather than kept in a table that
+/// would drift from the files.
+fn library_bytes(app: &tauri::AppHandle, template: &str) -> Result<Vec<u8>, String> {
+    use tauri::Manager;
+
+    let repository =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../legacy/static/animations");
+    for name in [
+        format!("{template}-animations.glb"),
+        format!("{template}-base-animations.glb"),
+    ] {
+        let bundled = app
+            .path()
+            .resolve(
+                format!("animations/{name}"),
+                tauri::path::BaseDirectory::Resource,
+            )
+            .ok();
+        for candidate in [bundled, Some(repository.join(&name))]
+            .into_iter()
+            .flatten()
+        {
+            if candidate.is_file() {
+                return std::fs::read(&candidate)
+                    .map_err(|e| format!("cannot read {}: {e}", candidate.display()));
+            }
+        }
+    }
+    Err(format!("no animation library ships for {template}"))
+}
+
+/// The clips a creature's animation library offers.
+#[tauri::command]
+async fn animation_clips(
+    app: tauri::AppHandle,
+    template: String,
+) -> Result<Vec<rig::ClipSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = library_bytes(&app, &template)?;
+        rig::library_clips(&bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The creature templates the Choose Skeleton step offers.
 #[tauri::command]
 fn skeleton_templates() -> Result<Vec<rig::SkeletonTemplate>, String> {
@@ -171,6 +225,8 @@ async fn export_model(
     skeleton: rig::FittedSkeleton,
     falloff: f32,
     format: String,
+    template: String,
+    clip: Option<String>,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         // Unknown formats are refused rather than defaulted: silently writing
@@ -193,9 +249,25 @@ async fn export_model(
         let target = chosen.into_path().map_err(|e| e.to_string())?;
 
         let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+        // FBX carries no clip yet: `fbx::build::Clip` wants Euler curves in
+        // ticks where retargeting produces quaternions, and `build.rs` calls
+        // that conversion lossy and ambiguous. Refused rather than silently
+        // dropped, so nobody exports an animation that is not there.
+        if extension == "fbx" && clip.is_some() {
+            return Err("FBX export cannot carry a clip yet — export as .glb".into());
+        }
+        let library = match &clip {
+            Some(_) => Some(library_bytes(&app, &template)?),
+            None => None,
+        };
         let bytes = match extension {
             "fbx" => rig::export_fbx(&source, &skeleton, falloff),
-            _ => rig::export_glb(&source, &skeleton, falloff, None),
+            _ => rig::export_glb(
+                &source,
+                &skeleton,
+                falloff,
+                library.as_deref().zip(clip.as_deref()),
+            ),
         }
         .map_err(|e| e.to_string())?;
         std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
@@ -232,7 +304,8 @@ pub fn run() {
             skeleton_templates,
             fit_skeleton,
             bind_weights,
-            export_model
+            export_model,
+            animation_clips
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

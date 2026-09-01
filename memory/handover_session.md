@@ -3329,3 +3329,58 @@ viewport playback fall out of it. After that: **P3-9** weight paint, **P3-7b**
 gizmo, **P3-3b** 11 spine joints on snake and shark, **P3-8c** welding,
 **P3-3d** move the rigs out of `legacy/`, **P4-1** Blender bridge, and the
 solver A/B.
+
+---
+
+## Session 049 — 2026-09-01 — a fuzz crash, and the Animate step lands
+
+**HEAD in: `bbb6024` — and CI was RED on it. A genuine fuzz crash, fixed first.**
+
+### The crash, and why it is the interesting part
+`gltf-json-1.4.1/src/mesh.rs:151` indexes `root.accessors` **unchecked** inside
+its validation hook. A crafted `.glb` panicked our reader with "index out of
+bounds: the len is 0 but the index is 0" — a panic on the trust boundary, which
+aborts rather than unwinds, so no caller can catch it.
+
+**The bug was in a guard's escape hatch.** `check_indices` — which *does* check
+primitive attributes against the accessor count — returned `Ok(())` early
+whenever `serde_json` could not read the JSON chunk, on the reasoning that
+"malformed JSON is the `gltf` crate's error to report". That assumes the two
+parsers agree about what is malformed. **They do not.** The crashing chunk holds
+invalid UTF-8 (byte `0xd6`): `serde_json` rejects it, `gltf` accepts it, and
+every index check below was skipped.
+
+Downloading the artifact and parsing the chunk in Python found it in minutes;
+theorising about it would have taken far longer and probably landed elsewhere.
+Now refused as `GlbError::UnreadableJson` — a chunk we cannot parse is a chunk
+we cannot validate — and pinned by a minimal reproducer so CI catches it without
+waiting for the fuzzer to rediscover it.
+
+*A guard is only as good as the condition under which it declines to run.*
+
+### Animate landed
+- **Measured before deciding**: CI's own size step reported the bundle at
+  **8,028 KB against a 40,960 KB budget**. All ~16 MB of libraries fit with room
+  to spare, so the "ship human only" contingency was never needed. Reading that
+  number cost one command; guessing would have cost a session.
+- Libraries are **bundled resources**, resolved with `BaseDirectory::Resource`
+  and falling back to the repository so `tauri dev` works from a checkout.
+- Every one of the nine templates has a library; the human's is found under its
+  second candidate name, and a test asserts both branches are live.
+- **FBX with a clip is refused, not silently dropped.** The button disables
+  itself and says why.
+
+### Verification
+- 373 Rust tests both profiles, 0 failures (was 369); 12 frontend; fmt, clippy,
+  tsc, vite clean. Disk: `target/` 7.29 GB, under the guard.
+- Mutations **6/6 caught**, including a **config** mutation — pointing the
+  resource glob at `rigs/` instead of `animations/` now fails a test, where
+  before it would have shipped an app with no clips and passed everything.
+- **SonarQube not run — tenth session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next
+**P3-6h** viewport playback (`AnimationMixer`, rAF only while playing) and
+**P3-6g** FBX clip export. Then **P3-9** weight paint, **P3-7b** gizmo,
+**P3-3b** 11 spine joints on snake and shark, **P3-8c** welding, **P3-3d** move
+the rigs out of `legacy/`, **P4-1** Blender bridge, and the solver A/B.

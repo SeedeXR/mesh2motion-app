@@ -28,6 +28,13 @@ pub enum GlbError {
     /// The container or its JSON did not parse, or failed glTF validation.
     #[error("not a valid glb: {0}")]
     Invalid(#[from] gltf::Error),
+    /// The JSON chunk is not readable as JSON, so nothing in it can be checked.
+    ///
+    /// glTF requires the chunk to be valid UTF-8 JSON. We refuse rather than
+    /// hand it to the `gltf` crate, which is more permissive in ways that leave
+    /// our index checks skipped — see [`check_indices`].
+    #[error("the glb's JSON chunk is not valid JSON")]
+    UnreadableJson,
     /// The file has no BIN chunk, so its accessors resolve to nothing.
     #[error("glb has no binary chunk")]
     NoBinaryChunk,
@@ -462,8 +469,19 @@ fn check_indices(bytes: &[u8]) -> Result<(), GlbError> {
         return Ok(());
     };
     let Ok(root) = serde_json::from_slice::<serde_json::Value>(json) else {
-        // Malformed JSON is the `gltf` crate's error to report, not ours.
-        return Ok(());
+        // **Refused, not waved through.** This used to return `Ok(())` on the
+        // reasoning that malformed JSON is the `gltf` crate's error to report.
+        // That rests on the two parsers agreeing about what is malformed, and
+        // they do not: a fuzzer found a chunk holding invalid UTF-8 that
+        // `serde_json` rejects and `gltf` accepts. The early return skipped
+        // *every* index check below, and `gltf-json`'s validation hook then
+        // indexed `root.accessors` unchecked and panicked
+        // (`gltf-json-1.4.1/src/mesh.rs:151`).
+        //
+        // A chunk we cannot parse is a chunk we cannot validate, and glTF
+        // requires it to be valid UTF-8 JSON — so it is refused here rather
+        // than trusted to fail later.
+        return Err(GlbError::UnreadableJson);
     };
     let len = |key: &str| root.get(key).and_then(|v| v.as_array()).map_or(0, Vec::len);
     let (accessors, views, buffers) = (len("accessors"), len("bufferViews"), len("buffers"));

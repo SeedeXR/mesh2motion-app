@@ -146,7 +146,29 @@ export async function exportModel(
   path: string,
   skeleton: FittedSkeleton,
   falloff: number,
-  format: 'glb' | 'fbx'
+  format: 'glb' | 'fbx',
+  template: string,
+  clip: string | null
 ): Promise<string | null> {
-  return await invoke<string | null>('export_model', { path, skeleton, falloff, format })
+  return await invoke<string | null>('export_model', {
+    path,
+    skeleton,
+    falloff,
+    format,
+    template,
+    clip
+  })
+}
+
+/** One clip in a creature's animation library. */
+export interface ClipSummary {
+  readonly name: string
+  /** Longest key time, in seconds. */
+  readonly duration: number
+  readonly tracks: number
+}
+
+/** The clips a creature's animation library offers. */
+export async function animationClips(template: string): Promise<ClipSummary[]> {
+  return await invoke<ClipSummary[]>('animation_clips', { template })
 }

@@ -4,6 +4,7 @@ import './ui/shell.css'
 import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
+  animationClips,
   bindWeights,
   buildInfo,
   exportModel,
@@ -14,6 +15,7 @@ import {
   reportStartup,
   skeletonTemplates,
   type BindReport,
+  type ClipSummary,
   type FittedSkeleton,
   type ImportedFile,
   type SkeletonTemplate
@@ -66,6 +68,10 @@ let binding = false
 /** The file the rigged model was last written to. */
 let exported: string | null = null
 let exporting = false
+
+/** The chosen creature's clips, once fetched, and the one selected. */
+let clips: ClipSummary[] | null = null
+let clip: string | null = null
 
 let viewport: Viewport | null = null
 
@@ -237,9 +243,47 @@ async function runBind(): Promise<void> {
   }
 }
 
-/** The Animate step, which has no clips wired to it yet. */
+/** The Animate step: pick a clip to retarget onto the rig. */
 function renderAnimateStep(): string {
-  return '<p style="color:var(--fg-2)">Retargeting a clip onto your rig is built but not yet wired to this step. Export works without it.</p>'
+  if (fitted === null || chosen === null) {
+    return '<p style="color:var(--fg-2)">Choose and fit a skeleton first — a clip is retargeted onto one.</p>'
+  }
+  if (clips === null) {
+    return '<p style="color:var(--fg-2)">Loading clips\u2026</p>'
+  }
+  if (clips.length === 0) {
+    return `<p style="color:var(--fg-2)">No animation library ships for ${escape(chosen)} yet.</p>`
+  }
+
+  const list = clips
+    .map(
+      (c) => `
+        <button class="action template" data-clip="${escape(c.name)}"
+                ${c.name === clip ? 'aria-current="true"' : ''}>
+          <span>${escape(c.name)}</span>
+          <span style="color:var(--fg-2)">${c.duration.toFixed(2)}s</span>
+        </button>`
+    )
+    .join('')
+
+  return `${list}
+    <p style="color:var(--fg-2)">${
+      clip === null
+        ? 'Pick a clip. It is retargeted onto your rig on export — the library and the template do not share a rest pose, so the motion is moved rather than copied.'
+        : `${escape(clip)} will be written into the export.`
+    }</p>`
+}
+
+/** Fetches the chosen creature's clips once, then re-renders with them. */
+async function ensureClips(): Promise<void> {
+  if (clips !== null || chosen === null || !isDesktop()) return
+  try {
+    clips = await animationClips(chosen)
+  } catch {
+    // A creature with no library is a fact to show, not an error to throw.
+    clips = []
+  }
+  render()
 }
 
 /** The Export step: write the rigged model out. */
@@ -249,12 +293,16 @@ function renderExportStep(): string {
   }
 
   const buttons = (['glb', 'fbx'] as const)
-    .map(
-      (format) =>
-        `<button class="action export" data-format="${format}" ${exporting ? 'disabled' : ''}>${
-          exporting ? 'Writing\u2026' : `Export as .${format}`
-        }</button>`
-    )
+    .map((format) => {
+      // FBX cannot carry a clip yet, so the button says so rather than writing
+      // a file quietly missing the animation the user picked.
+      const blocked = format === 'fbx' && clip !== null
+      return `<button class="action export" data-format="${format}"
+                ${exporting || blocked ? 'disabled' : ''}
+                ${blocked ? 'title="FBX cannot carry a clip yet"' : ''}>${
+                  exporting ? 'Writing\u2026' : `Export as .${format}`
+                }</button>`
+    })
     .join('')
   const done =
     exported === null
@@ -270,7 +318,7 @@ async function runExport(format: 'glb' | 'fbx'): Promise<void> {
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0, format)
+    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip)
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -295,6 +343,9 @@ async function runFit(name: string): Promise<void> {
   try {
     fitted = await fitSkeleton(name, loaded.path)
     bound = null
+    // A different creature has a different library.
+    clips = null
+    clip = null
     ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents)
     // A placed skeleton is what binding needs. The Fit step in between has
     // nothing to complete yet, so it does not gate the one after it.
@@ -428,9 +479,20 @@ function render(): void {
 
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']
+    const clipName = button.dataset['clip']
+    if (clipName !== undefined) {
+      button.addEventListener('click', () => {
+        clip = clipName
+        exported = null
+        render()
+      })
+      return
+    }
     if (name === undefined) return
     button.addEventListener('click', () => void runFit(name))
   })
+
+  if (step.id === StepId.Animate) void ensureClips()
 
   if (step.id === StepId.LoadSkeleton && loaded !== null) void ensureTemplates()
 

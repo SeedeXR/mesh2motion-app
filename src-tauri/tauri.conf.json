@@ -30,6 +30,9 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "../legacy/static/animations/*.glb": "animations/"
+    },
     "targets": [
       "app",
       "dmg"

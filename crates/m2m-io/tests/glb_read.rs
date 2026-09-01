@@ -508,3 +508,39 @@ fn a_node_that_is_its_own_parent_does_not_overflow_the_stack() {
 
     assert_eq!(document.world_transforms().len(), document.nodes.len());
 }
+
+#[test]
+fn a_json_chunk_that_is_not_valid_utf8_is_refused_rather_than_trusted() {
+    // Found by the fuzzer, and the bug was in a GUARD'S ESCAPE HATCH.
+    // `check_indices` used to return `Ok(())` when `serde_json` could not read
+    // the chunk, on the reasoning that malformed JSON is the `gltf` crate's
+    // error to report. That assumes the two parsers agree about what is
+    // malformed. They do not: this chunk holds invalid UTF-8, `serde_json`
+    // rejects it and `gltf` accepts it, so every index check below was skipped
+    // and `gltf-json`'s validation hook indexed `root.accessors` unchecked —
+    // "index out of bounds: the len is 0 but the index is 0" at
+    // `gltf-json-1.4.1/src/mesh.rs:151`, a panic on the trust boundary.
+    let mut json =
+        br#"{"asset":{"version":"2.0"},"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}]}"#
+            .to_vec();
+    // An invalid continuation byte inside the chunk, as the fuzzer produced.
+    json.push(0xd6);
+    while json.len() % 4 != 0 {
+        json.push(b' ');
+    }
+
+    let mut glb = Vec::new();
+    glb.extend_from_slice(b"glTF");
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&((12 + 8 + json.len()) as u32).to_le_bytes());
+    glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    glb.extend_from_slice(b"JSON");
+    glb.extend_from_slice(&json);
+
+    // The point is that this RETURNS. A panic here aborts the process, and no
+    // amount of error handling upstream can catch it.
+    assert!(
+        matches!(glb::read(&glb), Err(GlbError::UnreadableJson)),
+        "an unreadable JSON chunk must be refused, not handed on"
+    );
+}
