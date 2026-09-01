@@ -173,13 +173,36 @@ function renderSkeletonStep(): string {
       : `<dl class="facts">
            <dt>Placed</dt><dd>${fitted.bones.length} bones</dd>
            <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
+           ${poseRow()}
          </dl>
-         <p style="color:var(--fg-2)">The skeleton is drawn over the mesh. Fitting it by hand comes next.</p>`
+         <p style="color:var(--fg-2)">The skeleton is drawn over the mesh. Fit it by hand next \u2014 drag any joint that sits outside the body.</p>`
 
   return `${list}${fitting ? '<p style="color:var(--fg-2)">Fitting\u2026</p>' : outcome}`
 }
 
-/** The Fit Skeleton step, which so far only reports what the automatic fit did. */
+/** A human-readable pose name, or `null` when there is nothing worth showing
+ * (a non-human template, or a pose the detector could not place). */
+function poseLabel(pose: string): string | null {
+  switch (pose) {
+    case 't-pose':
+      return 'T-pose'
+    case 'a-pose':
+      return 'A-pose'
+    case 'arms-down':
+      return 'Arms down'
+    default:
+      return null
+  }
+}
+
+/** A `Pose` fact row for the fit summaries, or empty when there is none. */
+function poseRow(): string {
+  const label = fitted === null ? null : poseLabel(fitted.pose)
+  return label === null ? '' : `<dt>Pose</dt><dd>${label}</dd>`
+}
+
+/** The Fit Skeleton step: reports the automatic fit and detected pose, and the
+ * viewport lets the user drag joints to adjust it. */
 function renderEditStep(): string {
   if (fitted === null) {
     return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
@@ -187,8 +210,9 @@ function renderEditStep(): string {
   return `<dl class="facts">
       <dt>Bones</dt><dd>${fitted.bones.length}</dd>
       <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
+      ${poseRow()}
     </dl>
-    <p style="color:var(--fg-2)">Moving bones by hand is not built yet, so the automatic placement is used as it stands. Check it in the viewport before binding.</p>`
+    <p style="color:var(--fg-2)">The skeleton is placed automatically. Drag a joint handle in the viewport to adjust any bone that sits outside the mesh, then bind.</p>`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */

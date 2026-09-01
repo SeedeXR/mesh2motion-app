@@ -59,6 +59,11 @@ pub struct FittedSkeleton {
     /// The uniform scale the template was fitted with, reported so a wildly
     /// wrong pick is visible as a number and not only as a shape.
     pub scale: f32,
+    /// The arm pose detected from where the arms landed — `"t-pose"`,
+    /// `"a-pose"`, `"arms-down"` or `"other"`. `"other"` for a non-human
+    /// template, whose arms these bone names do not describe. The UI reports it
+    /// rather than the app silently assuming a pose (P3-P2).
+    pub pose: String,
 }
 
 /// Errors the skeleton step can produce.
@@ -187,12 +192,18 @@ pub fn fit(template_name: &str, model: &[u8]) -> Result<FittedSkeleton, RigError
         })
         .collect();
 
+    // The mesh's own up is +Y; the fitted arms drop from horizontal by pose.
+    let pose = m2m_rig::pose::pose_of_fitted(&fitted, glam::Vec3::Y)
+        .label()
+        .to_owned();
+
     Ok(FittedSkeleton {
         parents,
         positions: fitted.positions.iter().map(|p| p.to_array()).collect(),
         rotations,
         scale: fitted.scale,
         bones: fitted.bones,
+        pose,
     })
 }
 
@@ -1406,6 +1417,7 @@ mod tests {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             scale: 1.0,
+            pose: "other".into(),
         };
         let segments = bone_segments(&skeleton);
 
@@ -1495,6 +1507,7 @@ mod tests {
             positions: vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
+            pose: "other".into(),
         };
         let err = super::bind(
             &model("models/model-human.glb"),
@@ -1588,6 +1601,7 @@ mod tests {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             scale: 1.0,
+            pose: "other".into(),
         };
 
         let report = super::bind(&two_islands(), &skeleton, 2.0).expect("binds");
@@ -2391,6 +2405,7 @@ mod tests {
             positions: vec![[0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
+            pose: "other".into(),
         };
         let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
             .expect_err("refused");

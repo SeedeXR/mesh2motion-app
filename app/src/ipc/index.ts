@@ -91,6 +91,12 @@ export interface FittedSkeleton {
   /** Each bone's local rest rotation, xyzw, carried from the template. */
   readonly rotations: readonly (readonly [number, number, number, number])[]
   readonly scale: number
+  /**
+   * The detected arm pose: `'t-pose'`, `'a-pose'`, `'arms-down'` or `'other'`
+   * (`'other'` for a non-human template). Reported so the app never silently
+   * assumes a pose — see the pose-handling epic (P3-P2).
+   */
+  readonly pose: string
 }
 
 /** The creature templates that ship with the app. */
