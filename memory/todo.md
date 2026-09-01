@@ -530,6 +530,7 @@ between the two. Four distinct problems:
 - [ ] **P4-7** Signed + notarised `.app`; release workflow on `v*` tag
 - [x] **P4-8** `README.md` rewrite (af66d29): status block updated scaffold→"core rigging flow complete" for all 9 templates; solver-replacement claim moved future→present (implemented, every vertex binds with full weight); added a six-step table (import→skeleton→fit→bind→animate→export) each row naming its Tauri command, a Blender-bridge section (optional, the independent reader), and an #[ignore]d/Blender note in "Run the checks". Quick-start commands + crate layout + links all verified against the tree. Sonar gate deliberately omitted from the public README — internal-only (local docker + gitignored token), not part of clone→running.
 - [ ] **P4-9** User docs + in-app help complete
+- [ ] **P4-Q** SonarQube `rust:S3776` cognitive-complexity smells (23 flagged, existing-code not gate-failing). **2 of 23 done** (f461c0d): the two worst GLB parser fns — `glb::read::check_indices` 41→(split into `check_index`/`json_array`/`Counts`+8 per-entity validators) and `glb::write::write` 35→(split into `write_primitive`/`vec4_attribute`/`write_skins`/`write_nodes`). Behaviour-preserving; guard = m2m-io 208/208 both profiles + clippy/fmt + Blender visual-regression baselines identical. Remaining worst: fbx/text.rs:209 (62), fbx/geometry.rs:391 (54), glb/mod.rs:761 (51), fbx/skin.rs:290 (29), fbx/animation.rs (23/25). Tackle in bounded subsets; tests/examples ones are low priority.
 
 ---
 

@@ -3760,3 +3760,43 @@ Sonar scan, no cargo run.
 **Next candidates:** the ~23 rust:S3776 parser-complexity smells (bounded 5-8,
 behaviour-preserving, guarded by existing tests+fuzz+Blender numbers), P4-4 perf
 pass (MEASURE FIRST vs test.md §6). Loop continues — real P4 items remain open.
+
+## Session 058 — 2026-09-01 — the two worst GLB-parser complexity smells (S3776)
+
+**Done.** Split the two highest cognitive-complexity functions Sonar flagged
+(commit f461c0d, pushed). Behaviour-preserving refactors, `crates/m2m-io/src/glb/`:
+- `check_indices` (read path, was **41**): the two local closures became free
+  `check_index` / `json_array`, a `Counts` struct carries the entity totals, and
+  each entity group (buffer views, accessors, images+textures, meshes, nodes,
+  skins, scenes, animations) is now its own small validator. The fuzz-found
+  invalid-UTF-8 → `UnreadableJson` behaviour + its comment preserved verbatim.
+- `write` (write path, was **35**): per-primitive body → `write_primitive`; the
+  three identical Vec4 attribute blocks → one generic `vec4_attribute<T: Pod>`;
+  skin/node building → `write_skins` / `write_nodes`. `write` is now an orchestrator.
+
+**Guard (refactor = unchanged behaviour, NOT new mutations):** m2m-io 208/208 both
+debug+release, clippy+fmt clean, and the **Blender visual-regression passes with all
+9 creature baselines identical** — the writer's bytes are still faithful to an
+independent reader. Started a Sonar scan for extra evidence but it hung in
+"Preprocessing files" (0 files, ~4 min) and I did NOT block the session on it —
+the S3776 smells are existing-code (not gate-failing) and I touched only
+crates/m2m-io/src, so a scan isn't gate-required. Complexity reduction rests on
+the mechanical extraction (nesting reset + shared closures→free fns) plus a clean
+clippy; behaviour on tests+Blender. Re-run the scan next session to confirm the
+count dropped from 23.
+
+**Gotcha caught:** the splice put `head[:138]` (which included `write`'s doc
+comment) before my first helper, orphaning the doc onto `vec4_attribute` and
+leaving `write` undocumented → `missing_docs` clippy warning. Relocated the doc
+back onto `write`. Lesson: when extracting helpers ABOVE a documented fn, the
+fn's doc travels with the head slice — move it explicitly.
+
+**Progress:** 2 of 23 S3776 (todo P4-Q). Remaining worst: fbx/text.rs:209 (62),
+fbx/geometry.rs:391 (54), glb/mod.rs:761 (51), fbx/skin.rs:290 (29). Tackle in
+bounded subsets; the tests/examples ones are low priority.
+
+**Session start:** disk empty (cleaned prior session), CI green on a45db4f (P4-8),
+Sonar container up 4h.
+
+**Next:** more S3776 (the big FBX parser ones — text.rs/geometry.rs), or P4-4 perf
+(measure first). Loop continues.
