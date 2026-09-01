@@ -6,6 +6,7 @@ import { STEPS, StepId, type StepDef } from './state/steps'
 import {
   bindWeights,
   buildInfo,
+  exportModel,
   fitSkeleton,
   importModel,
   isDesktop,
@@ -62,6 +63,10 @@ let fitting = false
 let bound: BindReport | null = null
 let binding = false
 
+/** The file the rigged model was last written to. */
+let exported: string | null = null
+let exporting = false
+
 let viewport: Viewport | null = null
 
 function ensureViewport(): Viewport {
@@ -92,6 +97,8 @@ function renderInspector(step: StepDef): string {
   if (step.id === StepId.LoadSkeleton) return renderSkeletonStep()
   if (step.id === StepId.EditSkeleton) return renderEditStep()
   if (step.id === StepId.BindWeights) return renderBindStep()
+  if (step.id === StepId.Animate) return renderAnimateStep()
+  if (step.id === StepId.Export) return renderExportStep()
   if (step.id !== StepId.LoadModel) {
     return '<p style="color:var(--fg-2)">Properties for this step appear here.</p>'
   }
@@ -219,8 +226,50 @@ async function runBind(): Promise<void> {
   render()
   try {
     bound = await bindWeights(loaded.path, fitted, 2.0)
+    exported = null
+    // Bound weights are what an export carries, so this unlocks the last step.
+    // Animate sits in between and has nothing to complete yet, so it does not
+    // gate the one after it.
+    furthestStep = Math.max(furthestStep, 5)
   } finally {
     binding = false
+    render()
+  }
+}
+
+/** The Animate step, which has no clips wired to it yet. */
+function renderAnimateStep(): string {
+  return '<p style="color:var(--fg-2)">Retargeting a clip onto your rig is built but not yet wired to this step. Export works without it.</p>'
+}
+
+/** The Export step: write the rigged model out. */
+function renderExportStep(): string {
+  if (bound === null || fitted === null || loaded === null) {
+    return '<p style="color:var(--fg-2)">Bind the weights first — an export carries the skeleton and the weights, not just the mesh.</p>'
+  }
+
+  const button = `<button id="export" class="action" ${exporting ? 'disabled' : ''}>${
+    exporting ? 'Writing\u2026' : 'Export as .glb'
+  }</button>`
+  const done =
+    exported === null
+      ? '<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file.</p>'
+      : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
+
+  return `${button}${done}`
+}
+
+/** Writes the rigged model to a file the user picks. */
+async function runExport(): Promise<void> {
+  if (loaded === null || fitted === null || exporting) return
+  exporting = true
+  render()
+  try {
+    const saved = await exportModel(loaded.path, fitted, 2.0)
+    // A cancelled dialog leaves the previous result alone rather than clearing it.
+    if (saved !== null) exported = saved
+  } finally {
+    exporting = false
     render()
   }
 }
@@ -365,6 +414,9 @@ function render(): void {
 
   const bindButton = app.querySelector<HTMLButtonElement>('#bind')
   bindButton?.addEventListener('click', () => void runBind())
+
+  const exportButton = app.querySelector<HTMLButtonElement>('#export')
+  exportButton?.addEventListener('click', () => void runExport())
 
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']

@@ -133,3 +133,17 @@ export async function bindWeights(
 ): Promise<BindReport> {
   return await invoke<BindReport>('bind_weights', { path, skeleton, falloff })
 }
+
+/**
+ * Writes the rigged model to a file the user chooses.
+ *
+ * Resolves to the saved file's name, or `null` when the user cancels. The
+ * weights are recomputed on the Rust side rather than sent back and forth.
+ */
+export async function exportModel(
+  path: string,
+  skeleton: FittedSkeleton,
+  falloff: number
+): Promise<string | null> {
+  return await invoke<string | null>('export_model', { path, skeleton, falloff })
+}

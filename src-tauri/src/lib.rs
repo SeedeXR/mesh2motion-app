@@ -156,6 +156,45 @@ async fn bind_weights(
     .map_err(|e| e.to_string())?
 }
 
+/// Writes the rigged model to a file the user chooses.
+///
+/// The weights are recomputed rather than carried in from the frontend: they
+/// are about 600 KB, the whole solve takes ~56 ms, and a round trip through the
+/// webview would cost more than doing it twice — with a cache to invalidate
+/// every time a bone moved.
+///
+/// `Ok(None)` means the user cancelled, which is not an error.
+#[tauri::command]
+async fn export_model(
+    app: tauri::AppHandle,
+    path: String,
+    skeleton: rig::FittedSkeleton,
+    falloff: f32,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(chosen) = app
+            .dialog()
+            .file()
+            .add_filter("glTF binary", &["glb"])
+            .set_file_name("rigged.glb")
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let target = chosen.into_path().map_err(|e| e.to_string())?;
+
+        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+        let bytes = rig::export_glb(&source, &skeleton, falloff).map_err(|e| e.to_string())?;
+        std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
+
+        Ok(Some(target.file_name().map_or_else(String::new, |n| {
+            n.to_string_lossy().into_owned()
+        })))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -179,7 +218,8 @@ pub fn run() {
             load_model,
             skeleton_templates,
             fit_skeleton,
-            bind_weights
+            bind_weights,
+            export_model
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

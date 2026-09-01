@@ -3060,3 +3060,58 @@ something a user keeps). Also open: **P3-9** weight paint (needs weights on the
 bulk channel), **P3-7b** the gizmo, **P3-3b** 11 spine joints on snake and
 shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`, **P4-1**
 Blender bridge.
+
+---
+
+## Session 045 — 2026-09-01 — Export: the app produces a rigged file
+
+**HEAD in: `f7e695e` (CI green, 7/7). The whole flow now runs: import → draw →
+choose a skeleton → fit → bind → export.**
+
+### What shipped
+`rig::export_glb` assembles mesh, skeleton and weights into a `glb::Document`
+and writes it; `export_model` opens a save dialog off the main thread.
+
+- **Weights are recomputed, not carried.** `bind` and `export_glb` share a
+  private `solve`. Sending ~600 KB out to the webview and back would cost more
+  than a 56 ms re-solve, and would leave a cache to invalidate every time a bone
+  moved.
+- **Bone rotations are identity, deliberately.** A fitted skeleton is a set of
+  joint *positions*; inventing orientations would be making up data the fitter
+  never produced. Positions are what deform the mesh, so the export is complete
+  for skinning even though bone roll is not recovered.
+
+### The finding that mattered
+**Two mutation survivors were real test gaps, and both were about the link
+between the mesh and the skin.** Dropping `skin: Some(0)` from the mesh node, or
+the primitive's `node` reference, left *every count I had asserted* looking
+correct — bones, joints, bind matrices, weights summing to one — while the file
+would import **unweighted**. That is the exact failure `glb::Node`'s own doc
+comment warns about, and I had read that comment two sessions ago without
+turning it into an assertion. Now asserted: exactly one node carries the skin,
+and the primitive hangs off that node. 6 of 6 caught afterwards.
+
+*Counting the parts does not prove they are connected.*
+
+### Verification, by two independent readers
+- **Blender**: 66 bones, one root (`root`), 1 armature, 7,399 vertices, 0 loose,
+  66 vertex groups, `weight_total` **7,399.0** — every vertex sums to exactly
+  1.0 — and `influences_per_vertex {1:254, 2:3, 3:38, 4:7104}`, **identical to
+  the BindReport histogram**. Two independent paths agreeing on the same numbers.
+- **assimp**: meshes, faces (13,757), animations and primitive types all match.
+  Its node and bone counts differ because the source was unrigged and we added a
+  rig; its glTF bone count (22 against Blender's 66) is the **same unexplained**
+  counting difference recorded in P3-8. Still not rationalised.
+- 358 Rust tests both profiles, 0 failures (was 355); 12 frontend; fmt, clippy,
+  tsc, vite clean.
+- **SonarQube not run — sixth session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next
+**P3-6d, FBX export** is the obvious follow-on and the user called FBX crucial:
+`fbx::build::Scene` + `encode` exist and are Blender-verified, and the work is
+inverting `SkinWeights` into per-cluster index/weight lists (~40 lines). After
+that, **Animate** is the last inert step (`m2m_rig::retarget` is built). Also
+open: **P3-9** weight paint, **P3-7b** gizmo, **P3-3b** 11 spine joints on snake
+and shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`,
+**P4-1** Blender bridge.

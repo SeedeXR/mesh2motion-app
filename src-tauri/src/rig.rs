@@ -213,6 +213,27 @@ pub struct BindReport {
 /// [`RigError`] for a model that will not read, a mesh that cannot be
 /// voxelised, or a skeleton with nothing that may hold weight.
 pub fn bind(model: &[u8], skeleton: &FittedSkeleton, falloff: f32) -> Result<BindReport, RigError> {
+    Ok(solve(model, skeleton, falloff)?.2)
+}
+
+/// The solve behind [`bind`] and [`export_glb`]: mesh, weights and report.
+///
+/// Export recomputes rather than carrying the weights out to the frontend and
+/// back — they are about 600 KB, and the whole solve takes ~56 ms on the
+/// reference body. A round trip through the webview would cost more than doing
+/// it twice, and there would be a cache to invalidate every time a bone moved.
+fn solve(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+) -> Result<
+    (
+        m2m_core::mesh::Mesh,
+        m2m_core::skinning::SkinWeights,
+        BindReport,
+    ),
+    RigError,
+> {
     let mesh = mesh_of(&m2m_io::import::load(model)?);
     if mesh.positions.is_empty() {
         return Err(RigError::NothingToBind {
@@ -270,14 +291,113 @@ pub fn bind(model: &[u8], skeleton: &FittedSkeleton, falloff: f32) -> Result<Bin
         }
     }
 
-    Ok(BindReport {
+    let report = BindReport {
         vertices: mesh.positions.len(),
         weighted_bones,
         excluded_bones: skeleton.bones.len() - weighted_bones,
         fallback_vertices: weights.fallback_vertices.len(),
         influence_histogram,
         unweighted_vertices,
-    })
+    };
+    Ok((mesh, weights, report))
+}
+
+/// Writes the rigged model as a `.glb`: mesh, skeleton and skin weights.
+///
+/// # What the exported file is
+///
+/// The mesh in world space, one node per bone at its fitted position, and a
+/// skin binding them. Bone rotations are identity: a fitted skeleton is a set
+/// of joint **positions**, and inventing orientations for it would be making up
+/// data the fitter never produced. A joint's position is what deforms the mesh,
+/// so the export is complete for skinning even though a bone roll is not
+/// recovered.
+///
+/// Inverse bind matrices are the inverse of each bone's world translation,
+/// which is exact here because the mesh node carries the identity: the mesh
+/// positions are already in world space, so `jointWorld * IBM` is the identity
+/// at bind and the mesh does not move until a bone does.
+///
+/// # Errors
+///
+/// Whatever the solve produces, plus a write failure from `glb::write`.
+pub fn export_glb(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+) -> Result<Vec<u8>, RigError> {
+    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+
+    let position = |index: usize| {
+        skeleton
+            .positions
+            .get(index)
+            .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
+    };
+
+    // One node per bone. A bone's local translation is its offset from its
+    // parent, so the composed world lands back on the fitted position.
+    let mut nodes: Vec<m2m_io::glb::Node> = skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(bone, name)| {
+            let parent = skeleton.parents.get(bone).copied().flatten();
+            let local = position(bone) - parent.map_or(glam::Vec3::ZERO, position);
+            m2m_io::glb::Node {
+                name: name.clone(),
+                parent,
+                transform: m2m_io::glb::Trs {
+                    translation: local.to_array(),
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0, 1.0, 1.0],
+                },
+                skin: None,
+            }
+        })
+        .collect();
+
+    let inverse_bind_matrices = (0..skeleton.bones.len())
+        .map(|bone| {
+            glam::Mat4::from_translation(position(bone))
+                .inverse()
+                .to_cols_array()
+        })
+        .collect();
+
+    // The mesh hangs off its own node, which carries the skin. glTF ignores a
+    // skinned node's transform, so the identity here is not a simplification.
+    let mesh_node = nodes.len();
+    nodes.push(m2m_io::glb::Node {
+        name: "mesh".into(),
+        parent: None,
+        transform: m2m_io::glb::Trs {
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        },
+        skin: Some(0),
+    });
+
+    let document = m2m_io::glb::Document {
+        primitives: vec![m2m_io::glb::Primitive {
+            mesh: 0,
+            node: Some(mesh_node),
+            positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
+            indices: mesh.indices.clone(),
+            joints: weights.indices.clone(),
+            weights: weights.weights.clone(),
+        }],
+        skins: vec![m2m_io::glb::Skin {
+            joints: (0..skeleton.bones.len()).collect(),
+            inverse_bind_matrices,
+        }],
+        nodes,
+        clips: Vec::new(),
+        report: m2m_io::glb::GlbReport::default(),
+    };
+
+    Ok(m2m_io::glb::write(&document)?)
 }
 
 /// Each bone as a segment the solver can measure distance to.
@@ -668,6 +788,104 @@ mod tests {
             report.influence_histogram.iter().sum::<usize>(),
             report.vertices
         );
+    }
+
+    /// The exported file is a rigged model any glTF reader can open.
+    #[test]
+    fn the_export_carries_the_mesh_the_skeleton_and_the_weights() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+
+        // Written so the Blender and assimp checks have something to open.
+        let path = std::env::temp_dir().join("m2m-export-check.glb");
+        std::fs::write(&path, &bytes).expect("writes");
+        println!("wrote {}", path.display());
+
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        assert_eq!(back.skins.len(), 1);
+        assert_eq!(back.skins[0].joints.len(), skeleton.bones.len());
+        assert_eq!(
+            back.skins[0].inverse_bind_matrices.len(),
+            skeleton.bones.len(),
+            "a joint without a bind matrix binds to the identity"
+        );
+        assert_eq!(back.nodes.len(), skeleton.bones.len() + 1);
+        assert_eq!(back.primitives.len(), 1);
+
+        // glTF puts the skin on the NODE, not the mesh. A file with an
+        // armature and a mesh that references no skin imports unweighted —
+        // `glb::Node`'s own docs warn about exactly this — and every count
+        // above still looks right when the link is missing.
+        let skinned: Vec<usize> = back
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.skin == Some(0))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(skinned.len(), 1, "exactly one node must carry the skin");
+        assert_eq!(
+            back.primitives[0].node,
+            Some(skinned[0]),
+            "the primitive must hang off the node that carries the skin"
+        );
+
+        // Every vertex carries four influence slots, and they still sum to one
+        // after the round trip through the file.
+        let primitive = &back.primitives[0];
+        let vertices = primitive.positions.len() / 3;
+        assert_eq!(primitive.joints.len(), vertices * 4);
+        for vertex in primitive.weights.chunks_exact(4) {
+            let total: f32 = vertex.iter().sum();
+            assert!((total - 1.0).abs() < 1e-3, "weights sum to {total}");
+        }
+    }
+
+    /// The exported skeleton stands where the fitter put it.
+    #[test]
+    fn a_bones_world_position_survives_the_export() {
+        // Bone nodes carry OFFSETS from their parent, so a version that wrote
+        // world positions as local ones would look right in a flat scene and
+        // pile every bone on top of the last in a deep chain.
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        let world = back.world_transforms();
+
+        let mut worst = 0.0f32;
+        for (bone, expected) in skeleton.positions.iter().enumerate() {
+            let got = world[bone].transform_point3(glam::Vec3::ZERO);
+            worst = worst.max(got.distance(glam::Vec3::from(*expected)));
+        }
+        assert!(worst < 1e-4, "worst bone moved {worst} m in the export");
+    }
+
+    /// The bind pose is the identity: the mesh does not move until a bone does.
+    #[test]
+    fn the_exported_mesh_sits_still_in_its_bind_pose() {
+        // `jointWorld * IBM` must be the identity, or the model deforms the
+        // instant it is opened — which no count of bones or vertices reveals.
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        let world = back.world_transforms();
+
+        let mut worst = 0.0f32;
+        for (slot, &joint) in back.skins[0].joints.iter().enumerate() {
+            let ibm = glam::Mat4::from_cols_array(&back.skins[0].inverse_bind_matrices[slot]);
+            let product = world[joint] * ibm;
+            for (a, b) in product
+                .to_cols_array()
+                .iter()
+                .zip(glam::Mat4::IDENTITY.to_cols_array().iter())
+            {
+                worst = worst.max((a - b).abs());
+            }
+        }
+        assert!(worst < 1e-5, "bind pose is off by {worst}");
     }
 
     #[test]
