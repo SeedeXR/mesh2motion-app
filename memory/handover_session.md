@@ -3832,3 +3832,35 @@ green fab7830.
 
 **Next:** more S3776 (geometry.rs:391/glb/mod.rs:761 before the scary text.rs:62), or
 P4-4 perf (measure first). Loop continues.
+
+## Session 060 — 2026-09-01 — GLB reader + FBX vector-track (6 of 23 S3776)
+
+**Done.** Two more rust:S3776 splits (commit b18577a, pushed):
+- glb `read_primitives` (was **51**): → `validate_primitive_accessors` (attribute
+  + index layout checks), `valid_triangles` (in-range whole-triangle filter, pure),
+  `read_primitive_data` (positions/indices/joints/weights → Primitive). Only the
+  double mesh/primitive loop remains. The generic `F: Fn(gltf::Buffer)->Option<&'a[u8]>`
+  lifetime carried cleanly into `read_primitive_data` (took `impl Clone + Fn...`).
+- animation `vector_track` (was **~20**): innermost per-axis cursor walk →
+  `advance_axis`, dropping five nesting levels to two.
+
+**Guard:** m2m-io 208/208 both profiles, clippy+fmt clean, AND the Blender
+visual-regression passes with all 9 creature baselines identical — the reader
+change is genuinely exercised there (rig fit/bind read each input creature .glb
+through `read_primitives`), so this is an independent-reader confirmation, not just
+unit tests.
+
+**Gotchas (both splices):** the brace-balance end-finder fired before the opening
+`{` on multi-line fn signatures (`fn read_primitives<'a, F>(` + where-clause) — fixed
+by only balancing AFTER the first `{` seen. And the "next fn follows" boundary assert
+must span a wide window (end+1:end+8): a fn is preceded by its doc comment + a blank,
+so the signature line is several lines below the closing `}`.
+
+**Progress:** 6 of 23 (todo P4-Q). Remaining flagged production fns: fbx/geometry.rs:391
+(**54**), fbx/text.rs:209 (**62**, subtle state machine — highest risk, ParserState
+struct), animation.rs rotation_track (the old :557 cx 25?), glb/mod.rs read_skins/read_clips
+if still over. **Session start:** disk 2554 MB, CI green 6a237eb.
+
+**Next:** fbx/geometry.rs:391 (cx 54) is the largest remaining tractable one — read it
+first to judge decomposability; or P4-4 perf (measure first). The text.rs:62 state
+machine is the last/riskiest. Loop continues.
