@@ -582,6 +582,52 @@ fn euler_quat(degrees: [f64; 3], order: EulerOrder) -> DQuat {
 }
 
 /// Builds a quaternion track from three Euler curves.
+/// How many slerp steps a rotation of `span` degrees needs so no single step
+/// exceeds half a turn (which a quaternion cannot represent as one step),
+/// capped and counting the cap.
+fn subdivision_steps(span: f64, report: &mut AnimationReport) -> usize {
+    let wanted = (span / 180.0).ceil();
+    // `span` is finite here — the key filter dropped non-finite values — but
+    // clamp regardless, because the cast saturates rather than wrapping and one
+    // absurd key would otherwise allocate without bound.
+    let steps = if wanted.is_finite() {
+        (wanted as usize).clamp(1, MAX_SUBDIVISION)
+    } else {
+        MAX_SUBDIVISION
+    };
+    if steps == MAX_SUBDIVISION {
+        report.subdivisions_capped += 1;
+    }
+    steps
+}
+
+/// Applies the pre/post rotations to each quaternion and unrolls the sequence so
+/// neighbours stay on one hemisphere, then flattens it to `xyzw` floats.
+///
+/// Unrolling is what stops a renderer interpolating the long way round and
+/// spinning the bone; it has to run after pre/post, on the values actually
+/// written.
+fn finalise_quaternions(quats: Vec<DQuat>, pre: Option<DQuat>, post: Option<DQuat>) -> Vec<f32> {
+    let mut values = Vec::with_capacity(quats.len() * 4);
+    let mut previous: Option<DQuat> = None;
+    for mut q in quats {
+        if let Some(pre) = pre {
+            q = pre * q;
+        }
+        if let Some(post) = post {
+            q *= post;
+        }
+        if let Some(p) = previous {
+            if p.dot(q) < 0.0 {
+                q = -q;
+            }
+        }
+        previous = Some(q);
+        values.extend([q.x as f32, q.y as f32, q.z as f32, q.w as f32]);
+    }
+    values
+}
+
 fn rotation_track(
     model: i64,
     node: &CurveNode,
@@ -659,19 +705,7 @@ fn rotation_track(
         if span >= 180.0 {
             let from = euler_quat(previous, order);
             let to = euler_quat(current, order);
-            // `span` is finite here — the key filter above dropped any key
-            // holding a non-finite value — but clamp regardless, because the
-            // cast saturates rather than wrapping and one absurd key would
-            // otherwise allocate without bound.
-            let wanted = (span / 180.0).ceil();
-            let steps = if wanted.is_finite() {
-                (wanted as usize).clamp(1, MAX_SUBDIVISION)
-            } else {
-                MAX_SUBDIVISION
-            };
-            if steps == MAX_SUBDIVISION {
-                report.subdivisions_capped += 1;
-            }
+            let steps = subdivision_steps(span, report);
             for step in 1..=steps {
                 let t = step as f64 / steps as f64;
                 out_times.push(times[prev_i] + (times[i] - times[prev_i]) * t);
@@ -683,25 +717,7 @@ fn rotation_track(
         }
     }
 
-    let mut values = Vec::with_capacity(quats.len() * 4);
-    let mut previous: Option<DQuat> = None;
-    for mut q in quats {
-        if let Some(pre) = pre {
-            q = pre * q;
-        }
-        if let Some(post) = post {
-            q *= post;
-        }
-        // Unroll: neighbouring keys must stay on the same hemisphere, or the
-        // renderer interpolates the long way round and the bone spins.
-        if let Some(p) = previous {
-            if p.dot(q) < 0.0 {
-                q = -q;
-            }
-        }
-        previous = Some(q);
-        values.extend([q.x as f32, q.y as f32, q.z as f32, q.w as f32]);
-    }
+    let values = finalise_quaternions(quats, pre, post);
 
     Some(Track {
         model,
