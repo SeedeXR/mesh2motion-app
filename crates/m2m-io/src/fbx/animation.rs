@@ -35,7 +35,7 @@
 //! file that loses expression animation says so.
 
 use crate::fbx::binary::FbxProperty;
-use crate::fbx::dom::Scene;
+use crate::fbx::dom::{Object, Scene};
 use crate::fbx::model::ModelTree;
 use crate::fbx::transform::EulerOrder;
 use glam::{DQuat, DVec3};
@@ -242,95 +242,110 @@ pub fn parse_all(scene: &Scene, models: &ModelTree) -> (Vec<Clip>, AnimationRepo
 }
 
 /// Reads the curve nodes and attaches each curve to its axis.
+/// Classifies one `AnimationCurveNode` object into its `(id, CurveNode)`, or
+/// `None` when it is a morph channel or names no `T`/`R`/`S` channel.
+fn classify_curve_node(object: &Object, report: &mut AnimationReport) -> Option<(i64, CurveNode)> {
+    // The name is the channel: `T`, `R`, `S`. The legacy tests it with
+    // /S|R|T|DeformPercent/, so a name merely CONTAINING one of those
+    // letters qualifies there too.
+    // Checked before T/R/S: `DeformPercent` contains neither, but
+    // naming it explicitly keeps the intent readable and survives a
+    // channel name that happens to share a letter.
+    if object.name.contains("DeformPercent") {
+        report.morph_channels_skipped += 1;
+        return None;
+    }
+    let channel = if object.name.contains('T') {
+        Channel::Translation
+    } else if object.name.contains('R') {
+        Channel::Rotation
+    } else if object.name.contains('S') {
+        Channel::Scale
+    } else {
+        return None;
+    };
+    Some((
+        object.id,
+        CurveNode {
+            channel,
+            axes: Default::default(),
+        },
+    ))
+}
+
+/// Reads one `AnimationCurve`'s keys and attaches them to the axis of the curve
+/// node it links to, counting the curves that do not attach cleanly.
+fn attach_curve(
+    curve: &Object,
+    scene: &Scene,
+    nodes: &mut HashMap<i64, CurveNode>,
+    report: &mut AnimationReport,
+) {
+    let times: Vec<f64> = curve
+        .node
+        .child("KeyTime")
+        .and_then(|n| n.properties.first())
+        .and_then(FbxProperty::as_i64_vec)
+        .unwrap_or_default()
+        .into_iter()
+        .map(seconds)
+        .collect();
+    let mut values: Vec<f64> = curve
+        .node
+        .child("KeyValueFloat")
+        .and_then(|n| n.properties.first())
+        .and_then(FbxProperty::as_f64_vec)
+        .unwrap_or_default();
+
+    // A key needs both a time and a value. Keeping the leading pairs is
+    // better than dropping the curve, and it keeps every later index in
+    // range — sampling walks the time array and reads the value array at
+    // the same position.
+    let mut times = times;
+    if times.len() != values.len() {
+        report.mismatched_curve_arrays += 1;
+        let keep = times.len().min(values.len());
+        times.truncate(keep);
+        values.truncate(keep);
+    }
+    // Cap here, before anything downstream is sized from the key count.
+    if times.len() > MAX_KEYS_PER_CURVE {
+        report.curves_over_key_limit += 1;
+        times.truncate(MAX_KEYS_PER_CURVE);
+        values.truncate(MAX_KEYS_PER_CURVE);
+    }
+
+    // The connection's property name carries the axis: `d|X`, `d|Y`, `d|Z`.
+    let parent = scene.links.get(&curve.id).and_then(|l| l.parents.first());
+    let axis = parent.and_then(|p| p.property.as_deref()).and_then(|p| {
+        if p.contains('X') {
+            Some(0)
+        } else if p.contains('Y') {
+            Some(1)
+        } else if p.contains('Z') {
+            Some(2)
+        } else {
+            None
+        }
+    });
+    match (parent, axis) {
+        (Some(parent), Some(axis)) => match nodes.get_mut(&parent.id) {
+            Some(node) => node.axes[axis] = Some(Curve { times, values }),
+            None => report.unattached_curves += 1,
+        },
+        _ => report.unattached_curves += 1,
+    }
+}
+
 fn curve_nodes(scene: &Scene, report: &mut AnimationReport) -> HashMap<i64, CurveNode> {
     let mut nodes: HashMap<i64, CurveNode> = scene
         .objects_of_kind("AnimationCurveNode")
         .into_iter()
-        .filter_map(|o| {
-            // The name is the channel: `T`, `R`, `S`. The legacy tests it with
-            // /S|R|T|DeformPercent/, so a name merely CONTAINING one of those
-            // letters qualifies there too.
-            // Checked before T/R/S: `DeformPercent` contains neither, but
-            // naming it explicitly keeps the intent readable and survives a
-            // channel name that happens to share a letter.
-            if o.name.contains("DeformPercent") {
-                report.morph_channels_skipped += 1;
-                return None;
-            }
-            let channel = if o.name.contains('T') {
-                Channel::Translation
-            } else if o.name.contains('R') {
-                Channel::Rotation
-            } else if o.name.contains('S') {
-                Channel::Scale
-            } else {
-                return None;
-            };
-            Some((
-                o.id,
-                CurveNode {
-                    channel,
-                    axes: Default::default(),
-                },
-            ))
-        })
+        .filter_map(|o| classify_curve_node(o, report))
         .collect();
 
     for curve in scene.objects_of_kind("AnimationCurve") {
-        let times: Vec<f64> = curve
-            .node
-            .child("KeyTime")
-            .and_then(|n| n.properties.first())
-            .and_then(FbxProperty::as_i64_vec)
-            .unwrap_or_default()
-            .into_iter()
-            .map(seconds)
-            .collect();
-        let mut values: Vec<f64> = curve
-            .node
-            .child("KeyValueFloat")
-            .and_then(|n| n.properties.first())
-            .and_then(FbxProperty::as_f64_vec)
-            .unwrap_or_default();
-
-        // A key needs both a time and a value. Keeping the leading pairs is
-        // better than dropping the curve, and it keeps every later index in
-        // range — sampling walks the time array and reads the value array at
-        // the same position.
-        let mut times = times;
-        if times.len() != values.len() {
-            report.mismatched_curve_arrays += 1;
-            let keep = times.len().min(values.len());
-            times.truncate(keep);
-            values.truncate(keep);
-        }
-        // Cap here, before anything downstream is sized from the key count.
-        if times.len() > MAX_KEYS_PER_CURVE {
-            report.curves_over_key_limit += 1;
-            times.truncate(MAX_KEYS_PER_CURVE);
-            values.truncate(MAX_KEYS_PER_CURVE);
-        }
-
-        // The connection's property name carries the axis: `d|X`, `d|Y`, `d|Z`.
-        let parent = scene.links.get(&curve.id).and_then(|l| l.parents.first());
-        let axis = parent.and_then(|p| p.property.as_deref()).and_then(|p| {
-            if p.contains('X') {
-                Some(0)
-            } else if p.contains('Y') {
-                Some(1)
-            } else if p.contains('Z') {
-                Some(2)
-            } else {
-                None
-            }
-        });
-        match (parent, axis) {
-            (Some(parent), Some(axis)) => match nodes.get_mut(&parent.id) {
-                Some(node) => node.axes[axis] = Some(Curve { times, values }),
-                None => report.unattached_curves += 1,
-            },
-            _ => report.unattached_curves += 1,
-        }
+        attach_curve(curve, scene, &mut nodes, report);
     }
     nodes
 }

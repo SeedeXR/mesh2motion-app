@@ -308,6 +308,18 @@ impl Skin {
                 detail: "no usable clusters, so there is no bone to weight to".into(),
             });
         }
+
+        let mut per_source = self.gather_influences(mesh)?;
+        let mut report = self.report.clone();
+        Self::normalize_influences(&mut per_source, &mut report);
+        let out = Self::expand(mesh, &per_source);
+        Ok((out, report))
+    }
+
+    /// Collects each source vertex's `(bone, weight)` influences from the
+    /// clusters, narrowing weights to `f32` and dropping the ones that do not
+    /// survive it.
+    fn gather_influences(&self, mesh: &MeshGeometry) -> Result<Vec<Vec<(u16, f32)>>, FbxError> {
         // Gather influences per ORIGINAL vertex first, then expand. Doing it the
         // other way round would repeat the same lookup for every corner sharing
         // a vertex.
@@ -342,8 +354,12 @@ impl Skin {
                 }
             }
         }
+        Ok(per_source)
+    }
 
-        let mut report = self.report.clone();
+    /// Caps each vertex to `MAX_INFLUENCES` strongest bones and renormalises the
+    /// kept weights to sum to one, counting and clearing the ones that cannot.
+    fn normalize_influences(per_source: &mut [Vec<(u16, f32)>], report: &mut SkinReport) {
         for influences in per_source.iter_mut() {
             if influences.is_empty() {
                 continue;
@@ -374,7 +390,11 @@ impl Skin {
                 influences.clear();
             }
         }
+    }
 
+    /// Expands per-source influences to per-corner [`SkinWeights`], pinning any
+    /// corner with no influence to bone 0 and recording it as a fallback.
+    fn expand(mesh: &MeshGeometry, per_source: &[Vec<(u16, f32)>]) -> SkinWeights {
         let mut out = SkinWeights::zeroed(mesh.vertex_count());
         for (corner, &source) in mesh.vertex_source.iter().enumerate() {
             let base = corner * MAX_INFLUENCES;
@@ -396,7 +416,6 @@ impl Skin {
                 out.weights[base + slot] = weight;
             }
         }
-
-        Ok((out, report))
+        out
     }
 }
