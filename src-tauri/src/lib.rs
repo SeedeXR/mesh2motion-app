@@ -170,13 +170,22 @@ async fn export_model(
     path: String,
     skeleton: rig::FittedSkeleton,
     falloff: f32,
+    format: String,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Unknown formats are refused rather than defaulted: silently writing
+        // a `.glb` for someone who asked for FBX is worse than an error.
+        let (label, extension) = match format.as_str() {
+            "glb" => ("glTF binary", "glb"),
+            "fbx" => ("FBX binary", "fbx"),
+            other => return Err(format!("unknown export format {other}")),
+        };
+
         let Some(chosen) = app
             .dialog()
             .file()
-            .add_filter("glTF binary", &["glb"])
-            .set_file_name("rigged.glb")
+            .add_filter(label, &[extension])
+            .set_file_name(format!("rigged.{extension}"))
             .blocking_save_file()
         else {
             return Ok(None);
@@ -184,7 +193,11 @@ async fn export_model(
         let target = chosen.into_path().map_err(|e| e.to_string())?;
 
         let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
-        let bytes = rig::export_glb(&source, &skeleton, falloff).map_err(|e| e.to_string())?;
+        let bytes = match extension {
+            "fbx" => rig::export_fbx(&source, &skeleton, falloff),
+            _ => rig::export_glb(&source, &skeleton, falloff),
+        }
+        .map_err(|e| e.to_string())?;
         std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
 
         Ok(Some(target.file_name().map_or_else(String::new, |n| {

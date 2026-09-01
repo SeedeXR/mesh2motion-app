@@ -84,6 +84,17 @@ pub enum RigError {
         /// What was missing.
         reason: &'static str,
     },
+    /// A bone's parent appears after it, which `fbx::build` cannot express.
+    #[error("bone {bone} has parent {parent}, which comes after it")]
+    BadBoneOrder {
+        /// The bone whose parent is out of order.
+        bone: usize,
+        /// The parent that comes too late.
+        parent: usize,
+    },
+    /// Writing the FBX failed.
+    #[error(transparent)]
+    Fbx(#[from] m2m_io::fbx::FbxError),
     /// The fitting pipeline could not place the skeleton.
     #[error("cannot fit {template}: the mesh or the template has nothing to work with")]
     CannotFit {
@@ -398,6 +409,136 @@ pub fn export_glb(
     };
 
     Ok(m2m_io::glb::write(&document)?)
+}
+
+/// Centimetres per metre. Our meshes are in metres, the glTF convention;
+/// `fbx::build` writes `UnitScaleFactor` 1.0, which declares centimetres. Metre
+/// values in a file that says centimetres import as a 1.8 cm character.
+const CM_PER_M: f64 = 100.0;
+
+/// Writes the rigged model as a binary `.fbx`.
+///
+/// # Why a second writer rather than a conversion
+///
+/// FBX is not glTF with different bytes. It counts in the unit its
+/// `GlobalSettings` declare, it binds skins with a pair of global matrices
+/// rather than one inverse, and it names bones on `Model`/`LimbNode` objects.
+/// `m2m_io::fbx::build` already speaks all of that and is verified against
+/// Blender; what is missing is the shape of our data in its terms.
+///
+/// # Two things this must get right
+///
+/// **Units.** Positions and bone offsets are multiplied by
+/// [`CM_PER_M`], because the builder declares centimetres.
+///
+/// **Cluster inversion.** Weights arrive per vertex, four slots each; FBX wants
+/// them per bone, as parallel index and weight lists. A bone that ended up
+/// influencing nothing gets no cluster at all rather than an empty one.
+///
+/// # Errors
+///
+/// Whatever the solve produces, plus [`RigError::BadBoneOrder`] — `build`
+/// *panics* on a parent that appears after its child, and a `FittedSkeleton`
+/// arrives from the frontend, so the order is checked here rather than trusted.
+pub fn export_fbx(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+) -> Result<Vec<u8>, RigError> {
+    use m2m_io::fbx::build;
+
+    for (bone, parent) in skeleton.parents.iter().enumerate() {
+        if let Some(parent) = *parent {
+            if parent >= bone {
+                return Err(RigError::BadBoneOrder { bone, parent });
+            }
+        }
+    }
+
+    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+
+    let position = |index: usize| {
+        skeleton
+            .positions
+            .get(index)
+            .map_or(glam::DVec3::ZERO, |p| {
+                glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) * CM_PER_M
+            })
+    };
+
+    let bones: Vec<build::Bone> = skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(bone, name)| {
+            let parent = skeleton.parents.get(bone).copied().flatten();
+            let local = position(bone) - parent.map_or(glam::DVec3::ZERO, position);
+            build::Bone {
+                name,
+                parent,
+                translation: local.to_array(),
+                // The fitter produces joint POSITIONS, not orientations, so
+                // there is nothing truthful to put here — see `export_glb`.
+                rotation: [0.0; 3],
+                scale: [1.0; 3],
+                pre_rotation: [0.0; 3],
+            }
+        })
+        .collect();
+
+    let positions: Vec<f32> = mesh
+        .positions
+        .iter()
+        .flat_map(|p| (*p * CM_PER_M as f32).to_array())
+        .collect();
+    let meshes = [build::Mesh {
+        name: "mesh",
+        positions: &positions,
+        faces: build::Faces::Triangles(&mesh.indices),
+    }];
+
+    // Weights come per vertex with four slots; FBX wants them per bone.
+    let mut vertices_of: Vec<Vec<u32>> = vec![Vec::new(); skeleton.bones.len()];
+    let mut weights_of: Vec<Vec<f64>> = vec![Vec::new(); skeleton.bones.len()];
+    for vertex in 0..weights.vertex_count() {
+        for (bone, weight) in weights.influences(vertex) {
+            let Some(slot) = vertices_of.get_mut(bone as usize) else {
+                continue;
+            };
+            slot.push(vertex as u32);
+            weights_of[bone as usize].push(f64::from(weight));
+        }
+    }
+
+    // The mesh's global transform at bind is the identity: its positions are
+    // already where they sit, so a cluster's `transform` carries nothing.
+    let identity = glam::DMat4::IDENTITY.to_cols_array();
+    let clusters: Vec<build::Cluster> = (0..skeleton.bones.len())
+        .filter(|bone| !vertices_of[*bone].is_empty())
+        .map(|bone| build::Cluster {
+            bone,
+            indices: &vertices_of[bone],
+            weights: &weights_of[bone],
+            transform: identity,
+            transform_link: glam::DMat4::from_translation(position(bone)).to_cols_array(),
+        })
+        .collect();
+    let skins = [build::Skin {
+        mesh: 0,
+        clusters: &clusters,
+    }];
+
+    let scene = build::Scene {
+        meshes: &meshes,
+        bones: &bones,
+        skins: &skins,
+        clips: &[],
+        // 30fps. Nothing here is animated, but the field is not optional and a
+        // wrong frame rate would misread any clip added later.
+        time_mode: 6,
+    };
+
+    Ok(m2m_io::fbx::encode::encode(&build::build(&scene))?)
 }
 
 /// Each bone as a segment the solver can measure distance to.
@@ -886,6 +1027,156 @@ mod tests {
             }
         }
         assert!(worst < 1e-5, "bind pose is off by {worst}");
+    }
+
+    /// The FBX export carries the same rig, in the units it declares.
+    #[test]
+    fn the_fbx_export_declares_centimetres_and_uses_them() {
+        // `fbx::build` writes UnitScaleFactor 1.0, which means centimetres.
+        // Metre values in that file import as a 1.8 cm character, and no count
+        // of bones or vertices would show it.
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+
+        let path = std::env::temp_dir().join("m2m-export-check.fbx");
+        std::fs::write(&path, &bytes).expect("writes");
+        println!("wrote {}", path.display());
+
+        let scene = m2m_io::fbx::dom::Scene::from_document(
+            m2m_io::fbx::binary::parse(&bytes).expect("our own reader reads it"),
+        );
+        assert_eq!(scene.unit_scale, Some(1.0), "the file declares centimetres");
+
+        let models = m2m_io::fbx::model::parse_all(&scene);
+        let bones: Vec<&m2m_io::fbx::model::Model> =
+            models.models.iter().filter(|m| m.is_bone()).collect();
+        assert_eq!(bones.len(), 66);
+
+        // A human is 1.2 to 2.5 m, which in this file must read as 120 to 250.
+        let ys: Vec<f64> = bones
+            .iter()
+            .map(|b| b.world.transform_point3(glam::DVec3::ZERO).y)
+            .collect();
+        let height = ys.iter().copied().fold(f64::MIN, f64::max)
+            - ys.iter().copied().fold(f64::MAX, f64::min);
+        assert!(
+            (100.0..250.0).contains(&height),
+            "skeleton spans {height} file units, which is not a character in centimetres"
+        );
+
+        // And the MESH, in the same units. Scaling the bones without the
+        // geometry leaves a skeleton a hundred times the size of the body it
+        // is meant to deform, and the skeleton assertion above still passes.
+        let geometry = scene.objects_of_kind("Geometry");
+        let mesh = m2m_io::fbx::geometry::parse(
+            geometry.first().expect("a geometry"),
+            m2m_io::fbx::geometry::GeometricTransform::default(),
+        )
+        .expect("parses");
+        let mesh_ys: Vec<f32> = mesh.positions.chunks_exact(3).map(|p| p[1]).collect();
+        let mesh_height = mesh_ys.iter().copied().fold(f32::MIN, f32::max)
+            - mesh_ys.iter().copied().fold(f32::MAX, f32::min);
+        assert!(
+            (100.0..250.0).contains(&mesh_height),
+            "mesh spans {mesh_height} file units against the skeleton's {height}"
+        );
+    }
+
+    /// The bind pose the clusters record is the pose the skeleton is in.
+    #[test]
+    fn every_cluster_binds_to_where_its_bone_actually_is() {
+        // FBX binds with a PAIR of global matrices, and `TransformLink` is the
+        // bone's world at bind. Getting it wrong — the identity, say — leaves
+        // every count correct and every vertex bound as though its bone sat at
+        // the origin, so the mesh tears apart the moment it is posed. Neither
+        // Blender's report nor assimp's would say a word.
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+
+        let scene = m2m_io::fbx::dom::Scene::from_document(
+            m2m_io::fbx::binary::parse(&bytes).expect("reads"),
+        );
+        let models = m2m_io::fbx::model::parse_all(&scene);
+        let (skins, _) = m2m_io::fbx::skin::parse_all(&scene);
+
+        let mut worst = 0.0f64;
+        for cluster in &skins[0].clusters {
+            let bone = models.get(cluster.bone_id).expect("the cluster's bone");
+            for (a, b) in bone
+                .world
+                .to_cols_array()
+                .iter()
+                .zip(cluster.transform_link.to_cols_array().iter())
+            {
+                worst = worst.max((a - b).abs());
+            }
+        }
+        assert!(
+            worst < 1e-6,
+            "a cluster binds {worst} away from where its bone stands"
+        );
+        assert!(!skins[0].clusters.is_empty());
+    }
+
+    /// Every solved influence reaches a cluster, and no bone gets an empty one.
+    #[test]
+    fn the_fbx_clusters_carry_every_influence_exactly_once() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes =
+            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+
+        let scene = m2m_io::fbx::dom::Scene::from_document(
+            m2m_io::fbx::binary::parse(&bytes).expect("reads"),
+        );
+        let (skins, _) = m2m_io::fbx::skin::parse_all(&scene);
+        assert_eq!(skins.len(), 1);
+
+        // The report and the file are computed by different code from the same
+        // solve, so agreeing is worth something.
+        let report = super::bind(&model("models/model-human.glb"), &skeleton, 2.0).expect("binds");
+        let influences: usize = skins[0].clusters.iter().map(|c| c.indices.len()).sum();
+        let expected: usize = report
+            .influence_histogram
+            .iter()
+            .enumerate()
+            .map(|(slot, count)| (slot + 1) * count)
+            .sum();
+        assert_eq!(
+            influences, expected,
+            "an influence was dropped or duplicated"
+        );
+
+        // A bone that influences nothing gets no cluster, not an empty one.
+        assert!(skins[0].clusters.iter().all(|c| !c.indices.is_empty()));
+        assert!(skins[0].clusters.len() <= report.weighted_bones);
+
+        // Every weight is a real share, and the parallel arrays line up.
+        for cluster in &skins[0].clusters {
+            assert_eq!(cluster.indices.len(), cluster.weights.len());
+            assert!(cluster.weights.iter().all(|w| *w > 0.0 && *w <= 1.0));
+        }
+    }
+
+    /// A skeleton whose parent comes after its child is refused, not panicked on.
+    #[test]
+    fn a_bone_ordered_after_its_parent_is_refused() {
+        // `fbx::build` panics on this rather than returning an error, and a
+        // FittedSkeleton comes in from the frontend.
+        let skeleton = super::FittedSkeleton {
+            bones: vec!["child".into(), "parent".into()],
+            parents: vec![Some(1), None],
+            positions: vec![[0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            scale: 1.0,
+        };
+        let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0)
+            .expect_err("refused");
+
+        assert!(
+            matches!(err, super::RigError::BadBoneOrder { bone: 0, parent: 1 }),
+            "got {err:?}"
+        );
     }
 
     #[test]

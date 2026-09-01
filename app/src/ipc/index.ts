@@ -143,7 +143,8 @@ export async function bindWeights(
 export async function exportModel(
   path: string,
   skeleton: FittedSkeleton,
-  falloff: number
+  falloff: number,
+  format: 'glb' | 'fbx'
 ): Promise<string | null> {
-  return await invoke<string | null>('export_model', { path, skeleton, falloff })
+  return await invoke<string | null>('export_model', { path, skeleton, falloff, format })
 }

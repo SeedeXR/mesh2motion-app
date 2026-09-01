@@ -3115,3 +3115,72 @@ that, **Animate** is the last inert step (`m2m_rig::retarget` is built). Also
 open: **P3-9** weight paint, **P3-7b** gizmo, **P3-3b** 11 spine joints on snake
 and shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`,
 **P4-1** Blender bridge.
+
+---
+
+## Session 046 — 2026-09-01 — FBX export, and a mystery closed
+
+**HEAD in: `36ecfc0` (CI green, 7/7). The app now exports both formats.**
+
+### What shipped
+`rig::export_fbx` assembles `build::{Mesh, Bone, Cluster, Skin, Scene}` and
+encodes; the export step offers `.glb` and `.fbx`.
+
+- **Units were the trap.** `fbx::build` hardcodes `UnitScaleFactor` 1.0, which
+  declares **centimetres**, while our meshes are metres. Everything is
+  multiplied by 100 on the way out. Without it the file imports as a 1.8 cm
+  character, and no count of bones or vertices would show it.
+- **Cluster inversion**: weights arrive per vertex with four slots; FBX wants
+  them per bone. A bone influencing nothing gets no cluster, not an empty one.
+- **`build` panics on a parent that appears after its child**, and a
+  `FittedSkeleton` comes from the frontend, so the order is checked and refused.
+  Measured first: all nine rigs are already parents-first, 0 violations of 500.
+
+### The mystery, closed
+Twice recorded as **unexplained**: assimp reported 22 bones where Blender's
+glTF import reported 66, and two hypotheses had been measured and refuted (115,
+then 89). Blender's **FBX** import of our own export reports `vertex_groups`
+**22** — the cluster count. assimp and Blender-FBX count bones that *carry
+weight*; Blender-glTF counts *declared joints*. Three readers agree on 22.
+
+Confirmed by a third reader rather than argued into place — which is why
+leaving it recorded as "unexplained" for two sessions was the right call.
+
+### The finding that repeats
+**Two survivors were the same class of gap as last session: counts asserted,
+connections not.** An unscaled mesh (skeleton a hundred times the body) and an
+identity `transform_link` (every vertex bound as though its bone sat at the
+origin, so the mesh tears apart the moment it is posed) both left every
+assertion passing — and **neither Blender's report nor assimp's would have said
+a word**, because both count things. Now asserted directly: mesh and skeleton
+agree in scale, and every cluster's `transform_link` equals its bone's world
+transform. 6 of 6 caught after.
+
+*This is the second session running where the surviving mutations were about
+links rather than tallies. Assert the connection, every time.*
+
+### Measured, worth an A/B
+Only **22 of 52** weightable bones receive any influence on `model-human.glb`
+(7,399 vertices). At that resolution the finger bones lose to the hand in every
+vertex's top four. Ties to the standing question about the solver's smoothness
+(`memory/test.md` §9).
+
+### Verification
+- **assimp reports the GLB and FBX exports as identical on every field**: nodes
+  68, meshes 1, faces 13,757, bones 22, animations 0, vertices 7,011 vs 7,011.
+- **Blender** agrees across both: 66 bones, 1 armature, root `root`, 7,399
+  vertices, `weight_total` 7,399.0, influences `{1:254, 2:3, 3:38, 4:7104}` —
+  the same histogram the BindReport computes by a different path. FBX bone span
+  203 cm, so the units land.
+- 362 Rust tests both profiles, 0 failures (was 358); 12 frontend; fmt, clippy,
+  tsc, vite clean. Disk: `target/` 7.15 GB, under the 8 GB guard.
+- **SonarQube not run — seventh session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next
+**Animate** is the last inert step: `m2m_rig::retarget` is built and tested, and
+both writers now carry clips (`build::Clip` exists and `rebuild_rig` proves the
+FBX animation path). That completes the six-step flow end to end. Also open:
+**P3-9** weight paint, **P3-7b** gizmo, **P3-3b** 11 spine joints on snake and
+shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`, **P4-1**
+Blender bridge, and the solver A/B above.

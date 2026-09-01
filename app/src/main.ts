@@ -248,24 +248,29 @@ function renderExportStep(): string {
     return '<p style="color:var(--fg-2)">Bind the weights first — an export carries the skeleton and the weights, not just the mesh.</p>'
   }
 
-  const button = `<button id="export" class="action" ${exporting ? 'disabled' : ''}>${
-    exporting ? 'Writing\u2026' : 'Export as .glb'
-  }</button>`
+  const buttons = (['glb', 'fbx'] as const)
+    .map(
+      (format) =>
+        `<button class="action export" data-format="${format}" ${exporting ? 'disabled' : ''}>${
+          exporting ? 'Writing\u2026' : `Export as .${format}`
+        }</button>`
+    )
+    .join('')
   const done =
     exported === null
-      ? '<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file.</p>'
+      ? '<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file. Both formats carry the same rig.</p>'
       : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
 
-  return `${button}${done}`
+  return `${buttons}${done}`
 }
 
 /** Writes the rigged model to a file the user picks. */
-async function runExport(): Promise<void> {
+async function runExport(format: 'glb' | 'fbx'): Promise<void> {
   if (loaded === null || fitted === null || exporting) return
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0)
+    const saved = await exportModel(loaded.path, fitted, 2.0, format)
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -415,8 +420,11 @@ function render(): void {
   const bindButton = app.querySelector<HTMLButtonElement>('#bind')
   bindButton?.addEventListener('click', () => void runBind())
 
-  const exportButton = app.querySelector<HTMLButtonElement>('#export')
-  exportButton?.addEventListener('click', () => void runExport())
+  app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
+    const format = button.dataset['format']
+    if (format !== 'glb' && format !== 'fbx') return
+    button.addEventListener('click', () => void runExport(format))
+  })
 
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']
