@@ -904,3 +904,108 @@ fn every_leg_keeps_its_foot_on_the_ground() {
         );
     }
 }
+
+// --- the shipped template set, and the pipeline as one call ----------------
+
+/// Every manifest in `templates/` is embedded and parses.
+#[test]
+fn every_shipped_template_is_available_without_touching_the_disk() {
+    let shipped = m2m_rig::template::all().expect("the shipped manifests parse");
+
+    let mut names: Vec<&str> = shipped.iter().map(|t| t.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["bird", "dragon", "fox", "horse", "human", "kaiju", "shark", "snake", "spider"]
+    );
+
+    // 500 bones, each claimed exactly once — the count P3-1 established.
+    let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
+    assert_eq!(bones, 500);
+}
+
+/// The embedded manifests are the files on disk, not a stale copy.
+#[test]
+fn the_embedded_manifests_match_the_files_they_were_built_from() {
+    // A build script that stopped rerunning would leave the binary describing
+    // creatures the repository no longer has, and nothing else would notice.
+    for shipped in m2m_rig::template::all().expect("parses") {
+        let on_disk = template(&format!("{}.json", shipped.name));
+        assert_eq!(shipped, on_disk, "{} drifted", shipped.name);
+    }
+}
+
+/// `fit_template` is exactly the four steps, in order.
+#[test]
+fn the_one_call_pipeline_is_the_hand_chained_one() {
+    // Every caller used to chain these by hand and they did not agree — the
+    // report example stops after `fit_uniform` and never voxelises. Pinning the
+    // composition is what stops that drifting again.
+    let mesh = mesh_of("models/model-human.glb");
+    let rest = rest_pose_of("rigs/rig-human.glb");
+    let manifest = template("human.json");
+    let spine = spine_of("human.json");
+
+    let landmarks = Landmarks::of(&mesh).expect("vertices");
+    let mut expected = fit_uniform(&rest, &landmarks, &spine).expect("fits");
+    let axis = body_axis(&rest, &spine).expect("axis");
+    refine_spine(&mut expected, &mesh, &landmarks, &spine, axis);
+    let grid = VoxelGrid::build(&mesh, 128).expect("voxelises");
+    m2m_rig::fit::fit_limbs(&mut expected, &mesh, &grid, &manifest);
+
+    let got = m2m_rig::fit::fit_template(&manifest, &rest, &mesh, 128).expect("fits");
+    assert_eq!(got, expected);
+}
+
+/// Fitting places every spine joint inside the body, on every shipped creature
+/// that has a model to be fitted to.
+#[test]
+fn the_pipeline_puts_the_spine_inside_the_mesh() {
+    // Per-creature counts, not a total: a total lets one creature improve while
+    // another rots. Every number here is measured, and the seven zeros are the
+    // invariant that spine refinement must never break — the first attempt at
+    // the horizontal case scored better overall while putting fox, horse, bird
+    // and dragon outside a body they had been inside.
+    let budget = [
+        ("human", 0),
+        ("fox", 0),
+        ("horse", 0),
+        ("bird", 0),
+        ("spider", 0),
+        ("kaiju", 0),
+        ("dragon", 0),
+        // A long tapering tail is where a uniform scale diverges most, and the
+        // containment test refinement uses is a slice's y-range, which a point
+        // can sit inside while still being outside the body. These are the
+        // joints nearest the tip; see P3-3b.
+        ("snake", 6),
+        ("shark", 5),
+    ];
+
+    for (creature, allowed) in budget {
+        let mesh = mesh_of(&format!("models/model-{creature}.glb"));
+        let rest = rest_pose_of(&format!("rigs/rig-{creature}.glb"));
+        let manifest = template(&format!("{creature}.json"));
+        let grid = VoxelGrid::build(&mesh, 128).expect("voxelises");
+
+        let fitted = m2m_rig::fit::fit_template(&manifest, &rest, &mesh, 128).expect("fits");
+
+        let outside: Vec<String> = spine_of(&format!("{creature}.json"))
+            .into_iter()
+            .filter(|bone| {
+                let at = fitted.position_of(bone).expect("a fitted spine bone");
+                !matches!(
+                    grid.state(grid.coord_of(at)),
+                    Some(VoxelState::Interior | VoxelState::Surface)
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            outside.len(),
+            allowed,
+            "{creature} has {} spine joints outside its mesh: {outside:?}",
+            outside.len()
+        );
+    }
+}

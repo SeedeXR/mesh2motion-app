@@ -296,6 +296,57 @@ impl Fitted {
     }
 }
 
+/// Places a template's skeleton onto a mesh: the whole pipeline, in one call.
+///
+/// # Why this exists
+///
+/// Fitting is four steps that must run in order and share state — a uniform
+/// placement, a spine refinement, a limb swing and a per-joint pull. Every
+/// caller so far has chained them by hand, and they did not agree: the report
+/// example stops after `fit_uniform` and never voxelises, so the numbers it
+/// printed were not the numbers the tests asserted. One entry point is one
+/// order.
+///
+/// The spine comes from the **template**, never a hardcoded list of bone names:
+/// a fox's spine bones are not a human's, and [`body_axis`] needs it to decide
+/// what the Z axis even means for this creature.
+///
+/// Returns `None` when the mesh has no vertices, when the template's spine is
+/// missing from the rest pose, or when the mesh cannot be voxelised.
+///
+/// # Cost
+///
+/// Dominated by voxelising the mesh at `resolution`. 128 is what the fitting
+/// tests use across all nine creatures.
+pub fn fit_template(
+    template: &crate::template::Template,
+    rest: &RestPose,
+    mesh: &Mesh,
+    resolution: u32,
+) -> Option<Fitted> {
+    let landmarks = Landmarks::of(mesh)?;
+    let spine: Vec<String> = template
+        .of_kind(crate::template::ChainKind::Spine)
+        .flat_map(|chain| chain.bones.clone())
+        .collect();
+
+    let mut fitted = fit_uniform(rest, &landmarks, &spine)?;
+    refine_spine(
+        &mut fitted,
+        mesh,
+        &landmarks,
+        &spine,
+        body_axis(rest, &spine)?,
+    );
+
+    // Limb fitting asks "is this joint inside the mesh", which is a containment
+    // query — hence the voxel grid rather than a ray cast per joint.
+    let grid = VoxelGrid::build(mesh, resolution)?;
+    fit_limbs(&mut fitted, mesh, &grid, template);
+
+    Some(fitted)
+}
+
 /// Moves each spine joint onto the mesh's midline **at its own height**.
 ///
 /// [`fit_uniform`] gives the whole skeleton one depth, taken from the body's
@@ -328,14 +379,19 @@ pub fn refine_spine(
     spine: &[String],
     axis: BodyAxis,
 ) {
-    if axis != BodyAxis::Upright {
-        return;
-    }
     let extent = landmarks.extent();
     // The slice is a band around the joint, and its width trades noise against
     // locality: too thin and a slice can be empty, too thick and it averages
     // away the very variation this exists to follow.
-    let band = extent.y * 0.04;
+    //
+    // Which way the band runs is the whole difference between the two axes. An
+    // upright body is stacked along Y, so the slice is a horizontal band and
+    // the joint is solved for depth. A horizontal body runs along Z, so the
+    // slice is a cross-section and the joint is solved for height.
+    let band = match axis {
+        BodyAxis::Upright => extent.y,
+        BodyAxis::Horizontal => extent.z,
+    } * 0.04;
     if band <= f32::EPSILON {
         return;
     }
@@ -353,15 +409,38 @@ pub fn refine_spine(
             .iter()
             .copied()
             .filter(|v| {
-                (v.y - at.y).abs() <= band && (v.x - landmarks.symmetry_x).abs() <= half_width
+                let along = match axis {
+                    BodyAxis::Upright => v.y - at.y,
+                    BodyAxis::Horizontal => v.z - at.z,
+                };
+                along.abs() <= band && (v.x - landmarks.symmetry_x).abs() <= half_width
             })
             .collect();
         if slice.is_empty() {
             continue;
         }
 
-        slice.sort_by(|a, b| a.z.total_cmp(&b.z));
-        fitted.positions[index] = Vec3::new(landmarks.symmetry_x, at.y, slice[slice.len() / 2].z);
+        fitted.positions[index] = match axis {
+            BodyAxis::Upright => {
+                slice.sort_by(|a, b| a.z.total_cmp(&b.z));
+                Vec3::new(landmarks.symmetry_x, at.y, slice[slice.len() / 2].z)
+            }
+            BodyAxis::Horizontal => {
+                slice.sort_by(|a, b| a.y.total_cmp(&b.y));
+                // Only a joint the body does not already contain is moved —
+                // the same rule `fit_limb` states: something already inside is
+                // already placed, and moving it can only take it out. A
+                // quadruped's uniform fit is right; a long tapering tail's is
+                // not, and this is what tells them apart.
+                let (lo, hi) = (slice[0].y, slice[slice.len() - 1].y);
+                let y = if at.y < lo || at.y > hi {
+                    slice[slice.len() / 2].y
+                } else {
+                    at.y
+                };
+                Vec3::new(landmarks.symmetry_x, y, at.z)
+            }
+        };
     }
 }
 

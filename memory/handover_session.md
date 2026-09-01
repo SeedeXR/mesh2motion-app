@@ -2861,3 +2861,70 @@ it, so the next real step is the step rail actually advancing: choose a template
 (P3-1 data is ready), fit it (`m2m-rig::fit`), bind weights, retarget. All the
 Rust exists; none of it is reachable from the UI. **P3-8c** (vertex welding, 6x
 measured) and **P4-1** (Blender bridge) remain unclaimed.
+
+---
+
+## Session 042 — 2026-09-01 — the fitting pipeline, and a fish that did not fit
+
+**HEAD in: `8d82bf6` (CI green — 7 jobs, not 8; the vitest addition is a *step* inside the Frontend job).**
+
+### The session changed shape, on purpose
+I set out to wire the Choose Skeleton step. Collapsing the four-call fitting
+pipeline into one entry point — the first thing that step needs — made it cheap
+to run every creature through it, and that measurement said the fitter itself
+was wrong for two of nine: **16 of 68 spine joints landed outside the mesh, all
+of them snake (6) and shark (10)**. Wiring a UI onto that would have shipped the
+bug into the product. The user's brief names fish explicitly. So: fix the
+fitter, and the UI next.
+
+### What shipped
+- `fit::fit_template(template, rest, mesh, resolution)` — uniform placement,
+  spine refinement, limb swing, joint pull, in one call. Callers used to chain
+  these by hand **and they did not agree**: `examples/fit_report.rs` stops after
+  `fit_uniform` and never voxelises, so its printed numbers were never the
+  numbers the tests asserted.
+- `template::all()` — nine manifests embedded in the binary, **globbed by a
+  build script** rather than listed, because `lib.rs`'s design rule says adding
+  a creature must never require a change in this crate.
+- **`refine_spine` now handles horizontal bodies.** 16 outside → **11**, with
+  no creature regressing.
+
+### The refuted hypothesis, recorded because it looks right
+The obvious mirror of the upright case — slice along Z, take the median Y —
+**is wrong**. It fixed shark (10→4) and snake (6→5) and simultaneously put
+**fox, horse, bird and dragon** outside bodies they had been inside. Seven
+healthy joints traded for six sick ones. The "never worse" check is the only
+reason I saw it; the total alone would have looked like a near-wash.
+
+What works is the guard `fit_limb` **already states in its own docs** and I had
+not read: *a joint the body already contains is already placed, and moving it
+can only take it out*. The codebase had the answer before I did.
+
+### What is still wrong, precisely
+11 joints, all on snake and shark tail tips. The containment test refinement
+uses is a slice's y-range, and a point can sit between a cross-section's lowest
+and highest vertex while still being outside the body — which is exactly why
+snake's `tail18` is not fixed. A real containment query (the `VoxelGrid` the
+limb fitter already builds) is the obvious next move; `refine_spine` does not
+take one today. Filed as **P3-3b** with per-creature numbers.
+
+### Verification
+- 342 Rust tests both profiles, 0 failures (was 338); 9 frontend tests; fmt,
+  clippy, tsc, vite clean.
+- Mutations **8/8 caught**, one a data mutation of `snake.json`. One anchor was
+  again lost to a `cargo fmt` reflow and was re-run individually rather than
+  left as "SKIP" — that is the fifth time fmt has moved an edit target.
+- The spine budget is asserted **per creature, not as a total**: a total lets
+  one creature improve while another rots, which is precisely the failure the
+  refuted hypothesis would have hidden.
+- Self-reviewed; `/code-review` still 403s with `oauth_org_not_allowed`.
+- **SonarQube not run** — but this session touched only `crates/`, not
+  `app/src` or `src-tauri/src`, so it was not required. It remains owed for the
+  three sessions before this one. **Ask the user for a token.**
+
+### Next
+**Wire the Choose Skeleton step**, which is now sitting on a fitter worth
+exposing: `template::all()` for the list, `fit_template` for the placement. The
+app needs the nine rig `.glb` files (158 KB total, so embedding is fine) and a
+way to draw a `Fitted` — bone positions plus parents — which the viewport does
+not do yet; it only draws a glTF's own skeleton.
