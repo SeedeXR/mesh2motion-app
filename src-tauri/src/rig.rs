@@ -47,6 +47,15 @@ pub struct FittedSkeleton {
     pub parents: Vec<Option<usize>>,
     /// World-space position of each bone, in metres.
     pub positions: Vec<[f32; 3]>,
+    /// Each bone's **local rest rotation**, xyzw, taken from the template.
+    ///
+    /// Fitting moves joints; it does not turn them, so these come through from
+    /// the rig the template names rather than from the fit. Measured: all 66
+    /// bones of `rig-human.glb` carry one, up to 179.94 degrees. Dropping them
+    /// costs bone roll — which artists notice — and puts every clip authored
+    /// against the template out of alignment, because the clip's rest pose and
+    /// the exported rig's would no longer agree.
+    pub rotations: Vec<[f32; 4]>,
     /// The uniform scale the template was fitted with, reported so a wildly
     /// wrong pick is visible as a number and not only as a shape.
     pub scale: f32,
@@ -143,7 +152,11 @@ pub fn fit(template_name: &str, model: &[u8]) -> Result<FittedSkeleton, RigError
         })?;
 
     let rig = m2m_io::glb::read(rig_bytes)?;
-    let (rest, parents) = rest_pose(&rig, &template.skeleton)?;
+    let TemplateRest {
+        rest,
+        parents,
+        rotations: rest_rotations,
+    } = rest_pose(&rig, &template.skeleton)?;
     let mesh = mesh_of(&m2m_io::import::load(model)?);
 
     // 128 is the resolution the fitting tests use across all nine creatures.
@@ -152,9 +165,29 @@ pub fn fit(template_name: &str, model: &[u8]) -> Result<FittedSkeleton, RigError
             template: template.name.clone(),
         })?;
 
+    // Paired by NAME, not position: `Fitted` is built from the rest pose and
+    // keeps its order today, but nothing in either type says it must.
+    let rotation_of: std::collections::HashMap<&str, [f32; 4]> = rest
+        .bones
+        .iter()
+        .map(String::as_str)
+        .zip(rest_rotations)
+        .collect();
+    let rotations = fitted
+        .bones
+        .iter()
+        .map(|bone| {
+            rotation_of
+                .get(bone.as_str())
+                .copied()
+                .unwrap_or([0.0, 0.0, 0.0, 1.0])
+        })
+        .collect();
+
     Ok(FittedSkeleton {
         parents,
         positions: fitted.positions.iter().map(|p| p.to_array()).collect(),
+        rotations,
         scale: fitted.scale,
         bones: fitted.bones,
     })
@@ -337,6 +370,7 @@ pub fn export_glb(
     skeleton: &FittedSkeleton,
     falloff: f32,
 ) -> Result<Vec<u8>, RigError> {
+    check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
     let position = |index: usize| {
@@ -345,22 +379,33 @@ pub fn export_glb(
             .get(index)
             .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
     };
+    let world_rotation = world_rotations(skeleton);
 
-    // One node per bone. A bone's local translation is its offset from its
-    // parent, so the composed world lands back on the fitted position.
+    // One node per bone. A child's local translation is expressed in its
+    // PARENT'S rotated frame, so the composed world lands back on the fitted
+    // position — writing the raw world offset would work only if every bone
+    // sat unrotated, which none of them do.
     let mut nodes: Vec<m2m_io::glb::Node> = skeleton
         .bones
         .iter()
         .enumerate()
         .map(|(bone, name)| {
             let parent = skeleton.parents.get(bone).copied().flatten();
-            let local = position(bone) - parent.map_or(glam::Vec3::ZERO, position);
+            let offset = position(bone) - parent.map_or(glam::Vec3::ZERO, position);
+            let local = match parent {
+                Some(parent) => world_rotation[parent].inverse() * offset,
+                None => offset,
+            };
             m2m_io::glb::Node {
                 name: name.clone(),
                 parent,
                 transform: m2m_io::glb::Trs {
                     translation: local.to_array(),
-                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    rotation: skeleton
+                        .rotations
+                        .get(bone)
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0, 1.0]),
                     scale: [1.0, 1.0, 1.0],
                 },
                 skin: None,
@@ -370,7 +415,7 @@ pub fn export_glb(
 
     let inverse_bind_matrices = (0..skeleton.bones.len())
         .map(|bone| {
-            glam::Mat4::from_translation(position(bone))
+            glam::Mat4::from_rotation_translation(world_rotation[bone], position(bone))
                 .inverse()
                 .to_cols_array()
         })
@@ -411,6 +456,44 @@ pub fn export_glb(
     Ok(m2m_io::glb::write(&document)?)
 }
 
+/// Each bone's world rest rotation, composed down the hierarchy.
+///
+/// One forward pass, which is only correct because a parent always precedes its
+/// child — checked by [`check_bone_order`] before either export uses this.
+fn world_rotations(skeleton: &FittedSkeleton) -> Vec<glam::Quat> {
+    let mut world = vec![glam::Quat::IDENTITY; skeleton.bones.len()];
+    for bone in 0..skeleton.bones.len() {
+        let local = skeleton
+            .rotations
+            .get(bone)
+            .map_or(glam::Quat::IDENTITY, |r| {
+                glam::Quat::from_array(*r).normalize()
+            });
+        world[bone] = match skeleton.parents.get(bone).copied().flatten() {
+            Some(parent) => world[parent] * local,
+            None => local,
+        };
+    }
+    world
+}
+
+/// Refuses a skeleton whose parent appears after its child.
+///
+/// `fbx::build` *panics* on it, the world-rotation pass silently gives the
+/// wrong answer for it, and a `FittedSkeleton` arrives from the frontend.
+/// Measured: all nine shipped rigs are already parents-first, 0 violations of
+/// 500 joints — so this guards the boundary, not the assets.
+fn check_bone_order(skeleton: &FittedSkeleton) -> Result<(), RigError> {
+    for (bone, parent) in skeleton.parents.iter().enumerate() {
+        if let Some(parent) = *parent {
+            if parent >= bone {
+                return Err(RigError::BadBoneOrder { bone, parent });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Centimetres per metre. Our meshes are in metres, the glTF convention;
 /// `fbx::build` writes `UnitScaleFactor` 1.0, which declares centimetres. Metre
 /// values in a file that says centimetres import as a 1.8 cm character.
@@ -447,14 +530,7 @@ pub fn export_fbx(
 ) -> Result<Vec<u8>, RigError> {
     use m2m_io::fbx::build;
 
-    for (bone, parent) in skeleton.parents.iter().enumerate() {
-        if let Some(parent) = *parent {
-            if parent >= bone {
-                return Err(RigError::BadBoneOrder { bone, parent });
-            }
-        }
-    }
-
+    check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
     let position = |index: usize| {
@@ -466,20 +542,41 @@ pub fn export_fbx(
             })
     };
 
+    let world_rotation = world_rotations(skeleton);
     let bones: Vec<build::Bone> = skeleton
         .bones
         .iter()
         .enumerate()
         .map(|(bone, name)| {
             let parent = skeleton.parents.get(bone).copied().flatten();
-            let local = position(bone) - parent.map_or(glam::DVec3::ZERO, position);
+            let offset = position(bone) - parent.map_or(glam::DVec3::ZERO, position);
+            let local = match parent {
+                Some(parent) => world_rotation[parent].inverse().as_dquat() * offset,
+                None => offset,
+            };
+            // FBX stores `Lcl Rotation` as Euler degrees, and a model with no
+            // `RotationOrder` reads back through `EulerOrder::Zyx`, which
+            // `fbx::transform::euler_matrix` composes as `Rz * Ry * Rx`. That
+            // is EXTRINSIC XYZ — glam's `XYZEx`. The intrinsic `XYZ` of the
+            // same name is a different rotation, and using it put every
+            // cluster 82 cm from its bone. Pinned by
+            // `an_fbx_euler_round_trip_recovers_the_quaternion`.
+            let (x, y, z) = skeleton
+                .rotations
+                .get(bone)
+                .map_or(glam::Quat::IDENTITY, |r| {
+                    glam::Quat::from_array(*r).normalize()
+                })
+                .to_euler(glam::EulerRot::XYZEx);
             build::Bone {
                 name,
                 parent,
                 translation: local.to_array(),
-                // The fitter produces joint POSITIONS, not orientations, so
-                // there is nothing truthful to put here — see `export_glb`.
-                rotation: [0.0; 3],
+                rotation: [
+                    f64::from(x.to_degrees()),
+                    f64::from(y.to_degrees()),
+                    f64::from(z.to_degrees()),
+                ],
                 scale: [1.0; 3],
                 pre_rotation: [0.0; 3],
             }
@@ -520,7 +617,11 @@ pub fn export_fbx(
             indices: &vertices_of[bone],
             weights: &weights_of[bone],
             transform: identity,
-            transform_link: glam::DMat4::from_translation(position(bone)).to_cols_array(),
+            transform_link: glam::DMat4::from_rotation_translation(
+                world_rotation[bone].as_dquat(),
+                position(bone),
+            )
+            .to_cols_array(),
         })
         .collect();
     let skins = [build::Skin {
@@ -584,10 +685,17 @@ fn bone_segments(skeleton: &FittedSkeleton) -> Vec<m2m_core::geodesic::BoneSegme
 /// once the measurement showed it was untested defensive code;
 /// `every_rig_hangs_its_bones_directly_off_each_other` is what fails if a
 /// future asset breaks the assumption.
-fn rest_pose(
-    document: &m2m_io::glb::Document,
-    name: &str,
-) -> Result<(RestPose, Vec<Option<usize>>), RigError> {
+/// A template rig read into the three things fitting and export need.
+struct TemplateRest {
+    /// Bone names and their world rest positions.
+    rest: RestPose,
+    /// Each bone's parent, as an index into the joint list.
+    parents: Vec<Option<usize>>,
+    /// Each bone's local rest rotation, xyzw.
+    rotations: Vec<[f32; 4]>,
+}
+
+fn rest_pose(document: &m2m_io::glb::Document, name: &str) -> Result<TemplateRest, RigError> {
     let skin = document
         .skins
         .first()
@@ -622,7 +730,16 @@ fn rest_pose(
             .filter_map(|&j| world.get(j).map(|m| m.transform_point3(glam::Vec3::ZERO)))
             .collect(),
     };
-    Ok((rest, parents))
+    let rotations = skin
+        .joints
+        .iter()
+        .filter_map(|&j| document.nodes.get(j).map(|n| n.transform.rotation))
+        .collect();
+    Ok(TemplateRest {
+        rest,
+        parents,
+        rotations,
+    })
 }
 
 /// A document's geometry as one mesh in world space.
@@ -741,6 +858,11 @@ mod tests {
             bones: vec!["root".into(), "middle".into(), "tip".into()],
             parents: vec![None, Some(0), Some(1)],
             positions: vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 2.0, 0.0]],
+            rotations: vec![
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             scale: 1.0,
         };
         let segments = bone_segments(&skeleton);
@@ -829,6 +951,7 @@ mod tests {
             bones: vec!["root".into(), "tip".into()],
             parents: vec![None, Some(0)],
             positions: vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
         };
         let err = super::bind(
@@ -916,6 +1039,11 @@ mod tests {
             bones: vec!["root".into(), "body".into(), "tip".into()],
             parents: vec![None, Some(0), Some(1)],
             positions: vec![[0.0, -0.4, 0.0], [0.0, 0.0, 0.0], [0.0, 0.4, 0.0]],
+            rotations: vec![
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             scale: 1.0,
         };
 
@@ -1083,6 +1211,68 @@ mod tests {
         );
     }
 
+    /// The exported skeleton keeps the template's rest rotations.
+    #[test]
+    fn the_export_keeps_the_rest_rotations_the_template_carries() {
+        // Measured: all 66 bones of `rig-human.glb` carry a non-identity local
+        // rotation, up to 179.94 degrees. Writing identity instead loses bone
+        // roll and puts every clip authored against the template out of
+        // alignment — and EVERY bind-pose assertion still passes, because they
+        // are self-consistent about whatever rotations they are given. Only
+        // comparing against the template catches it.
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+
+        let turned = skeleton
+            .rotations
+            .iter()
+            .filter(|r| {
+                glam::Quat::from_array(**r).normalize().to_axis_angle().1 > 0.01_f32.to_radians()
+            })
+            .count();
+        assert_eq!(turned, 66, "the fit dropped the template's rest rotations");
+
+        let bytes =
+            super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        for (bone, expected) in skeleton.rotations.iter().enumerate() {
+            let written = glam::Quat::from_array(back.nodes[bone].transform.rotation);
+            let expected = glam::Quat::from_array(*expected).normalize();
+            assert!(
+                written.abs_diff_eq(expected, 1e-5) || written.abs_diff_eq(-expected, 1e-5),
+                "bone {bone} was written as {written:?}, not {expected:?}"
+            );
+        }
+    }
+
+    /// The Euler order we write is the one the reader reads back.
+    #[test]
+    fn an_fbx_euler_round_trip_recovers_the_quaternion() {
+        // FBX carries `Lcl Rotation` as Euler degrees, so a quaternion has to
+        // be decomposed to write it. The order matters and the names mislead:
+        // `fbx::transform` composes `Rz * Ry * Rx` for its default order, which
+        // is EXTRINSIC XYZ, not the intrinsic XYZ of the same name. Getting it
+        // wrong is not a rounding error — it put every cluster 82 cm away.
+        for quaternion in [
+            glam::Quat::from_rotation_x(0.7),
+            glam::Quat::from_rotation_y(-1.2),
+            glam::Quat::from_euler(glam::EulerRot::XYZEx, 0.3, -0.9, 2.1),
+        ] {
+            let (x, y, z) = quaternion.to_euler(glam::EulerRot::XYZEx);
+            // Rebuilt the way `fbx::transform::euler_matrix` does it.
+            let rebuilt = glam::Mat4::from_rotation_z(z)
+                * glam::Mat4::from_rotation_y(y)
+                * glam::Mat4::from_rotation_x(x);
+            let expected = glam::Mat4::from_quat(quaternion);
+            for (a, b) in rebuilt
+                .to_cols_array()
+                .iter()
+                .zip(expected.to_cols_array().iter())
+            {
+                assert!((a - b).abs() < 1e-5, "{rebuilt:?} is not {expected:?}");
+            }
+        }
+    }
+
     /// The bind pose the clusters record is the pose the skeleton is in.
     #[test]
     fn every_cluster_binds_to_where_its_bone_actually_is() {
@@ -1113,9 +1303,14 @@ mod tests {
                 worst = worst.max((a - b).abs());
             }
         }
+        // Measured 5.0e-5 file units — half a micrometre on a 180 cm
+        // character. `Lcl Rotation` is stored as Euler DEGREES, so an f32
+        // quaternion is decomposed and recomposed to get here; the tolerance
+        // is that round trip, not slack. It was 1e-6 while `transform_link`
+        // was a bare translation and exact.
         assert!(
-            worst < 1e-6,
-            "a cluster binds {worst} away from where its bone stands"
+            worst < 1e-3,
+            "a cluster binds {worst} file units away from where its bone stands"
         );
         assert!(!skins[0].clusters.is_empty());
     }
@@ -1168,6 +1363,7 @@ mod tests {
             bones: vec!["child".into(), "parent".into()],
             parents: vec![Some(1), None],
             positions: vec![[0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
         };
         let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0)

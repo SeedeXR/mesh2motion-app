@@ -3184,3 +3184,77 @@ FBX animation path). That completes the six-step flow end to end. Also open:
 **P3-9** weight paint, **P3-7b** gizmo, **P3-3b** 11 spine joints on snake and
 shark, **P3-8c** welding, **P3-3d** move the rigs out of `legacy/`, **P4-1**
 Blender bridge, and the solver A/B above.
+
+---
+
+## Session 047 — 2026-09-01 — the exports were throwing away the rest rotations
+
+**HEAD in: `8fcc278` (CI green, 7/7). Animate did NOT land — the fix below was
+its prerequisite and took the session. That is the honest shape of it.**
+
+### The finding
+Both exports wrote **identity** bone rotations. I had justified that in a doc
+comment two sessions ago: *"a fitted skeleton is a set of joint positions, and
+inventing orientations would be making up data the fitter never produced."* The
+fitter does not produce them — **the template does**, and I had them in hand and
+dropped them. Measured: **all 66 bones of `rig-human.glb` carry a non-identity
+local rest rotation, up to 179.94 degrees.**
+
+Cost: bone roll, which artists notice, and — the reason it surfaced now — every
+clip authored against the template would land misaligned, because the clip's
+rest pose and the exported rig's no longer agree.
+
+**It was found by asking what the NEXT feature needs, not by any failing test.**
+Nothing was red. Setting out to wire Animate, the prompt's own warning ("a
+fitted skeleton has identity bone rotations — MEASURE before assuming") led
+straight to it.
+
+### What shipped
+- `FittedSkeleton` carries `rotations`, paired **by bone name**.
+- Both exports compose them: a child's local translation is expressed in its
+  **parent's rotated frame**, and the inverse bind matrix includes the bone's
+  world rotation. `check_bone_order` is now shared and guards the GLB path too —
+  the forward pass composing world rotations is only correct parents-first.
+
+### The Euler trap
+FBX stores `Lcl Rotation` as Euler **degrees**, and a model with no
+`RotationOrder` reads back through `EulerOrder::Zyx`, which
+`fbx::transform::euler_matrix` composes as `Rz * Ry * Rx` — that is
+**extrinsic** XYZ, glam's `XYZEx`, **not** the intrinsic `XYZ` of the same name.
+Using the intrinsic one put every cluster **82 cm** from its bone. The existing
+bind-pose test caught it immediately, which is the whole argument for having
+written that test. Now pinned by its own round-trip test so it cannot drift.
+
+### Two things worth repeating
+1. **A mutation survivor was the defect itself.** Replacing the carried
+   rotations with identity passed *every* bind-pose assertion — they are
+   self-consistent about whatever rotations they are handed. Only comparing the
+   export against the **template** catches it. 6 of 6 after adding that.
+2. **A tolerance was raised with a reason, not slackened.** The FBX bind-pose
+   check went 1e-6 → 1e-3 file units because `transform_link` is no longer a
+   bare translation: an f32 quaternion is decomposed to Euler degrees and
+   recomposed. Measured residual **5.0e-5 cm** — half a micrometre on a 180 cm
+   character.
+3. **Clippy came back 4 after a "final" green run**, for the second time.
+   Re-running the gates after the last edit is the only reason CI is not red.
+
+### Verification
+- Blender reads both formats: 66 bones, 1 armature, 7,399 vertices,
+  `weight_total` 7,399.0, influences `{1:254, 2:3, 3:38, 4:7104}`. assimp
+  reports the two exports identical on every field. (Blender's `bone_rest`
+  spans are **not** comparable across formats — its glTF and FBX importers
+  fabricate bone *tails* differently. Bone *heads* are what the Rust tests
+  assert, at 1e-4 m.)
+- 364 Rust tests both profiles, 0 failures (was 362); 12 frontend; fmt, clippy,
+  tsc, vite clean. Disk: `target/` 7.2 GB, under the 8 GB guard.
+- **SonarQube not run — eighth session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next — Animate, with the groundwork measured
+- The animation library's 66 bones and the human template's 66 are **identical
+  in name and order**, so the retarget mapping is the **identity** for the human
+  template; `automap` is not needed for the common case.
+- `crates/m2m-rig/examples/retarget_glb.rs` is the working reference.
+- `fbx::build::Clip` wants Euler curves in **ticks** while `retarget` produces
+  quaternions, and `build.rs` calls that conversion "lossy and ambiguous" — FBX
+  clip export needs its own thought, and asserting the TIME AXIS is mandatory.

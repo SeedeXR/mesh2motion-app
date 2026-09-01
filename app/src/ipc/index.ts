@@ -88,6 +88,8 @@ export interface FittedSkeleton {
   /** Each bone's parent as an index into `bones`; `null` for a root. */
   readonly parents: readonly (number | null)[]
   readonly positions: readonly (readonly [number, number, number])[]
+  /** Each bone's local rest rotation, xyzw, carried from the template. */
+  readonly rotations: readonly (readonly [number, number, number, number])[]
   readonly scale: number
 }
 
