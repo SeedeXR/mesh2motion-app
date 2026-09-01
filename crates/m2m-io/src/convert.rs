@@ -132,13 +132,22 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
                 });
             }
 
+            // Weld the per-corner expansion back to one vertex per FBX source.
+            // `geometry::parse` expands every polygon corner into its own
+            // vertex so that per-corner normals and UVs have somewhere to live;
+            // we carry neither, so all corners of a source vertex are identical
+            // in what we keep — position and skin weights — and merging them is
+            // lossless. On the reference rig this is 62,520 corners down to
+            // 10,514 vertices, which is what crosses the bulk channel and sits
+            // in the GPU.
+            let welded = weld_by_source(&mesh, &joints, &weights);
             primitives.push(glb::Primitive {
                 mesh: primitives.len(),
                 node: Some(node_index),
-                positions: mesh.positions,
-                indices: mesh.indices,
-                joints,
-                weights,
+                positions: welded.positions,
+                indices: welded.indices,
+                joints: welded.joints,
+                weights: welded.weights,
             });
         }
     }
@@ -150,4 +159,61 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
         clips: Vec::new(),
         report: glb::GlbReport::default(),
     })
+}
+
+/// A mesh collapsed from per-corner vertices to one per FBX source vertex.
+struct Welded {
+    positions: Vec<f32>,
+    indices: Vec<u32>,
+    joints: Vec<u16>,
+    weights: Vec<f32>,
+}
+
+/// Collapses the per-corner expansion, keyed on the FBX source vertex.
+///
+/// Every corner of a source vertex shares its position (the expansion only
+/// duplicated per-corner normals and UVs, which are not carried) and its skin
+/// weights (`Skin::bind` fills every corner of a source from the same
+/// `per_source` entry), so keeping the first corner of each source and
+/// remapping the triangle indices is exact.
+///
+/// `joints` and `weights` are `MAX_INFLUENCES` per corner and may be empty for
+/// an unskinned mesh, in which case they stay empty.
+fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]) -> Welded {
+    use m2m_core::skinning::MAX_INFLUENCES;
+
+    // Source vertex id -> new compact index, in first-seen order so the result
+    // is deterministic.
+    let mut new_index = vec![u32::MAX; mesh.source_vertex_count];
+    let mut positions = Vec::new();
+    let mut out_joints = Vec::new();
+    let mut out_weights = Vec::new();
+    let skinned = !joints.is_empty();
+
+    for corner in 0..mesh.vertex_source.len() {
+        let source = mesh.vertex_source[corner] as usize;
+        if new_index[source] != u32::MAX {
+            continue;
+        }
+        new_index[source] = positions.len() as u32 / 3;
+        positions.extend_from_slice(&mesh.positions[corner * 3..corner * 3 + 3]);
+        if skinned {
+            let base = corner * MAX_INFLUENCES;
+            out_joints.extend_from_slice(&joints[base..base + MAX_INFLUENCES]);
+            out_weights.extend_from_slice(&weights[base..base + MAX_INFLUENCES]);
+        }
+    }
+
+    let indices = mesh
+        .indices
+        .iter()
+        .map(|&corner| new_index[mesh.vertex_source[corner as usize] as usize])
+        .collect();
+
+    Welded {
+        positions,
+        indices,
+        joints: out_joints,
+        weights: out_weights,
+    }
 }

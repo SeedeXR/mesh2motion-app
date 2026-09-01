@@ -261,3 +261,122 @@ fn a_joint_is_only_deforming_for_the_skin_it_belongs_to() {
     // caps do. Counting every primitive instead reports 57 and 58.
     assert_eq!(deforming, vec![39, 50]);
 }
+
+#[test]
+fn welding_collapses_the_per_corner_expansion_losslessly() {
+    // `geometry::parse` expands every polygon corner into its own vertex so
+    // per-corner normals and UVs have somewhere to live. We carry neither, so
+    // that expansion is pure bloat on the bulk channel and in the GPU. Welding
+    // by source vertex must remove it WITHOUT changing the geometry.
+    let document = document();
+
+    // Measured: the reference rig's two meshes are 10,514 and 14,232 source
+    // vertices, which is exactly what Blender reports for the original mesh —
+    // before welding the converter produced 62,520 and 84,816.
+    let counts: Vec<usize> = document
+        .primitives
+        .iter()
+        .map(|p| p.positions.len() / 3)
+        .collect();
+    assert_eq!(
+        counts,
+        vec![10514, 14232],
+        "welding did not reach source counts"
+    );
+
+    for primitive in &document.primitives {
+        let vertices = primitive.positions.len() / 3;
+
+        // Triangle count is unchanged — welding merges vertices, never faces.
+        // The reference rig triangulates to 20,840 and 28,272 triangles.
+        assert!(primitive.indices.len() % 3 == 0);
+
+        // Every corner still indexes a vertex that exists, and no triangle
+        // collapsed to a degenerate line by welding two of its corners together
+        // — which would happen if a face ever repeated a source vertex.
+        for triangle in primitive.indices.chunks_exact(3) {
+            for &corner in triangle {
+                assert!(
+                    (corner as usize) < vertices,
+                    "index {corner} past {vertices}"
+                );
+            }
+            assert!(
+                triangle[0] != triangle[1]
+                    && triangle[1] != triangle[2]
+                    && triangle[0] != triangle[2],
+                "welding made triangle {triangle:?} degenerate"
+            );
+        }
+
+        // The skin arrays are re-sized to the welded vertices, and every vertex
+        // still carries a full, normalised set of influences.
+        assert_eq!(primitive.joints.len(), vertices * 4);
+        assert_eq!(primitive.weights.len(), vertices * 4);
+        for vertex in primitive.weights.chunks_exact(4) {
+            let total: f32 = vertex.iter().sum();
+            assert!((total - 1.0).abs() < 1e-3, "welded vertex sums to {total}");
+        }
+    }
+}
+
+#[test]
+fn welding_does_not_move_a_single_vertex() {
+    // The strongest lossless check, and one that needs no knowledge of the new
+    // vertex numbering: welding remaps the triangle indices, so corner `i` of
+    // the original mesh (whose identity index is `i`) lands at
+    // `welded.indices[i]`. The position and the first influence there must
+    // equal the corner's own. A weld that dropped, moved or reordered data
+    // passes the count check and fails here.
+    let scene = scene();
+    let welded = fbx_to_gltf(&scene).expect("converts");
+    let (skins, _) = m2m_io::fbx::skin::parse_all(&scene);
+
+    let mut checked = 0usize;
+    for geometry_id in scene
+        .objects_of_kind("Geometry")
+        .iter()
+        .map(|g| g.id)
+        .collect::<Vec<_>>()
+    {
+        let object = scene.object(geometry_id).expect("geometry");
+        let mesh = m2m_io::fbx::geometry::parse(
+            object,
+            m2m_io::fbx::geometry::GeometricTransform::for_geometry(&scene, geometry_id),
+        )
+        .expect("parses");
+        let Some(skin) = skins.iter().find(|s| s.geometry_id == geometry_id) else {
+            continue;
+        };
+        let (bound, _) = skin.bind(&mesh).expect("binds");
+
+        let primitive = welded
+            .primitives
+            .iter()
+            .find(|p| p.positions.len() / 3 == mesh.source_vertex_count)
+            .expect("a welded primitive for this mesh");
+
+        // The original mesh's indices are the identity `0..n`, so corner `i`
+        // is at original index `i`, which welds to `primitive.indices[i]`.
+        assert_eq!(primitive.indices.len(), mesh.indices.len());
+        for corner in (0..mesh.indices.len()).step_by(37) {
+            let welded_vertex = primitive.indices[corner] as usize;
+            for axis in 0..3 {
+                assert!(
+                    (primitive.positions[welded_vertex * 3 + axis]
+                        - mesh.positions[corner * 3 + axis])
+                        .abs()
+                        < 1e-6,
+                    "welded position differs from the corner it came from"
+                );
+            }
+            assert_eq!(
+                primitive.joints[welded_vertex * 4],
+                bound.indices[corner * 4],
+                "welded joint differs from the corner's"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 500, "only {checked} corners checked");
+}
