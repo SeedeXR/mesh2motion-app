@@ -52,28 +52,28 @@ bl_info = {
 DEFAULT_PORT = 47829
 
 
-def build_report(name):
-    """Summarises the current scene, in the shape `BlenderReport` expects.
+def build_report(name, objects):
+    """Summarises the given objects, in the shape `BlenderReport` expects.
 
-    Called on the main thread only — it reads `bpy.data`.
+    Called on the main thread only. Takes an explicit object list rather than
+    the whole scene so that in a live session — where the artist's own objects
+    are present — the report describes only the rig that was just pushed.
     """
     import bpy
 
-    report = {"ok": True, "file": name, "imported": True}
-    report["armatures"] = sum(1 for o in bpy.data.objects if o.type == "ARMATURE")
-    report["meshes"] = sum(1 for o in bpy.data.objects if o.type == "MESH")
-    report["bones"] = sum(len(a.bones) for a in bpy.data.armatures)
-    report["actions"] = sorted(a.name for a in bpy.data.actions)
-    report["mesh_vertices"] = sorted(len(m.vertices) for m in bpy.data.meshes)
+    armatures = [o for o in objects if o.type == "ARMATURE"]
+    meshes = [o for o in objects if o.type == "MESH"]
 
-    # Weighted vertices and the total weight, the same numbers the headless
-    # gate checks: a vertex is weighted if any group holds it, and the total is
-    # the sum of every vertex's summed weights.
+    report = {"ok": True, "file": name, "imported": True}
+    report["armatures"] = len(armatures)
+    report["meshes"] = len(meshes)
+    report["bones"] = sum(len(o.data.bones) for o in armatures)
+    report["actions"] = sorted(a.name for a in bpy.data.actions)
+    report["mesh_vertices"] = sorted(len(o.data.vertices) for o in meshes)
+
     weighted = 0
     weight_total = 0.0
-    for obj in bpy.data.objects:
-        if obj.type != "MESH":
-            continue
+    for obj in meshes:
         for vert in obj.data.vertices:
             summed = sum(g.weight for g in vert.groups)
             if summed > 0.0:
@@ -84,8 +84,15 @@ def build_report(name):
     return report
 
 
-def handle_request(header, payload):
-    """Turns one decoded request into a reply dict. Main thread only."""
+def handle_request(header, payload, reset=False):
+    """Turns one decoded request into a reply dict. Main thread only.
+
+    `reset` is for the throwaway headless server only — it clears the file to
+    factory settings first. In a live session it MUST stay false: resetting
+    would wipe the artist's open scene (and, found the hard way, disconnect
+    other add-ons). Live mode instead imports alongside whatever is open and
+    reports only the objects the import added.
+    """
     import bpy
 
     if header.get("cmd") == "ping":
@@ -100,13 +107,16 @@ def handle_request(header, payload):
     try:
         with os.fdopen(handle, "wb") as file:
             file.write(payload)
-        bpy.ops.wm.read_factory_settings(use_empty=True)
+        if reset:
+            bpy.ops.wm.read_factory_settings(use_empty=True)
+        before = {o.name for o in bpy.data.objects}
         try:
             bpy.ops.import_scene.gltf(filepath=path, disable_bone_shape=True)
         except Exception as error:  # noqa: BLE001 - report whatever Blender raised
             return {"ok": True, "file": name, "imported": False,
                     "error": f"{type(error).__name__}: {error}"}
-        return build_report(name)
+        added = [o for o in bpy.data.objects if o.name not in before]
+        return build_report(name, added)
     finally:
         try:
             os.remove(path)
@@ -150,7 +160,7 @@ def serve_once(port):
         with conn:
             header, payload = read_request(conn)
             reply = {"ok": False, "error": "no request"} if header is None \
-                else handle_request(header, payload)
+                else handle_request(header, payload, reset=True)
             conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
 
 
