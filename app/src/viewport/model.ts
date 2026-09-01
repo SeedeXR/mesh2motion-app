@@ -115,3 +115,32 @@ export function applyFraming(camera: Camera, framing: Framing): void {
     camera.updateProjectionMatrix()
   }
 }
+
+/**
+ * Line-segment endpoints for a fitted skeleton, two points per bone-to-parent
+ * link.
+ *
+ * A template skeleton is not a glTF skeleton: it arrives as bone positions and
+ * parent indices, with no scene graph and no `Bone` objects, so three's
+ * `SkeletonHelper` has nothing to attach to. This builds the same picture from
+ * the plain data.
+ *
+ * Root bones contribute no segment — a bone with no parent has nothing to draw
+ * a line to. A parent index outside the list is skipped rather than read: it
+ * would otherwise put `undefined` into a `Float32Array` as `NaN` and take the
+ * whole overlay off screen.
+ */
+export function skeletonSegments(
+  positions: readonly (readonly [number, number, number])[],
+  parents: readonly (number | null)[]
+): Float32Array {
+  const points: number[] = []
+  parents.forEach((parent, bone) => {
+    if (parent === null) return
+    const from = positions[bone]
+    const to = positions[parent]
+    if (from === undefined || to === undefined) return
+    points.push(from[0], from[1], from[2], to[0], to[1], to[2])
+  })
+  return new Float32Array(points)
+}

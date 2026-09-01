@@ -2928,3 +2928,65 @@ exposing: `template::all()` for the list, `fit_template` for the placement. The
 app needs the nine rig `.glb` files (158 KB total, so embedding is fine) and a
 way to draw a `Fitted` — bone positions plus parents — which the viewport does
 not do yet; it only draws a glTF's own skeleton.
+
+---
+
+## Session 043 — 2026-09-01 — the Choose Skeleton step, end to end
+
+**HEAD in: `037cc02` (CI green, 7/7).**
+
+### What shipped
+The app can now pick a creature and place its rig on the imported mesh — the
+first time the step rail advances at all.
+
+- **`src-tauri/src/rig.rs`** is the bridge. `m2m-rig` deliberately does not
+  depend on `m2m-io`, so the `glb::Document → RestPose/Mesh` projection lives in
+  the adapter. Six unit tests, the first `src-tauri` has ever had.
+- Commands `skeleton_templates()` and `fit_skeleton(template, path)`. The fit
+  runs on `spawn_blocking` — voxelising at 128³ would otherwise stall the
+  window. The result travels as **JSON**: a skeleton is a few hundred bones, and
+  §4 draws its line at bulk geometry, not at everything numeric.
+- The nine rigs are **embedded** (158 KB), globbed by `build.rs` exactly as
+  `m2m-rig` globs its manifests.
+- **`glb::Document::world_transforms()`** moved into `m2m-io`. It had been
+  written **three times** across `m2m-rig`'s tests and examples.
+- The viewport draws a fitted skeleton as line segments — three's
+  `SkeletonHelper` cannot help, because a template skeleton arrives as bare
+  positions and parent indices with no scene graph to attach to.
+
+### Findings worth keeping
+1. **A survivor proved a no-op, and the code got smaller.** The parent lookup
+   was a nearest-joint-ancestor walk; a mutation replacing it with the direct
+   parent survived. Rather than accept or hand-wave it, I measured all nine
+   rigs: the two rules agree on **every joint of every rig**, and each rig has
+   exactly one root. So the walk was untested defensive code. It was removed and
+   replaced with `every_rig_hangs_its_bones_directly_off_each_other`, which
+   fails loudly if a future asset breaks the assumption. *Proving a no-op can
+   end in deleting the code, not keeping it.*
+2. **Self-review caught a leak I wrote.** `rig::fit` first smuggled an import
+   error through `GlbError::MalformedHeader` with `Box::leak` to fake a
+   `&'static str` — a leak and a lie about what failed. It now has its own
+   `RigError::Import` variant.
+3. **Mutating a Tauri crate is slow** — each run rebuilds tauri, and the whole
+   set blew the 2-minute Bash cap mid-run. The snapshot restore is what made
+   that recoverable; splitting fast (vitest) from slow (cargo) and putting the
+   slow half in the background is the pattern to keep.
+4. **Gate on progress, not position.** The rail locks steps beyond
+   `furthestStep`, not beyond `activeStep`, so stepping back does not re-lock
+   what was already earned.
+
+### Verification
+- 350 Rust tests both profiles, 0 failures (was 342); 12 frontend tests; fmt,
+  clippy, tsc, vite clean.
+- Mutations **7/7 caught**, plus the one survivor proven a no-op and deleted.
+- Self-reviewed; `/code-review` still 403s with `oauth_org_not_allowed`.
+- **SonarQube not run — fourth session owed.** This one touched both `app/src`
+  and `src-tauri/src`. Still no token and the admin password is unknown.
+  **Ask the user for a token; do not guess one.**
+
+### Next
+The skeleton is placed but nothing can **adjust** it — P3-7b's transform gizmo
+now has a real caller (the Fit Skeleton step). After that, Bind Weights is the
+next inert step, and `m2m_core::skinning` is already built for it. Also open:
+**P3-3b** (11 spine joints on snake and shark tails), **P3-8c** (vertex
+welding), **P3-3d** (move the rigs out of `legacy/`), **P4-1** (Blender bridge).

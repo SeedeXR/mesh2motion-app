@@ -20,9 +20,13 @@
 import {
   AmbientLight,
   Box3,
+  BufferAttribute,
+  BufferGeometry,
   Color,
   DirectionalLight,
   GridHelper,
+  LineBasicMaterial,
+  LineSegments,
   type Material,
   Mesh,
   type Object3D,
@@ -33,7 +37,13 @@ import {
   WebGLRenderer
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { applyFraming, frameBounds, parseModel, type ModelContents } from './model'
+import {
+  applyFraming,
+  frameBounds,
+  parseModel,
+  skeletonSegments,
+  type ModelContents
+} from './model'
 
 const FOV_DEGREES = 45
 
@@ -43,6 +53,17 @@ export interface Viewport {
   readonly canvas: HTMLCanvasElement
   /** Draws a `.glb` from the bulk channel, replacing whatever was shown. */
   show(data: ArrayBuffer): Promise<ModelContents>
+  /**
+   * Draws a fitted template skeleton over the model, replacing any previous one.
+   *
+   * Separate from the glTF skeleton `show` draws: this one arrives as bare
+   * positions and parent indices, with no scene graph for `SkeletonHelper` to
+   * attach to.
+   */
+  showFittedSkeleton(
+    positions: readonly (readonly [number, number, number])[],
+    parents: readonly (number | null)[]
+  ): void
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
   /** Releases the GPU resources this viewport holds. */
@@ -73,6 +94,7 @@ export function createViewport(): Viewport {
 
   let model: Object3D | null = null
   let skeleton: SkeletonHelper | null = null
+  let fittedSkeleton: LineSegments | null = null
   let bounds = new Box3()
 
   // One frame per change, never a standing loop. `pending` collapses several
@@ -116,13 +138,17 @@ export function createViewport(): Viewport {
     requestRender()
   }
 
+  /** A material slot holds either one material or an array of them. */
+  function disposeMaterial(material: Material | Material[]): void {
+    for (const one of Array.isArray(material) ? material : [material]) one.dispose()
+  }
+
   /** Frees the GPU buffers an object tree holds. */
   function release(root: Object3D): void {
     root.traverse((object) => {
       if (!(object instanceof Mesh)) return
       object.geometry.dispose()
-      const material: Material | Material[] = object.material
-      for (const m of Array.isArray(material) ? material : [material]) m.dispose()
+      disposeMaterial(object.material)
     })
   }
 
@@ -159,10 +185,41 @@ export function createViewport(): Viewport {
       return contents
     },
 
+    showFittedSkeleton(positions, parents): void {
+      if (fittedSkeleton !== null) {
+        scene.remove(fittedSkeleton)
+        fittedSkeleton.geometry.dispose()
+        disposeMaterial(fittedSkeleton.material)
+        fittedSkeleton = null
+      }
+
+      const points = skeletonSegments(positions, parents)
+      if (points.length === 0) {
+        requestRender()
+        return
+      }
+
+      const geometry = new BufferGeometry()
+      geometry.setAttribute('position', new BufferAttribute(points, 3))
+      fittedSkeleton = new LineSegments(
+        geometry,
+        // Drawn over the mesh rather than through it: a skeleton the body hides
+        // is a skeleton nobody can check.
+        new LineBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
+      )
+      fittedSkeleton.renderOrder = 1
+      scene.add(fittedSkeleton)
+      requestRender()
+    },
+
     reframe,
 
     dispose(): void {
       if (model !== null) release(model)
+      if (fittedSkeleton !== null) {
+        fittedSkeleton.geometry.dispose()
+        disposeMaterial(fittedSkeleton.material)
+      }
       skeleton?.dispose()
       controls.dispose()
       renderer.dispose()

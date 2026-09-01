@@ -184,3 +184,17 @@ body {
   min-height: 0;
   display: block;
 }
+
+/* A creature template in the Choose Skeleton step. */
+.template {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: var(--s-1);
+  text-align: left;
+}
+
+.template[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}

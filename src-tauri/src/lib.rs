@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rig;
+
 use m2m_io::import::Import;
 use serde::Serialize;
 use tauri_plugin_dialog::DialogExt;
@@ -109,6 +111,30 @@ fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(glb))
 }
 
+/// The creature templates the Choose Skeleton step offers.
+#[tauri::command]
+fn skeleton_templates() -> Result<Vec<rig::SkeletonTemplate>, String> {
+    rig::templates().map_err(|e| e.to_string())
+}
+
+/// Places a template's skeleton on the imported model.
+///
+/// Runs off the main thread: fitting voxelises the mesh at 128 cubed, which is
+/// real work and would otherwise stall the window while it ran.
+///
+/// The result travels as JSON rather than over the bulk channel — a skeleton is
+/// a few hundred bones, not a vertex buffer, and `architecture.md` §4 draws the
+/// line at bulk geometry, not at everything numeric.
+#[tauri::command]
+async fn fit_skeleton(template: String, path: String) -> Result<rig::FittedSkeleton, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+        rig::fit(&template, &bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -129,7 +155,9 @@ pub fn run() {
             build_info,
             report_startup,
             import_model,
-            load_model
+            load_model,
+            skeleton_templates,
+            fit_skeleton
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

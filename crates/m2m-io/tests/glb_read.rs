@@ -470,3 +470,41 @@ fn non_deforming_joints_of_a_missing_skin_is_empty() {
     assert!(document.non_deforming_joints(0).is_empty());
     assert!(document.non_deforming_joints(99).is_empty());
 }
+
+#[test]
+fn world_transforms_compose_down_the_hierarchy() {
+    // The rig is a deep chain — a fingertip is eight bones from the root — so a
+    // version that returned local transforms, or that only walked one level,
+    // still looks plausible on a flat scene and fails here.
+    let document = glb::read(&fixture("rigs/rig-human.glb")).expect("reads");
+    let world = document.world_transforms();
+    assert_eq!(world.len(), document.nodes.len());
+
+    for (index, node) in document.nodes.iter().enumerate() {
+        let local = glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::from(node.transform.scale),
+            glam::Quat::from_array(node.transform.rotation),
+            glam::Vec3::from(node.transform.translation),
+        );
+        let expected = match node.parent {
+            Some(parent) => world[parent] * local,
+            None => local,
+        };
+        assert!(
+            world[index].abs_diff_eq(expected, 1e-5),
+            "{} is not its parent's world times its own local",
+            node.name
+        );
+    }
+}
+
+#[test]
+fn a_node_that_is_its_own_parent_does_not_overflow_the_stack() {
+    // Not reachable from our writer, but `parent` comes from a file. A cycle
+    // must resolve to something rather than abort the process — a stack
+    // overflow cannot be caught.
+    let mut document = glb::read(&fixture("rigs/rig-human.glb")).expect("reads");
+    document.nodes[1].parent = Some(1);
+
+    assert_eq!(document.world_transforms().len(), document.nodes.len());
+}

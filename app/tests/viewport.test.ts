@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { Box3, PerspectiveCamera, Vector3 } from 'three'
-import { applyFraming, frameBounds, parseModel } from '../src/viewport/model'
+import { applyFraming, frameBounds, parseModel, skeletonSegments } from '../src/viewport/model'
 
 function glb(path: string): ArrayBuffer {
   const file = readFileSync(path)
@@ -120,5 +120,36 @@ describe('applyFraming', () => {
     expect(camera.near).toBeGreaterThan(0)
     expect(camera.near).toBeLessThan(distance - bounds.getSize(new Vector3()).length() / 2)
     expect(camera.far).toBeGreaterThan(distance)
+  })
+})
+
+describe('skeletonSegments', () => {
+  const line: [number, number, number][] = [
+    [0, 0, 0],
+    [0, 1, 0],
+    [0, 2, 0]
+  ]
+
+  test('one segment per bone that has a parent', () => {
+    // Three bones in a chain is two lines, not three: the root has nothing to
+    // draw back to.
+    const points = skeletonSegments(line, [null, 0, 1])
+
+    expect(points).toHaveLength(2 * 2 * 3)
+    expect(Array.from(points)).toEqual([0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 0])
+  })
+
+  test('a skeleton of only roots draws nothing', () => {
+    expect(skeletonSegments(line, [null, null, null])).toHaveLength(0)
+  })
+
+  test('a parent that does not exist is skipped, not read', () => {
+    // `parents` comes from a file's node graph by way of IPC. Reading past the
+    // end would put undefined into a Float32Array as NaN, and one NaN takes the
+    // whole overlay off screen — with nothing on the console to say why.
+    const points = skeletonSegments(line, [null, 0, 99])
+
+    expect(points).toHaveLength(6)
+    expect(Array.from(points).every(Number.isFinite)).toBe(true)
   })
 })

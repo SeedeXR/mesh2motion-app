@@ -5,11 +5,15 @@ import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
   buildInfo,
+  fitSkeleton,
   importModel,
   isDesktop,
   loadModel,
   reportStartup,
-  type ImportedFile
+  skeletonTemplates,
+  type FittedSkeleton,
+  type ImportedFile,
+  type SkeletonTemplate
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
@@ -40,6 +44,18 @@ let geometryBytes: number | null = null
  * shell's markup, and a new canvas each time would mean a new WebGL context
  * each time — browsers cap those and start dropping the oldest.
  */
+/** The furthest step unlocked so far. Steps are gated on real progress. */
+let furthestStep = 0
+
+/** The creature templates, once fetched. */
+let templates: SkeletonTemplate[] | null = null
+
+/** The template the user picked, and where its skeleton landed. */
+let chosen: string | null = null
+let fitted: FittedSkeleton | null = null
+/** Set while a fit is running — voxelising takes a moment. */
+let fitting = false
+
 let viewport: Viewport | null = null
 
 function ensureViewport(): Viewport {
@@ -67,6 +83,7 @@ function escape(text: string): string {
  * warned that it was about to drop your rig; this reports that it kept it.
  */
 function renderInspector(step: StepDef): string {
+  if (step.id === StepId.LoadSkeleton) return renderSkeletonStep()
   if (step.id !== StepId.LoadModel) {
     return '<p style="color:var(--fg-2)">Properties for this step appear here.</p>'
   }
@@ -103,6 +120,62 @@ function renderInspector(step: StepDef): string {
     ${truncated}`
 }
 
+/** The Choose Skeleton step: pick a creature, place its rig on the mesh. */
+function renderSkeletonStep(): string {
+  if (loaded === null) {
+    return '<p style="color:var(--fg-2)">Import a model first — a skeleton is fitted to a mesh, so there has to be one.</p>'
+  }
+  if (templates === null) {
+    return '<p style="color:var(--fg-2)">Loading templates\u2026</p>'
+  }
+
+  const list = templates
+    .map((template) => {
+      const current = template.name === chosen
+      return `
+        <button class="action template" data-template="${escape(template.name)}"
+                ${template.available ? '' : 'disabled'}
+                ${current ? 'aria-current="true"' : ''}>
+          <span>${escape(template.name)}</span>
+          <span style="color:var(--fg-2)">${template.bones} bones</span>
+        </button>`
+    })
+    .join('')
+
+  const outcome =
+    fitted === null
+      ? '<p style="color:var(--fg-2)">Pick the creature closest to your mesh.</p>'
+      : `<dl class="facts">
+           <dt>Placed</dt><dd>${fitted.bones.length} bones</dd>
+           <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
+         </dl>
+         <p style="color:var(--fg-2)">The skeleton is drawn over the mesh. Fitting it by hand comes next.</p>`
+
+  return `${list}${fitting ? '<p style="color:var(--fg-2)">Fitting\u2026</p>' : outcome}`
+}
+
+/** Fetches the template list once, then re-renders with it. */
+async function ensureTemplates(): Promise<void> {
+  if (templates !== null || !isDesktop()) return
+  templates = await skeletonTemplates()
+  render()
+}
+
+/** Places the chosen template's skeleton and draws it. */
+async function runFit(name: string): Promise<void> {
+  if (loaded === null || fitting) return
+  chosen = name
+  fitting = true
+  render()
+  try {
+    fitted = await fitSkeleton(name, loaded.path)
+    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents)
+  } finally {
+    fitting = false
+    render()
+  }
+}
+
 /** Runs the import step: pick a file, report what came back. */
 async function runImport(button: HTMLButtonElement): Promise<void> {
   if (!isDesktop()) {
@@ -118,6 +191,8 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       loaded = picked
       const geometry = await loadModel(picked.path)
       geometryBytes = geometry.byteLength
+      // A model is what the skeleton step needs, so earning it unlocks that step.
+      furthestStep = Math.max(furthestStep, 1)
       // Rendered before drawing, so the canvas is in the DOM and has a size to
       // frame the model against.
       render()
@@ -136,8 +211,9 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
 function renderRail(): string {
   return STEPS.map((step, i) => {
     const current = i === activeStep
-    // Steps ahead of the current one are unreachable until this one completes.
-    const locked = i > activeStep
+    // Locked on real progress, not on where the user happens to be standing:
+    // going back a step must not lock the ones already earned.
+    const locked = i > furthestStep
     return `
       <button class="step" data-step="${i}"
               ${current ? 'aria-current="step"' : ''}
@@ -211,6 +287,14 @@ function render(): void {
   if (importButton !== null) {
     importButton.addEventListener('click', () => void runImport(importButton))
   }
+
+  app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
+    const name = button.dataset['template']
+    if (name === undefined) return
+    button.addEventListener('click', () => void runFit(name))
+  })
+
+  if (step.id === StepId.LoadSkeleton && loaded !== null) void ensureTemplates()
 
   app.querySelectorAll<HTMLButtonElement>('.step').forEach((btn) => {
     btn.addEventListener('click', () => {

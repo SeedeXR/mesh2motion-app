@@ -325,6 +325,57 @@ impl Document {
             .collect()
     }
 
+    /// World transform of every node, composed down the hierarchy.
+    ///
+    /// glTF does not require a node to appear after its parent, so this
+    /// resolves each chain on demand and memoises it rather than assuming an
+    /// order. Anything asking where a bone or a mesh actually *is* needs this;
+    /// it was written three times in tests and examples before it was written
+    /// once here.
+    pub fn world_transforms(&self) -> Vec<glam::Mat4> {
+        fn resolve(
+            index: usize,
+            nodes: &[Node],
+            local: &[glam::Mat4],
+            world: &mut [glam::Mat4],
+            done: &mut [bool],
+        ) -> glam::Mat4 {
+            if done[index] {
+                return world[index];
+            }
+            // Marked before recursing: a file whose parent links form a cycle
+            // would otherwise recurse until the stack overflows, which aborts
+            // rather than unwinds. A cycle resolves to the identity instead.
+            done[index] = true;
+            world[index] = match nodes[index].parent {
+                Some(parent) if parent != index => {
+                    resolve(parent, nodes, local, world, done) * local[index]
+                }
+                _ => local[index],
+            };
+            world[index]
+        }
+
+        let local: Vec<glam::Mat4> = self
+            .nodes
+            .iter()
+            .map(|n| {
+                glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::from(n.transform.scale),
+                    glam::Quat::from_array(n.transform.rotation),
+                    glam::Vec3::from(n.transform.translation),
+                )
+            })
+            .collect();
+
+        let mut world = vec![glam::Mat4::IDENTITY; self.nodes.len()];
+        let mut done = vec![false; self.nodes.len()];
+        for index in 0..self.nodes.len() {
+            resolve(index, &self.nodes, &local, &mut world, &mut done);
+        }
+        world
+    }
+
     /// How many distinct glTF meshes the primitives came from.
     pub fn mesh_count(&self) -> usize {
         let mut seen: Vec<usize> = self.primitives.iter().map(|p| p.mesh).collect();

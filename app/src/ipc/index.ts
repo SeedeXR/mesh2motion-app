@@ -72,3 +72,36 @@ export async function importModel(): Promise<ImportedFile | null> {
 export async function loadModel(path: string): Promise<ArrayBuffer> {
   return await invoke<ArrayBuffer>('load_model', { path })
 }
+
+/** A creature template offered in the Choose Skeleton step. */
+export interface SkeletonTemplate {
+  readonly name: string
+  readonly bones: number
+  readonly chains: readonly string[]
+  /** False when the manifest names a rig that is not bundled. */
+  readonly available: boolean
+}
+
+/** A template skeleton placed on the imported mesh. */
+export interface FittedSkeleton {
+  readonly bones: readonly string[]
+  /** Each bone's parent as an index into `bones`; `null` for a root. */
+  readonly parents: readonly (number | null)[]
+  readonly positions: readonly (readonly [number, number, number])[]
+  readonly scale: number
+}
+
+/** The creature templates that ship with the app. */
+export async function skeletonTemplates(): Promise<SkeletonTemplate[]> {
+  return await invoke<SkeletonTemplate[]>('skeleton_templates')
+}
+
+/**
+ * Fits a template's skeleton to the imported model.
+ *
+ * Travels as JSON, not over the bulk channel: a skeleton is a few hundred
+ * bones, and architecture.md §4 draws its line at bulk geometry.
+ */
+export async function fitSkeleton(template: string, path: string): Promise<FittedSkeleton> {
+  return await invoke<FittedSkeleton>('fit_skeleton', { template, path })
+}
