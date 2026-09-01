@@ -382,6 +382,72 @@ fn triangulate(corners: &[[f64; 3]], report: &mut GeometryReport) -> Vec<[usize;
     }
 }
 
+/// Decodes one `PolygonVertexIndex` entry into `(vertex, is_last_corner)`.
+///
+/// A negative index marks the polygon's last corner; the real id is the bitwise
+/// complement, so `-3` closes a face on vertex 2.
+fn decode_corner(raw: i64, vertex_count: usize) -> Result<(usize, bool), FbxError> {
+    let (id, last) = if raw < 0 { (!raw, true) } else { (raw, false) };
+    let id = usize::try_from(id).map_err(|_| FbxError::Malformed {
+        what: "PolygonVertexIndex",
+        detail: format!("negative vertex id {id}"),
+    })?;
+    if id >= vertex_count {
+        return Err(FbxError::Malformed {
+            what: "PolygonVertexIndex",
+            detail: format!("vertex {id} of {vertex_count}"),
+        });
+    }
+    Ok((id, last))
+}
+
+/// Appends one corner's normal, transforming it by the inverse transpose so a
+/// non-uniform scale does not tilt it, and counting a corner the layer cannot
+/// resolve.
+fn emit_normal(
+    out: &mut MeshGeometry,
+    layer: &Layer,
+    slot: usize,
+    polygon: usize,
+    id: usize,
+    // `None` means the mesh transform is identity, so the normal is left as read.
+    normal_transform: Option<DMat4>,
+    unresolved: &mut usize,
+) {
+    let resolved = layer.at(slot, polygon, id);
+    if resolved.is_none() {
+        *unresolved += 1;
+    }
+    let v = resolved.unwrap_or(&[0.0, 0.0, 0.0]);
+    let n = DVec3::new(v[0], v[1], v[2]);
+    let n = match normal_transform {
+        None => n,
+        Some(matrix) => matrix.transform_vector3(n).normalize_or_zero(),
+    };
+    out.normals
+        .get_or_insert_with(Vec::new)
+        .extend([n.x as f32, n.y as f32, n.z as f32]);
+}
+
+/// Appends one corner's UV, counting a corner the layer cannot resolve.
+fn emit_uv(
+    out: &mut MeshGeometry,
+    layer: &Layer,
+    slot: usize,
+    polygon: usize,
+    id: usize,
+    unresolved: &mut usize,
+) {
+    let resolved = layer.at(slot, polygon, id);
+    if resolved.is_none() {
+        *unresolved += 1;
+    }
+    let v = resolved.unwrap_or(&[0.0, 0.0]);
+    out.uvs
+        .get_or_insert_with(Vec::new)
+        .extend(v.iter().map(|&x| x as f32));
+}
+
 /// Extracts triangulated geometry from a `Geometry` object.
 ///
 /// # Errors
@@ -453,19 +519,7 @@ pub fn parse(object: &Object, pre_transform: GeometricTransform) -> Result<MeshG
     let mut polygon = 0usize;
 
     for (slot, &raw) in polygon_indices.iter().enumerate() {
-        // A negative index marks the polygon's last corner. The real id is the
-        // bitwise complement: `-3` closes a face on vertex 2.
-        let (id, last) = if raw < 0 { (!raw, true) } else { (raw, false) };
-        let id = usize::try_from(id).map_err(|_| FbxError::Malformed {
-            what: "PolygonVertexIndex",
-            detail: format!("negative vertex id {id}"),
-        })?;
-        if id >= vertex_count {
-            return Err(FbxError::Malformed {
-                what: "PolygonVertexIndex",
-                detail: format!("vertex {id} of {vertex_count}"),
-            });
-        }
+        let (id, last) = decode_corner(raw, vertex_count)?;
 
         corner_ids.push(id);
         corner_slots.push(slot);
@@ -512,32 +566,25 @@ pub fn parse(object: &Object, pre_transform: GeometricTransform) -> Result<MeshG
                 out.indices.push(base as u32);
 
                 if let Some(layer) = &normals {
-                    let resolved = layer.at(corner_slots[c], polygon, corner_ids[c]);
-                    if resolved.is_none() {
-                        unresolved += 1;
-                    }
-                    let v = resolved.unwrap_or(&[0.0, 0.0, 0.0]);
-                    let n = DVec3::new(v[0], v[1], v[2]);
-                    // Normals transform by the inverse transpose, not the
-                    // matrix: a non-uniform scale would otherwise tilt them.
-                    let n = if identity {
-                        n
-                    } else {
-                        normal_matrix.transform_vector3(n).normalize_or_zero()
-                    };
-                    out.normals
-                        .get_or_insert_with(Vec::new)
-                        .extend([n.x as f32, n.y as f32, n.z as f32]);
+                    emit_normal(
+                        &mut out,
+                        layer,
+                        corner_slots[c],
+                        polygon,
+                        corner_ids[c],
+                        if identity { None } else { Some(normal_matrix) },
+                        &mut unresolved,
+                    );
                 }
                 if let Some(layer) = &uvs {
-                    let resolved = layer.at(corner_slots[c], polygon, corner_ids[c]);
-                    if resolved.is_none() {
-                        unresolved += 1;
-                    }
-                    let v = resolved.unwrap_or(&[0.0, 0.0]);
-                    out.uvs
-                        .get_or_insert_with(Vec::new)
-                        .extend(v.iter().map(|&x| x as f32));
+                    emit_uv(
+                        &mut out,
+                        layer,
+                        corner_slots[c],
+                        polygon,
+                        corner_ids[c],
+                        &mut unresolved,
+                    );
                 }
             }
         }
