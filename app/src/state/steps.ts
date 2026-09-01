@@ -46,7 +46,7 @@ export const STEPS: readonly StepDef[] = [
     id: StepId.EditSkeleton,
     label: 'Fit skeleton',
     icon: 'move-3d',
-    goal: 'Move the bones so they sit inside the mesh.',
+    goal: 'The skeleton fits automatically — drag a joint handle to adjust any bone that sits outside the mesh.',
     success: 'No bone is highlighted as sitting outside the mesh surface.'
   },
   {
