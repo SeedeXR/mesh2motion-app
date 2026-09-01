@@ -293,20 +293,18 @@ function renderExportStep(): string {
   }
 
   const buttons = (['glb', 'fbx'] as const)
-    .map((format) => {
-      // FBX cannot carry a clip yet, so the button says so rather than writing
-      // a file quietly missing the animation the user picked.
-      const blocked = format === 'fbx' && clip !== null
-      return `<button class="action export" data-format="${format}"
-                ${exporting || blocked ? 'disabled' : ''}
-                ${blocked ? 'title="FBX cannot carry a clip yet"' : ''}>${
-                  exporting ? 'Writing\u2026' : `Export as .${format}`
-                }</button>`
-    })
+    .map(
+      (format) =>
+        `<button class="action export" data-format="${format}" ${exporting ? 'disabled' : ''}>${
+          exporting ? 'Writing\u2026' : `Export as .${format}`
+        }</button>`
+    )
     .join('')
   const done =
     exported === null
-      ? '<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file. Both formats carry the same rig.</p>'
+      ? `<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file${
+          clip === null ? '' : `, with ${escape(clip)}`
+        }. Both formats carry the same rig.</p>`
       : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
 
   return `${buttons}${done}`

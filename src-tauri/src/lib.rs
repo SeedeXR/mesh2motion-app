@@ -249,19 +249,17 @@ async fn export_model(
         let target = chosen.into_path().map_err(|e| e.to_string())?;
 
         let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
-        // FBX carries no clip yet: `fbx::build::Clip` wants Euler curves in
-        // ticks where retargeting produces quaternions, and `build.rs` calls
-        // that conversion lossy and ambiguous. Refused rather than silently
-        // dropped, so nobody exports an animation that is not there.
-        if extension == "fbx" && clip.is_some() {
-            return Err("FBX export cannot carry a clip yet — export as .glb".into());
-        }
         let library = match &clip {
             Some(_) => Some(library_bytes(&app, &template)?),
             None => None,
         };
         let bytes = match extension {
-            "fbx" => rig::export_fbx(&source, &skeleton, falloff),
+            "fbx" => rig::export_fbx(
+                &source,
+                &skeleton,
+                falloff,
+                library.as_deref().zip(clip.as_deref()),
+            ),
             _ => rig::export_glb(
                 &source,
                 &skeleton,

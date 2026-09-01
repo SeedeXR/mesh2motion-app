@@ -65,7 +65,7 @@ const MAX_SUBDIVISION: usize = 1024;
 /// The constant is exact, not a rounding: it is 46186158000 = 2^4 × 3^4 × 5^3
 /// × 7 × 11 × 13 × 17 × 19 × 23 × 29 × 31 × 37, chosen so every common frame
 /// rate divides it evenly.
-const FBX_TIME_UNIT: f64 = 46_186_158_000.0;
+pub const FBX_TIME_UNIT: f64 = 46_186_158_000.0;
 
 /// Converts an FBX key time to seconds.
 pub fn seconds(fbx_time: i64) -> f64 {

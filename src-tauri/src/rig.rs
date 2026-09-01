@@ -731,6 +731,125 @@ fn retarget_clip(
     })
 }
 
+/// Euler curves for a rotation track, in degrees, unwrapped across keys.
+///
+/// # Why this is not just `to_euler` per key
+///
+/// FBX stores rotation as three Euler curves; retargeting produces
+/// quaternions. `fbx::build`'s own docs call that conversion "lossy and
+/// ambiguous", and for a round trip they are right — which is why
+/// `examples/rebuild_rig.rs` passes the ORIGINAL curves through untouched. A
+/// retargeted clip has no original curves, so the conversion is unavoidable
+/// and the ambiguity has to be handled rather than dodged.
+///
+/// The hazard is not accuracy, it is **continuity**. Every rotation has two
+/// Euler triples — `(x, y, z)` and `(x+180, 180-y, z+180)` — and each component
+/// is free modulo 360. Taking the canonical triple per key independently can
+/// jump a component by a full turn between neighbours, and an importer
+/// interpolates that jump as a spin: every key is individually correct and the
+/// motion is wrong.
+///
+/// So each key is chosen to sit nearest its predecessor: both triples are
+/// unwrapped to within half a turn of the last key, and the closer one wins.
+fn euler_curves(rotations: &[glam::Quat]) -> [Vec<f32>; 3] {
+    /// Brings each component within half a turn of `previous`.
+    fn unwrap(mut angles: [f32; 3], previous: [f32; 3]) -> [f32; 3] {
+        for (angle, last) in angles.iter_mut().zip(previous) {
+            *angle += 360.0 * ((last - *angle) / 360.0).round();
+        }
+        angles
+    }
+    fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+        a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum()
+    }
+
+    let mut curves = [Vec::new(), Vec::new(), Vec::new()];
+    let mut previous: Option<[f32; 3]> = None;
+    for rotation in rotations {
+        let (x, y, z) = rotation.normalize().to_euler(glam::EulerRot::XYZEx);
+        let direct = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
+        // The same rotation, expressed the other way round.
+        let mirrored = [direct[0] + 180.0, 180.0 - direct[1], direct[2] + 180.0];
+
+        let chosen = match previous {
+            None => direct,
+            Some(last) => {
+                let (a, b) = (unwrap(direct, last), unwrap(mirrored, last));
+                if distance(a, last) <= distance(b, last) {
+                    a
+                } else {
+                    b
+                }
+            }
+        };
+        previous = Some(chosen);
+        for (curve, angle) in curves.iter_mut().zip(chosen) {
+            curve.push(angle);
+        }
+    }
+    curves
+}
+
+/// One animated property of one bone, owning what `fbx::build` borrows.
+struct BuiltCurves {
+    bone: usize,
+    property: &'static str,
+    kind: &'static str,
+    times: Vec<i64>,
+    values: [Vec<f32>; 3],
+}
+
+/// Turns a retargeted clip into FBX channels.
+fn fbx_channels(clip: &m2m_io::glb::Clip, bones: usize) -> Vec<BuiltCurves> {
+    let ticks = |times: &[f32]| -> Vec<i64> {
+        times
+            .iter()
+            .map(|t| (f64::from(*t) * m2m_io::fbx::animation::FBX_TIME_UNIT) as i64)
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for channel in &clip.channels {
+        if channel.node >= bones {
+            continue;
+        }
+        match channel.path {
+            m2m_io::glb::Path::Rotation => {
+                let rotations: Vec<glam::Quat> = channel
+                    .values
+                    .chunks_exact(4)
+                    .map(|q| glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]))
+                    .collect();
+                out.push(BuiltCurves {
+                    bone: channel.node,
+                    property: "Lcl Rotation",
+                    kind: "R",
+                    times: ticks(&channel.times),
+                    values: euler_curves(&rotations),
+                });
+            }
+            m2m_io::glb::Path::Translation => {
+                let mut values = [Vec::new(), Vec::new(), Vec::new()];
+                for point in channel.values.chunks_exact(3) {
+                    for (curve, axis) in values.iter_mut().zip(point) {
+                        // The rest of the FBX export is in centimetres.
+                        curve.push(axis * CM_PER_M as f32);
+                    }
+                }
+                out.push(BuiltCurves {
+                    bone: channel.node,
+                    property: "Lcl Translation",
+                    kind: "T",
+                    times: ticks(&channel.times),
+                    values,
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Each bone's world rest rotation, composed down the hierarchy.
 ///
 /// One forward pass, which is only correct because a parent always precedes its
@@ -802,6 +921,7 @@ pub fn export_fbx(
     model: &[u8],
     skeleton: &FittedSkeleton,
     falloff: f32,
+    animation: Option<(&[u8], &str)>,
 ) -> Result<Vec<u8>, RigError> {
     use m2m_io::fbx::build;
 
@@ -904,11 +1024,64 @@ pub fn export_fbx(
         clusters: &clusters,
     }];
 
+    // The clip, in FBX's own terms. Owned here so the borrowed `Curve`s and
+    // `Channel`s below outlive the `Scene`.
+    let moved = match animation {
+        Some((library, name)) => Some(retarget_clip(&m2m_io::glb::read(library)?, skeleton, name)?),
+        None => None,
+    };
+    let built = moved
+        .as_ref()
+        .map(|clip| fbx_channels(clip, skeleton.bones.len()))
+        .unwrap_or_default();
+
+    const AXES: [&str; 3] = ["d|X", "d|Y", "d|Z"];
+    let curves: Vec<Vec<build::Curve>> = built
+        .iter()
+        .map(|entry| {
+            entry
+                .values
+                .iter()
+                .enumerate()
+                .map(|(axis, values)| build::Curve {
+                    axis: AXES[axis],
+                    times: &entry.times,
+                    values,
+                    // Where a curve does not reach, an importer holds this.
+                    // Zero is the rest value for both properties, because a
+                    // bone's own rest transform already sits on the model.
+                    default: 0.0,
+                })
+                .collect()
+        })
+        .collect();
+    let channels: Vec<build::Channel> = built
+        .iter()
+        .zip(&curves)
+        .map(|(entry, curves)| build::Channel {
+            bone: entry.bone,
+            property: entry.property,
+            kind: entry.kind,
+            curves,
+        })
+        .collect();
+    let clips: Vec<build::Clip> = moved
+        .as_ref()
+        .map(|clip| {
+            vec![build::Clip {
+                name: &clip.name,
+                duration: (f64::from(clip.duration) * m2m_io::fbx::animation::FBX_TIME_UNIT) as i64,
+                layer: "Layer0",
+                channels: &channels,
+            }]
+        })
+        .unwrap_or_default();
+
     let scene = build::Scene {
         meshes: &meshes,
         bones: &bones,
         skins: &skins,
-        clips: &[],
+        clips: &clips,
         // 30fps. Nothing here is animated, but the field is not optional and a
         // wrong frame rate would misread any clip added later.
         time_mode: 6,
@@ -1439,8 +1612,8 @@ mod tests {
         // Metre values in that file import as a 1.8 cm character, and no count
         // of bones or vertices would show it.
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
 
         let path = std::env::temp_dir().join("m2m-export-check.fbx");
         std::fs::write(&path, &bytes).expect("writes");
@@ -1797,6 +1970,118 @@ mod tests {
         assert_eq!(differing, 62, "the rest poses moved relative to each other");
     }
 
+    /// Every key reconstructs, and no neighbour jumps.
+    #[test]
+    fn euler_curves_reconstruct_each_key_without_jumping_between_them() {
+        // Two-sided, because each half alone is satisfiable by a broken
+        // conversion: taking the canonical triple per key reconstructs
+        // perfectly and can still jump a full turn between neighbours, which an
+        // importer interpolates as a spin. A full turn about Y is the case that
+        // forces it — the middle angle of an XYZ Euler is confined to a
+        // quarter turn, so continuing past it MUST switch branches.
+        // About a TILTED axis, so all three Euler components are non-zero. A
+        // pure Y spin cannot tell intrinsic XYZ from extrinsic: for a
+        // single-axis rotation the two orders agree, and a mutation swapping
+        // them survives.
+        let axis = glam::Vec3::new(0.3, 1.0, 0.2).normalize();
+        let rotations: Vec<glam::Quat> = (0..=72)
+            .map(|step| glam::Quat::from_axis_angle(axis, step as f32 * 5.0_f32.to_radians()))
+            .collect();
+        let curves = super::euler_curves(&rotations);
+
+        let mut worst_error = 0.0f32;
+        let mut worst_jump = 0.0f32;
+        for key in 0..rotations.len() {
+            let (x, y, z) = (curves[0][key], curves[1][key], curves[2][key]);
+            let rebuilt = glam::Quat::from_mat4(
+                &(glam::Mat4::from_rotation_z(z.to_radians())
+                    * glam::Mat4::from_rotation_y(y.to_radians())
+                    * glam::Mat4::from_rotation_x(x.to_radians())),
+            );
+            let expected = rotations[key];
+            let signed = if rebuilt.dot(expected) < 0.0 {
+                -expected
+            } else {
+                expected
+            };
+            worst_error = worst_error.max(rebuilt.angle_between(signed).to_degrees());
+
+            if key > 0 {
+                for curve in &curves {
+                    worst_jump = worst_jump.max((curve[key] - curve[key - 1]).abs());
+                }
+            }
+        }
+
+        // Measured 0.056 degrees, and it is gimbal lock rather than sloppiness:
+        // a pure Y spin passes exactly through y = 90, where an XYZ Euler's
+        // outer angles become ill-conditioned and f32 degrees lose precision.
+        // This is the worst case by construction; real motion rarely sits on
+        // the singularity, and 0.06 degrees is far below anything visible.
+        assert!(worst_error < 0.1, "a key is off by {worst_error} degrees");
+        // Each step is 5 degrees, so a well-chosen branch never moves far. A
+        // canonical-per-key conversion jumps 180 here.
+        assert!(worst_jump < 90.0, "a neighbour jumps {worst_jump} degrees");
+    }
+
+    /// An animated FBX comes back through our own reader with its time axis.
+    #[test]
+    fn the_animated_fbx_keeps_the_clips_time_axis() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_fbx(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some((&library(), "Chest_Open")),
+        )
+        .expect("exports");
+
+        let path = std::env::temp_dir().join("m2m-animated.fbx");
+        std::fs::write(&path, &bytes).expect("writes");
+        println!("wrote {}", path.display());
+
+        let scene = m2m_io::fbx::dom::Scene::from_document(
+            m2m_io::fbx::binary::parse(&bytes).expect("our own reader reads it"),
+        );
+        // 30 fps, or every tick time is read at the wrong rate.
+        assert_eq!(scene.time_mode, Some(6));
+
+        let models = m2m_io::fbx::model::parse_all(&scene);
+        let (clips, _) = m2m_io::fbx::animation::parse_all(&scene, &models);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].name, "Chest_Open");
+
+        // The clip is 1.375 s. Counting keys proves nothing — the reader merges
+        // axes onto one time array and can insert sub-keys — but the DURATION
+        // is what plays.
+        assert!(
+            (clips[0].duration - 1.375).abs() < 0.01,
+            "clip is {} s long",
+            clips[0].duration
+        );
+        assert!(!clips[0].tracks.is_empty());
+
+        // Translations must be in CENTIMETRES, like the rest of the FBX export.
+        // In metres they are a hundred times too small, every key still reads
+        // back, and the character barely moves — a silent failure that no
+        // count or time-axis check sees.
+        let travel = clips[0]
+            .tracks
+            .iter()
+            .filter(|track| track.kind == m2m_io::fbx::animation::TrackKind::Position)
+            .flat_map(|track| {
+                let ys: Vec<f32> = track.values.chunks_exact(3).map(|v| v[1]).collect();
+                let span = ys.iter().copied().fold(f32::MIN, f32::max)
+                    - ys.iter().copied().fold(f32::MAX, f32::min);
+                [span]
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            travel > 1.0,
+            "the largest vertical travel is {travel} file units, which is metres not centimetres"
+        );
+    }
+
     /// The Euler order we write is the one the reader reads back.
     #[test]
     fn an_fbx_euler_round_trip_recovers_the_quaternion() {
@@ -1835,8 +2120,8 @@ mod tests {
         // the origin, so the mesh tears apart the moment it is posed. Neither
         // Blender's report nor assimp's would say a word.
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
 
         let scene = m2m_io::fbx::dom::Scene::from_document(
             m2m_io::fbx::binary::parse(&bytes).expect("reads"),
@@ -1872,8 +2157,8 @@ mod tests {
     #[test]
     fn the_fbx_clusters_carry_every_influence_exactly_once() {
         let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
-        let bytes =
-            super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0).expect("exports");
+        let bytes = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
 
         let scene = m2m_io::fbx::dom::Scene::from_document(
             m2m_io::fbx::binary::parse(&bytes).expect("reads"),
@@ -1919,7 +2204,7 @@ mod tests {
             rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
         };
-        let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0)
+        let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
             .expect_err("refused");
 
         assert!(

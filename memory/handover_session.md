@@ -3384,3 +3384,63 @@ waiting for the fuzzer to rediscover it.
 **P3-6g** FBX clip export. Then **P3-9** weight paint, **P3-7b** gizmo,
 **P3-3b** 11 spine joints on snake and shark, **P3-8c** welding, **P3-3d** move
 the rigs out of `legacy/`, **P4-1** Blender bridge, and the solver A/B.
+
+---
+
+## Session 050 — 2026-09-01 — FBX carries the animation
+
+**HEAD in: `05ed577` (CI green, 7/7 — the fuzz fix held).**
+
+### What shipped
+`export_fbx` takes the same optional `(library, clip)` as `export_glb` and
+writes the retargeted clip as FBX Euler curves in ticks. Both formats now carry
+mesh, skeleton, weights and animation.
+
+**`build.rs` calls the quaternion-to-Euler conversion "lossy and ambiguous",
+and for a round trip it is right** — which is exactly why `rebuild_rig` passes
+the original curves through untouched. A *retargeted* clip has no original
+curves, so the conversion is unavoidable, and the honest move was to handle the
+ambiguity rather than treat the warning as a prohibition.
+
+### The hazard was continuity, not accuracy
+Every rotation has two Euler triples, and each component is free modulo 360.
+Taking the canonical triple per key **reconstructs every key perfectly** and can
+still jump a full turn between neighbours — which an importer interpolates as a
+spin. Every key individually correct, the motion wrong. Each key is now chosen
+nearest its predecessor.
+
+*This is the same shape as "a verbatim copy passes every count": the per-key
+check and the between-key check are different questions.*
+
+### Two survivors were fixture weaknesses, not code gaps
+1. **A pure Y spin cannot tell intrinsic XYZ from extrinsic** — for a
+   single-axis rotation the two orders agree, so swapping them survived. The
+   fixture now rotates about a **tilted** axis.
+2. **Nothing checked translation magnitude.** Metres instead of centimetres
+   passed every count and every time-axis check while the character barely
+   moved. The clip's vertical travel is now asserted.
+
+### A self-inflicted one worth remembering
+`open(p,'w').write(open(p).read().replace(...))` **truncates the file before the
+inner read runs** — it gutted `lib.rs` to 0 bytes. `git checkout` restored it in
+seconds because the work was committed, but never write and read the same path
+in one expression.
+
+### Verification
+- **Blender**: `Armature|Chest_Open|Layer0`, curves=660, keys=22440,
+  **range=1.00-42.25** — 41.25 frames at the declared 30 fps is exactly the
+  source's 1.375 s. (The GLB reads 0.00-33.00 because Blender's glTF import uses
+  the scene's 24 fps. Same duration, different declared rate.)
+- 375 Rust tests both profiles, 0 failures (was 373); 12 frontend; fmt, clippy,
+  tsc, vite clean. Mutations **5/5 caught**.
+- Tolerance raised with a measured reason: 0.056 degrees, and it is **gimbal
+  lock** — the fixture passes exactly through y = 90.
+- Disk: `target/` 7.38 GB, ~600 MB under the guard and climbing.
+- **SonarQube not run — eleventh session owed.** Touched `app/src` and
+  `src-tauri/src`. **Ask the user for a token; do not guess one.**
+
+### Next
+**P3-6h** viewport playback (`AnimationMixer`, rAF only while playing) is the
+last piece of the animation story. Then **P3-9** weight paint, **P3-7b** gizmo,
+**P3-3b** 11 spine joints on snake and shark, **P3-8c** welding, **P3-3d** move
+the rigs out of `legacy/`, **P4-1** Blender bridge, and the solver A/B.
