@@ -10,9 +10,12 @@ Rig humans, birds, fish, quadrupeds and anything else — locally, fast, no acco
 
 ---
 
-> **Status: early port.** The shipping web app lives in [`legacy/`](./legacy) and
-> still works. This root is the native Tauri + Rust rewrite, currently at
-> scaffold stage. Progress is tracked in [`memory/todo.md`](./memory/todo.md).
+> **Status: the core rigging flow is complete.** All six steps — import, skeleton,
+> fit, bind, animate, export — work end-to-end for every one of the 9 creature
+> templates, verified against Blender ([`src-tauri/tests/visual_regression.rs`](src-tauri/tests/visual_regression.rs)).
+> Remaining work is polish and release (signing, docs, a perf pass); see
+> [`memory/todo.md`](./memory/todo.md). The original web app lives in
+> [`legacy/`](./legacy) and still runs — it is the A/B correctness baseline.
 
 ## Why
 
@@ -20,11 +23,26 @@ Rig humans, birds, fish, quadrupeds and anything else — locally, fast, no acco
 powerful and unintuitive. Mesh2Motion aims at the gap: drop in *any* creature and
 get a production-usable rig with clean weights in under a minute.
 
-The legacy web app already covers 9 creature templates. Its ceiling is the
-skinning solver — rigid nearest-bone assignment
-([`WeightCalculator.ts:71`](legacy/src/lib/solvers/WeightCalculator.ts)), which
-needs a hand-written corrector per body part per creature. The rewrite replaces it
-with geodesic voxel binding, which removes that whole class of patch.
+The legacy web app's ceiling was its skinning solver — rigid nearest-bone
+assignment ([`WeightCalculator.ts:71`](legacy/src/lib/solvers/WeightCalculator.ts)),
+which needed a hand-written corrector per body part per creature. The native
+rewrite replaces it with geodesic voxel binding ([`crates/m2m-rig`](crates/m2m-rig)),
+which removes that whole class of patch: across all 9 templates every vertex binds
+with a full unit of weight and no unreachable islands.
+
+## How it works — the six steps
+
+The app is a straight-line pipeline; each step is one Tauri command over the Rust
+core ([`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)):
+
+| Step | What you do | Behind it |
+|---|---|---|
+| **1. Import** | Drop in a mesh (`.glb`, `.fbx`) — existing bones are kept, not stripped | `import_model` |
+| **2. Skeleton** | Pick one of 9 creature templates (human, bird, fish, quadruped, …) | `skeleton_templates` |
+| **3. Fit** | The template snaps to your mesh's proportions | `fit_skeleton` |
+| **4. Bind** | Geodesic voxel binding computes skin weights; a weight-paint overlay shows them | `bind_weights`, `weight_overlay` |
+| **5. Animate** | Pick a clip, preview it live, retargeted onto your rig | `animation_clips`, `preview_animation` |
+| **6. Export** | Write `.glb` (glTF binary) or `.fbx` — mesh + skeleton + weights + clip | `export_model` |
 
 ## Requirements
 
@@ -55,10 +73,25 @@ npm run app:build      # → target/release/bundle/macos/Mesh2Motion.app
 Run the checks:
 
 ```bash
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-npx tsc --noEmit
+cargo test --workspace                                  # Rust unit + integration
+cargo clippy --workspace --all-targets -- -D warnings   # lint, warnings = errors
+npx tsc --noEmit && npx vitest run                       # frontend typecheck + tests
 ```
+
+`#[ignore]`d tests need a local Blender (they read exports back through it) and are
+skipped by default. Run the full visual-regression sweep with:
+
+```bash
+cargo test -p mesh2motion --release -- --ignored
+```
+
+## The Blender bridge
+
+[`crates/m2m-bridge`](crates/m2m-bridge) inspects a model by importing it into a
+headless Blender — the one reader in the project that shares none of our design, so
+it is the independent check that an export is correct. It resolves Blender from
+`$M2M_BLENDER` or the macOS default, and is optional: nothing in the core flow
+depends on it.
 
 ## Running the legacy web app
 
