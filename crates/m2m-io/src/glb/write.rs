@@ -130,128 +130,102 @@ mod bytemuck_lite {
     }
 }
 
-/// Writes a document as a self-contained `.glb`.
-///
-/// # Errors
-///
-/// [`GlbError::Invalid`] if the assembled document fails the `gltf` crate's own
-/// serialization, which in practice means a count that does not fit a `u32`.
-pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
-    let mut bin = Bin::new();
-    let mut accessors: Vec<json::Accessor> = Vec::new();
-    let mut meshes: Vec<json::Mesh> = Vec::new();
-
-    // Primitives are grouped back into the meshes they came from, so a mesh of
-    // 22 primitives is written as one mesh again rather than 22.
-    let mut by_mesh: BTreeMap<usize, Vec<&super::Primitive>> = BTreeMap::new();
-    for primitive in &document.primitives {
-        // A primitive with nothing to draw is skipped rather than written as
-        // empty: glTF requires an accessor's count to be at least one, so a
-        // zero-count POSITION or index accessor produces a file that readers —
-        // ours included — reject. This is reachable from real input, because
-        // the reader drops triangles that name vertices the mesh does not have,
-        // and dropping all of them leaves a primitive with no indices.
-        if primitive.indices.is_empty() || primitive.positions.is_empty() {
-            continue;
-        }
-        by_mesh.entry(primitive.mesh).or_default().push(primitive);
+/// Writes one optional Vec4 vertex attribute (joints, weights or colours) into
+/// `attributes`, doing nothing when the primitive does not carry it.
+fn vec4_attribute<T: bytemuck_lite::Pod>(
+    bin: &mut Bin,
+    accessors: &mut Vec<json::Accessor>,
+    attributes: &mut BTreeMap<Checked<json::mesh::Semantic>, json::Index<json::Accessor>>,
+    data: &[T],
+    semantic: json::mesh::Semantic,
+    component: json::accessor::ComponentType,
+) {
+    if data.is_empty() {
+        return;
     }
-    // Which written mesh each source mesh became, since a source mesh with no
-    // primitives is not written at all and would otherwise shift the indices.
-    let mut mesh_indices: BTreeMap<usize, u32> = BTreeMap::new();
+    let view = bin.push(&as_bytes(data));
+    let acc = accessor(view, data.len() / 4, component, json::accessor::Type::Vec4);
+    attributes.insert(Checked::Valid(semantic), push(accessors, acc));
+}
 
-    for (source, primitives) in &by_mesh {
-        let mut written = Vec::new();
-        for primitive in primitives {
-            let vertices = primitive.positions.len() / 3;
-            let view = bin.push(&as_bytes(&primitive.positions));
-            let mut positions = accessor(
-                view,
-                vertices,
-                json::accessor::ComponentType::F32,
-                json::accessor::Type::Vec3,
-            );
-            // POSITION must carry min and max; the crate's own validator
-            // rejects the file without them.
-            let (min, max) = bounds(&primitive.positions);
-            positions.min = Some(json::serialize::to_value(min).map_err(json_error)?);
-            positions.max = Some(json::serialize::to_value(max).map_err(json_error)?);
-            let position_index = push(&mut accessors, positions);
+/// Builds one glTF primitive: POSITION with its required bounds, the optional
+/// skin and colour attributes, and the triangle indices.
+fn write_primitive(
+    bin: &mut Bin,
+    accessors: &mut Vec<json::Accessor>,
+    primitive: &super::Primitive,
+) -> Result<json::mesh::Primitive, GlbError> {
+    let vertices = primitive.positions.len() / 3;
+    let view = bin.push(&as_bytes(&primitive.positions));
+    let mut positions = accessor(
+        view,
+        vertices,
+        json::accessor::ComponentType::F32,
+        json::accessor::Type::Vec3,
+    );
+    // POSITION must carry min and max; the crate's own validator
+    // rejects the file without them.
+    let (min, max) = bounds(&primitive.positions);
+    positions.min = Some(json::serialize::to_value(min).map_err(json_error)?);
+    positions.max = Some(json::serialize::to_value(max).map_err(json_error)?);
+    let position_index = push(accessors, positions);
 
-            let mut attributes = BTreeMap::new();
-            attributes.insert(
-                Checked::Valid(json::mesh::Semantic::Positions),
-                position_index,
-            );
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        Checked::Valid(json::mesh::Semantic::Positions),
+        position_index,
+    );
+    vec4_attribute(
+        bin,
+        accessors,
+        &mut attributes,
+        &primitive.joints,
+        json::mesh::Semantic::Joints(0),
+        json::accessor::ComponentType::U16,
+    );
+    vec4_attribute(
+        bin,
+        accessors,
+        &mut attributes,
+        &primitive.weights,
+        json::mesh::Semantic::Weights(0),
+        json::accessor::ComponentType::F32,
+    );
+    vec4_attribute(
+        bin,
+        accessors,
+        &mut attributes,
+        &primitive.colors,
+        json::mesh::Semantic::Colors(0),
+        json::accessor::ComponentType::F32,
+    );
 
-            if !primitive.joints.is_empty() {
-                let view = bin.push(&as_bytes(&primitive.joints));
-                let joints = accessor(
-                    view,
-                    primitive.joints.len() / 4,
-                    json::accessor::ComponentType::U16,
-                    json::accessor::Type::Vec4,
-                );
-                attributes.insert(
-                    Checked::Valid(json::mesh::Semantic::Joints(0)),
-                    push(&mut accessors, joints),
-                );
-            }
-            if !primitive.weights.is_empty() {
-                let view = bin.push(&as_bytes(&primitive.weights));
-                let weights = accessor(
-                    view,
-                    primitive.weights.len() / 4,
-                    json::accessor::ComponentType::F32,
-                    json::accessor::Type::Vec4,
-                );
-                attributes.insert(
-                    Checked::Valid(json::mesh::Semantic::Weights(0)),
-                    push(&mut accessors, weights),
-                );
-            }
-            if !primitive.colors.is_empty() {
-                let view = bin.push(&as_bytes(&primitive.colors));
-                let colors = accessor(
-                    view,
-                    primitive.colors.len() / 4,
-                    json::accessor::ComponentType::F32,
-                    json::accessor::Type::Vec4,
-                );
-                attributes.insert(
-                    Checked::Valid(json::mesh::Semantic::Colors(0)),
-                    push(&mut accessors, colors),
-                );
-            }
+    let view = bin.push(&as_bytes(&primitive.indices));
+    let indices = accessor(
+        view,
+        primitive.indices.len(),
+        json::accessor::ComponentType::U32,
+        json::accessor::Type::Scalar,
+    );
+    Ok(json::mesh::Primitive {
+        attributes,
+        indices: Some(push(accessors, indices)),
+        material: None,
+        mode: Checked::Valid(json::mesh::Mode::Triangles),
+        targets: None,
+        extensions: None,
+        extras: Default::default(),
+    })
+}
 
-            let view = bin.push(&as_bytes(&primitive.indices));
-            let indices = accessor(
-                view,
-                primitive.indices.len(),
-                json::accessor::ComponentType::U32,
-                json::accessor::Type::Scalar,
-            );
-            written.push(json::mesh::Primitive {
-                attributes,
-                indices: Some(push(&mut accessors, indices)),
-                material: None,
-                mode: Checked::Valid(json::mesh::Mode::Triangles),
-                targets: None,
-                extensions: None,
-                extras: Default::default(),
-            });
-        }
-        mesh_indices.insert(*source, meshes.len() as u32);
-        meshes.push(json::Mesh {
-            primitives: written,
-            name: None,
-            weights: None,
-            extensions: None,
-            extras: Default::default(),
-        });
-    }
-
-    let skins: Vec<json::Skin> = document
+/// Writes the document's skins, each with its optional inverse-bind-matrix
+/// accessor, in document order.
+fn write_skins(
+    document: &Document,
+    bin: &mut Bin,
+    accessors: &mut Vec<json::Accessor>,
+) -> Vec<json::Skin> {
+    document
         .skins
         .iter()
         .map(|skin| {
@@ -267,7 +241,7 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
                 let count = skin.inverse_bind_matrices.len();
                 let view = bin.push(&as_bytes(&flat));
                 Some(push(
-                    &mut accessors,
+                    accessors,
                     accessor(
                         view,
                         count,
@@ -289,11 +263,15 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
                 extras: Default::default(),
             }
         })
-        .collect();
+        .collect()
+}
 
-    let animations = write_animations(document, &mut bin, &mut accessors)?;
-
-    // glTF stores children; the document stores parents.
+/// Writes the node hierarchy (glTF stores children; the document stores
+/// parents) and returns the nodes together with the scene's root indices.
+fn write_nodes(
+    document: &Document,
+    mesh_indices: &BTreeMap<usize, u32>,
+) -> (Vec<json::Node>, Vec<json::Index<json::Node>>) {
     let mut children: Vec<Vec<json::Index<json::Node>>> = vec![Vec::new(); document.nodes.len()];
     for (index, node) in document.nodes.iter().enumerate() {
         if let Some(parent) = node.parent {
@@ -341,6 +319,58 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
         .filter(|(_, node)| node.parent.is_none())
         .map(|(index, _)| json::Index::new(index as u32))
         .collect();
+
+    (nodes, roots)
+}
+
+/// Writes a document as a self-contained `.glb`.
+///
+/// # Errors
+///
+/// [`GlbError::Invalid`] if the assembled document fails the `gltf` crate's own
+/// serialization, which in practice means a count that does not fit a `u32`.
+pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
+    let mut bin = Bin::new();
+    let mut accessors: Vec<json::Accessor> = Vec::new();
+    let mut meshes: Vec<json::Mesh> = Vec::new();
+
+    // Primitives are grouped back into the meshes they came from, so a mesh of
+    // 22 primitives is written as one mesh again rather than 22.
+    let mut by_mesh: BTreeMap<usize, Vec<&super::Primitive>> = BTreeMap::new();
+    for primitive in &document.primitives {
+        // A primitive with nothing to draw is skipped rather than written as
+        // empty: glTF requires an accessor's count to be at least one, so a
+        // zero-count POSITION or index accessor produces a file that readers —
+        // ours included — reject. This is reachable from real input, because
+        // the reader drops triangles that name vertices the mesh does not have,
+        // and dropping all of them leaves a primitive with no indices.
+        if primitive.indices.is_empty() || primitive.positions.is_empty() {
+            continue;
+        }
+        by_mesh.entry(primitive.mesh).or_default().push(primitive);
+    }
+    // Which written mesh each source mesh became, since a source mesh with no
+    // primitives is not written at all and would otherwise shift the indices.
+    let mut mesh_indices: BTreeMap<usize, u32> = BTreeMap::new();
+
+    for (source, primitives) in &by_mesh {
+        let mut written = Vec::new();
+        for primitive in primitives {
+            written.push(write_primitive(&mut bin, &mut accessors, primitive)?);
+        }
+        mesh_indices.insert(*source, meshes.len() as u32);
+        meshes.push(json::Mesh {
+            primitives: written,
+            name: None,
+            weights: None,
+            extensions: None,
+            extras: Default::default(),
+        });
+    }
+
+    let skins = write_skins(document, &mut bin, &mut accessors);
+    let animations = write_animations(document, &mut bin, &mut accessors)?;
+    let (nodes, roots) = write_nodes(document, &mesh_indices);
 
     let empty_scene = roots.is_empty();
     let root = json::Root {

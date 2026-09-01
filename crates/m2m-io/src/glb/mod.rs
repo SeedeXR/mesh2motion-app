@@ -472,6 +472,211 @@ fn sanitize(values: &mut [f32], count: &mut usize) {
 /// panics rather than being reported. This walks the same references first.
 /// Only structural references are covered: everything the crate might
 /// dereference, not only what this reader goes on to use.
+/// How many of each indexable entity the document declares — the upper bound
+/// every index reference below is checked against.
+struct Counts {
+    accessors: usize,
+    views: usize,
+    buffers: usize,
+    nodes: usize,
+    meshes: usize,
+    skins: usize,
+    materials: usize,
+    images: usize,
+    scenes: usize,
+}
+
+/// One index reference, checked against the count of what it points into. A
+/// missing or non-integer value is not an index and passes.
+fn check_index(
+    value: Option<&serde_json::Value>,
+    owner: &'static str,
+    target: &'static str,
+    count: usize,
+) -> Result<(), GlbError> {
+    let Some(index) = value.and_then(serde_json::Value::as_u64) else {
+        return Ok(());
+    };
+    let index = index as usize;
+    if index >= count {
+        return Err(GlbError::IndexOutOfRange {
+            owner,
+            target,
+            index,
+            len: count,
+        });
+    }
+    Ok(())
+}
+
+/// The array at a key, cloned, or empty if absent or not an array.
+fn json_array(value: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    value
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn check_buffer_views(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for view in json_array(root.get("bufferViews")) {
+        check_index(
+            view.get("buffer"),
+            "bufferView.buffer",
+            "buffers",
+            c.buffers,
+        )?;
+    }
+    Ok(())
+}
+
+fn check_accessors(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for accessor in json_array(root.get("accessors")) {
+        check_index(
+            accessor.get("bufferView"),
+            "accessor.bufferView",
+            "bufferViews",
+            c.views,
+        )?;
+        if let Some(sparse) = accessor.get("sparse") {
+            for part in ["indices", "values"] {
+                check_index(
+                    sparse.get(part).and_then(|p| p.get("bufferView")),
+                    "accessor.sparse.bufferView",
+                    "bufferViews",
+                    c.views,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_images_and_textures(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for image in json_array(root.get("images")) {
+        check_index(
+            image.get("bufferView"),
+            "image.bufferView",
+            "bufferViews",
+            c.views,
+        )?;
+    }
+    for texture in json_array(root.get("textures")) {
+        check_index(texture.get("source"), "texture.source", "images", c.images)?;
+    }
+    Ok(())
+}
+
+fn check_meshes(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for mesh in json_array(root.get("meshes")) {
+        for primitive in json_array(mesh.get("primitives")) {
+            for (_, accessor) in primitive
+                .get("attributes")
+                .and_then(|a| a.as_object())
+                .into_iter()
+                .flatten()
+            {
+                check_index(
+                    Some(accessor),
+                    "primitive.attributes",
+                    "accessors",
+                    c.accessors,
+                )?;
+            }
+            check_index(
+                primitive.get("indices"),
+                "primitive.indices",
+                "accessors",
+                c.accessors,
+            )?;
+            check_index(
+                primitive.get("material"),
+                "primitive.material",
+                "materials",
+                c.materials,
+            )?;
+            for target in json_array(primitive.get("targets")) {
+                for (_, accessor) in target.as_object().into_iter().flatten() {
+                    check_index(
+                        Some(accessor),
+                        "primitive.targets",
+                        "accessors",
+                        c.accessors,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_nodes(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for node in json_array(root.get("nodes")) {
+        check_index(node.get("mesh"), "node.mesh", "meshes", c.meshes)?;
+        check_index(node.get("skin"), "node.skin", "skins", c.skins)?;
+        for child in json_array(node.get("children")) {
+            check_index(Some(&child), "node.children", "nodes", c.nodes)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_skins(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for skin in json_array(root.get("skins")) {
+        check_index(
+            skin.get("inverseBindMatrices"),
+            "skin.inverseBindMatrices",
+            "accessors",
+            c.accessors,
+        )?;
+        check_index(skin.get("skeleton"), "skin.skeleton", "nodes", c.nodes)?;
+        for joint in json_array(skin.get("joints")) {
+            check_index(Some(&joint), "skin.joints", "nodes", c.nodes)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_scenes(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for scene in json_array(root.get("scenes")) {
+        for node in json_array(scene.get("nodes")) {
+            check_index(Some(&node), "scene.nodes", "nodes", c.nodes)?;
+        }
+    }
+    check_index(root.get("scene"), "scene", "scenes", c.scenes)?;
+    Ok(())
+}
+
+fn check_animations(root: &serde_json::Value, c: &Counts) -> Result<(), GlbError> {
+    for animation in json_array(root.get("animations")) {
+        let sampler_count = json_array(animation.get("samplers")).len();
+        for channel in json_array(animation.get("channels")) {
+            check_index(
+                channel.get("sampler"),
+                "animation.channel.sampler",
+                "samplers",
+                sampler_count,
+            )?;
+            check_index(
+                channel.get("target").and_then(|t| t.get("node")),
+                "animation.channel.target.node",
+                "nodes",
+                c.nodes,
+            )?;
+        }
+        for sampler in json_array(animation.get("samplers")) {
+            for part in ["input", "output"] {
+                check_index(
+                    sampler.get(part),
+                    "animation.sampler",
+                    "accessors",
+                    c.accessors,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_indices(bytes: &[u8]) -> Result<(), GlbError> {
     let Some(json) = json_chunk(bytes) else {
         return Ok(());
@@ -492,154 +697,25 @@ fn check_indices(bytes: &[u8]) -> Result<(), GlbError> {
         return Err(GlbError::UnreadableJson);
     };
     let len = |key: &str| root.get(key).and_then(|v| v.as_array()).map_or(0, Vec::len);
-    let (accessors, views, buffers) = (len("accessors"), len("bufferViews"), len("buffers"));
-    let (nodes, meshes, skins) = (len("nodes"), len("meshes"), len("skins"));
-    let (materials, images, scenes) = (len("materials"), len("images"), len("scenes"));
-
-    let check = |value: Option<&serde_json::Value>,
-                 owner: &'static str,
-                 target: &'static str,
-                 count: usize|
-     -> Result<(), GlbError> {
-        let Some(index) = value.and_then(serde_json::Value::as_u64) else {
-            return Ok(());
-        };
-        let index = index as usize;
-        if index >= count {
-            return Err(GlbError::IndexOutOfRange {
-                owner,
-                target,
-                index,
-                len: count,
-            });
-        }
-        Ok(())
+    let counts = Counts {
+        accessors: len("accessors"),
+        views: len("bufferViews"),
+        buffers: len("buffers"),
+        nodes: len("nodes"),
+        meshes: len("meshes"),
+        skins: len("skins"),
+        materials: len("materials"),
+        images: len("images"),
+        scenes: len("scenes"),
     };
-    let each = |value: Option<&serde_json::Value>| -> Vec<serde_json::Value> {
-        value
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-    };
-
-    for view in each(root.get("bufferViews")) {
-        check(view.get("buffer"), "bufferView.buffer", "buffers", buffers)?;
-    }
-    for accessor in each(root.get("accessors")) {
-        check(
-            accessor.get("bufferView"),
-            "accessor.bufferView",
-            "bufferViews",
-            views,
-        )?;
-        if let Some(sparse) = accessor.get("sparse") {
-            for part in ["indices", "values"] {
-                check(
-                    sparse.get(part).and_then(|p| p.get("bufferView")),
-                    "accessor.sparse.bufferView",
-                    "bufferViews",
-                    views,
-                )?;
-            }
-        }
-    }
-    for image in each(root.get("images")) {
-        check(
-            image.get("bufferView"),
-            "image.bufferView",
-            "bufferViews",
-            views,
-        )?;
-    }
-    for texture in each(root.get("textures")) {
-        check(texture.get("source"), "texture.source", "images", images)?;
-    }
-    for mesh in each(root.get("meshes")) {
-        for primitive in each(mesh.get("primitives")) {
-            for (_, accessor) in primitive
-                .get("attributes")
-                .and_then(|a| a.as_object())
-                .into_iter()
-                .flatten()
-            {
-                check(
-                    Some(accessor),
-                    "primitive.attributes",
-                    "accessors",
-                    accessors,
-                )?;
-            }
-            check(
-                primitive.get("indices"),
-                "primitive.indices",
-                "accessors",
-                accessors,
-            )?;
-            check(
-                primitive.get("material"),
-                "primitive.material",
-                "materials",
-                materials,
-            )?;
-            for target in each(primitive.get("targets")) {
-                for (_, accessor) in target.as_object().into_iter().flatten() {
-                    check(Some(accessor), "primitive.targets", "accessors", accessors)?;
-                }
-            }
-        }
-    }
-    for node in each(root.get("nodes")) {
-        check(node.get("mesh"), "node.mesh", "meshes", meshes)?;
-        check(node.get("skin"), "node.skin", "skins", skins)?;
-        for child in each(node.get("children")) {
-            check(Some(&child), "node.children", "nodes", nodes)?;
-        }
-    }
-    for skin in each(root.get("skins")) {
-        check(
-            skin.get("inverseBindMatrices"),
-            "skin.inverseBindMatrices",
-            "accessors",
-            accessors,
-        )?;
-        check(skin.get("skeleton"), "skin.skeleton", "nodes", nodes)?;
-        for joint in each(skin.get("joints")) {
-            check(Some(&joint), "skin.joints", "nodes", nodes)?;
-        }
-    }
-    for scene in each(root.get("scenes")) {
-        for node in each(scene.get("nodes")) {
-            check(Some(&node), "scene.nodes", "nodes", nodes)?;
-        }
-    }
-    check(root.get("scene"), "scene", "scenes", scenes)?;
-    for animation in each(root.get("animations")) {
-        let sampler_count = each(animation.get("samplers")).len();
-        for channel in each(animation.get("channels")) {
-            check(
-                channel.get("sampler"),
-                "animation.channel.sampler",
-                "samplers",
-                sampler_count,
-            )?;
-            check(
-                channel.get("target").and_then(|t| t.get("node")),
-                "animation.channel.target.node",
-                "nodes",
-                nodes,
-            )?;
-        }
-        for sampler in each(animation.get("samplers")) {
-            for part in ["input", "output"] {
-                check(
-                    sampler.get(part),
-                    "animation.sampler",
-                    "accessors",
-                    accessors,
-                )?;
-            }
-        }
-    }
+    check_buffer_views(&root, &counts)?;
+    check_accessors(&root, &counts)?;
+    check_images_and_textures(&root, &counts)?;
+    check_meshes(&root, &counts)?;
+    check_nodes(&root, &counts)?;
+    check_skins(&root, &counts)?;
+    check_scenes(&root, &counts)?;
+    check_animations(&root, &counts)?;
     // Material, texture-sampler and camera references are deliberately not
     // walked: this reader never resolves them, and 7.4M fuzz runs found no path
     // where the crate dereferences one before validating it. Add them here if
