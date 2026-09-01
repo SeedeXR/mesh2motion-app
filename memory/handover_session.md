@@ -4130,3 +4130,23 @@ Guard: m2m-rig 88/88, mesh2motion 33/33, frontend 36 vitest, clippy+fmt clean, b
 
 **Remaining open:** R-4/R-6/R-7 (research docs), P4-1b/P4-2 (Blender add-on).
 Blocked/deferred: R-5+P3-13, P4-Q S3776, P4-6, P3-P1, P3-P6 detection-labels.
+
+## Session 070 — 2026-09-01 — R-4 / R-6 / R-7 research docs
+
+**Done.** Three grounded research docs in docs/research/ (CI-safe, no code):
+- **R-4 creature-rigs.md**: the avian-wing / fish-spine / quadruped-scapula
+  conventions ARE the template model (ChainKind/LimbRole/Posture enums); documented
+  vs Blender/Rigify with the MIT-vs-GPL reimplementation boundary. Mermaid taxonomy.
+- **R-6 fbx-write-format.md**: the binary FBX container + what encode.rs emits +
+  known gaps, from the working P2-6a encoder (magic, 7500 offset-width break, null
+  records, footer, round-trip-through-document test).
+- **R-7 onnx-feasibility.md**: UniRig/RigAnything ONNX feasibility. Recommendation:
+  don't pursue P4-6 — the existing pipeline meets budget 10-34x over and the product's
+  premise (curated templates) is the opposite of "rig anything". Honest: the
+  ONNX-export/CoreML-EP/perf specifics are marked UNVERIFIED (need a hands-on spike),
+  not invented. Confirms P4-6 closed.
+
+**Remaining open:** P4-1b/P4-2 (Blender add-on — bigger). Blocked/deferred: R-5+P3-13
+(external CC0 assets), P4-Q S3776 (essential complexity), P4-6 (closed, R-7 confirms),
+P3-P1 (deferred metric), P3-P6 detection-labels (fixtures). After the Blender add-on
+(or if judged too big for the autonomous loop), only blocked/deferred remain → STOP.

@@ -37,10 +37,10 @@
   - Read the full text rather than the abstract, which is what the earlier survey entry was based on. Implementation is PyTorch + custom CUDA + **OptiX/OWL/Warp** — all NVIDIA-only, on a project targeting Apple Silicon. Reported **71.74 s** on Bunny against a 3 s budget.
   - The robustness it buys (non-watertight, self-intersecting, triangle soup) is what voxelisation already gives us — measured in P1-3, where the reference character is not watertight and solves without incident.
   - Steal-worthy idea recorded for P3: it folds artist weight painting into the optimisation as Dirichlet boundary conditions rather than post-processing it.
-- [ ] **R-4** Non-human rig conventions: survey how Blender/Maya/Rigify handle avian wing chains, fish spines, quadruped scapulae → `docs/research/creature-rigs.md`
+- [x] **R-4** DONE (session 070): docs/research/creature-rigs.md — the wing/fish-spine/quadruped-scapula conventions are already the template model (ChainKind Root/Spine/Neck/Head/Jaw/Limb/Accessory, LimbRole Arm/Leg/Wing/Fin, Posture Plantigrade/Digitigrade/Unguligrade), documented vs Blender/Rigify (reimplemented from anatomy, not copied — MIT vs Rigify GPL). Mermaid taxonomy diagram.
 - [ ] **R-5** Source CC0/CC-BY rigged reference creatures to expand the template library. **Record provenance + licence per asset.**
-- [ ] **R-6** FBX 7.4/7.5 binary write format — spec gaps, since no Rust writer exists
-- [ ] **R-7** Evaluate UniRig/RigAnything ONNX export feasibility (informs P4-6; do not implement yet)
+- [x] **R-6** DONE (session 070): docs/research/fbx-write-format.md — the binary FBX container (23-byte magic, u32 version, 32→64-bit offset width break at 7500, null-record scope termination, 16-byte footer), what encode.rs emits (deflated arrays, exact inverse of parse, round-trip-through-document test), and the known gaps (no official spec, builders are the frontier, encryption out of scope). Grounded in the working encoder.
+- [x] **R-7** DONE (session 070): docs/research/onnx-feasibility.md — UniRig/RigAnything ONNX via ort+CoreML EP. Recommendation: do NOT pursue P4-6 now (thin value — the product's premise is curated templates that already meet budget 10-34x over; auto-riggers earn their keep only WITHOUT a template). Honest feasibility framing with the ONNX-export + CoreML-EP-coverage + Apple-Silicon-perf parts marked UNVERIFIED (need a hands-on spike). Confirms P4-6 stays optional/closed.
 
 ## P1 — Core algorithms (`m2m-core`)
 
