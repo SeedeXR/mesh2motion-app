@@ -4028,3 +4028,43 @@ future, extends the same detect+recompute pattern once P3-P3 lands.
 
 **Verification this session:** m2m-rig 80/80, retarget 11/11, frontend tsc + 21 vitest +
 build, clippy + fmt clean.
+
+## Session 065 — 2026-09-01 — P3-P3 pose-matched rest rotations (the epic's crux) DONE
+
+**User: "do P3-P3 first and ensure no regression and proper rigging and verify in blender and also in our software."**
+
+**Done (2911fe6):** new m2m-rig `orient` module. Fitting left every bone with the
+template's rest rotation, so an A-pose character exported with T-pose arm
+orientations and clips retargeted onto it turned the arms around the wrong axis.
+`pose_matched_local_rotations` reorients each bone by the minimal rotation carrying
+its template bone→child direction onto its fitted one; `limb_aims` scopes it to
+Limb chains (arm/leg/wing/fin). Wired into rig::fit.
+
+**Key discovery mid-implementation:** reorienting ALL bones broke — fingers reorient
+89° because the fitter leaves accessory bones (fingers/toes) misplaced (a fitted
+finger lands 16 cm ABOVE the hand). Scoped to Limb chains only (ChainKind::Limb),
+aiming each bone at its chain-successor; chain-ends and accessories keep template
+rotations. This is why `limb_aims` exists.
+
+**No regression — verified four ways (as the user asked):**
+1. Blender visual-regression byte-identical for all 9 creatures (the at-rest bind is
+   unchanged: rotations + IBMs stay mutually consistent, so the mesh at rest is the same).
+2. A template-matching fox fit moves no bone >3° (no spurious reorientation).
+3. All 9 creatures: rotations finite, unit, <50° change (no flips).
+4. Full workspace 398/398.
+
+**Proper rigging — verified in our software AND Blender (as the user asked):**
+- Our software: `src-tauri/tests/pose_retarget.rs` runs fit→bind→retarget→export and
+  evaluates the arm-heavy "Chop_Tree" clip through our own GLB reader + hierarchy
+  composition; every bone stays finite and inside a 5 m box for BOTH a T-pose and an
+  A-pose human. #[ignore]d (slow, no Blender needed).
+- Blender: imported both animated exports, stepped the action frame by frame — 66
+  bones, all finite, max reach 1.69 m, no fly-off. A rendered mid-clip frame of the
+  A-pose character shows clean mesh deformation (arms/legs attached and posed).
+
+**Remaining in the pose epic:** P3-P1 (rigorous weight A/B metric — deferred, subtle),
+P3-P6 (non-human pose ambiguity: folded/spread wings, standing/splayed quadrupeds —
+extends the same detect + limb-aim pattern; would need per-creature pose fixtures).
+P3-P2/P3-P4/P3-P5 done. The epic's hard part (P3-P3) is finished and verified.
+
+**Guard:** m2m-rig 86/86 both profiles, full workspace 398/398, clippy+fmt clean.
