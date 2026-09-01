@@ -188,6 +188,7 @@ fn each_template_reports_the_body_axis_its_spine_implies() {
         ("rigs/rig-snake.glb", "snake.json", BodyAxis::Horizontal),
         ("rigs/rig-bird.glb", "bird.json", BodyAxis::Horizontal),
         ("rigs/rig-dragon.glb", "dragon.json", BodyAxis::Horizontal),
+        ("rigs/rig-rhino.glb", "rhino.json", BodyAxis::Horizontal),
     ] {
         let rest = rest_pose_of(rig);
         let axis = body_axis(&rest, &spine_of(manifest));
@@ -411,6 +412,7 @@ fn refinement_puts_every_spine_joint_inside_every_body() {
         ("models/model-human.glb", "rigs/rig-human.glb", "human.json"),
         ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
         ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
+        ("models/model-rhino.glb", "rigs/rig-rhino.glb", "rhino.json"),
         (
             "models-variation/human-female.glb",
             "rigs/rig-human.glb",
@@ -650,6 +652,7 @@ fn report_limb_placement() {
         ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
         ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
         ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+        ("models/model-rhino.glb", "rigs/rig-rhino.glb", "rhino.json"),
     ] {
         let mesh = mesh_of(model);
         let landmarks = Landmarks::of(&mesh).expect("vertices");
@@ -781,6 +784,7 @@ fn limb_fitting_never_makes_a_body_worse() {
         ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
         ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
         ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+        ("models/model-rhino.glb", "rigs/rig-rhino.glb", "rhino.json"),
         (
             "models-variation/human-jay.glb",
             "rigs/rig-human.glb",
@@ -848,6 +852,12 @@ fn limb_placement_is_at_least_this_good() {
         ),
         ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json", 0),
         (
+            "models/model-rhino.glb",
+            "rigs/rig-rhino.glb",
+            "rhino.json",
+            1,
+        ),
+        (
             "models/model-human.glb",
             "rigs/rig-human.glb",
             "human.json",
@@ -887,6 +897,7 @@ fn every_leg_keeps_its_foot_on_the_ground() {
         ("models/model-fox.glb", "rigs/rig-fox.glb", "fox.json"),
         ("models/model-horse.glb", "rigs/rig-horse.glb", "horse.json"),
         ("models/model-bird.glb", "rigs/rig-bird.glb", "bird.json"),
+        ("models/model-rhino.glb", "rigs/rig-rhino.glb", "rhino.json"),
         (
             "models/model-spider.glb",
             "rigs/rig-spider.glb",
@@ -920,12 +931,12 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
     names.sort_unstable();
     assert_eq!(
         names,
-        ["bird", "dragon", "fox", "horse", "human", "kaiju", "shark", "snake", "spider"]
+        ["bird", "dragon", "fox", "horse", "human", "kaiju", "rhino", "shark", "snake", "spider"]
     );
 
     // 500 bones, each claimed exactly once — the count P3-1 established.
     let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
-    assert_eq!(bones, 500);
+    assert_eq!(bones, 530);
 }
 
 /// The embedded manifests are the files on disk, not a stale copy.

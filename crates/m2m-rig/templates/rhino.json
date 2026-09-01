@@ -1,0 +1,123 @@
+{
+  "name": "rhino",
+  "skeleton": "rig-rhino.glb",
+  "guidance": "Large graviportal quadruped \u2014 heavy columnar legs carry the weight with the foot flat to the ground, so ground the foot bone. Keep the back broad and level; the head rides low on a short, thick neck, ahead of the shoulders.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "spine_1",
+        "spine_2",
+        "spine_3"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "neck_1"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "jaw"
+      ]
+    },
+    {
+      "name": "ear_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "ear_l"
+      ]
+    },
+    {
+      "name": "ear_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "ear_r"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "front_shoulder_l",
+        "front_upper_l",
+        "front_lower_l",
+        "front_foot_l"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "front_shoulder_r",
+        "front_upper_r",
+        "front_lower_r",
+        "front_foot_r"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "back_upper_l",
+        "back_lower_l",
+        "back_foot_l",
+        "back_toe_l"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "back_upper_r",
+        "back_lower_r",
+        "back_foot_r",
+        "back_toe_r"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4",
+        "tail_5"
+      ]
+    }
+  ]
+}

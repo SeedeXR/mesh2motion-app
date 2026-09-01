@@ -1357,7 +1357,7 @@ mod tests {
         // a user picked that creature, which is the worst time to find out.
         let offered = templates().expect("the shipped manifests parse");
 
-        assert_eq!(offered.len(), 9);
+        assert_eq!(offered.len(), 10);
         for template in &offered {
             assert!(template.available, "{} has no bundled rig", template.name);
             assert!(template.bones > 0, "{} claims no bones", template.name);
@@ -1367,7 +1367,7 @@ mod tests {
                 template.name
             );
         }
-        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 500);
+        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 530);
     }
 
     #[test]

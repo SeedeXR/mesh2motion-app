@@ -450,6 +450,7 @@ fn every_template_describes_its_skeleton_exactly() {
         ("horse.json", "rig-horse.glb", 56),
         ("kaiju.json", "rig-kaiju.glb", 58),
         ("dragon.json", "rig-dragon.glb", 99),
+        ("rhino.json", "rig-rhino.glb", 30),
     ] {
         assert_template_matches(manifest, skeleton, joints);
     }
@@ -505,6 +506,7 @@ fn each_creature_has_the_chains_it_should() {
         ("horse.json", 4, 0, 1, 1),
         ("kaiju.json", 4, 6, 1, 1),
         ("dragon.json", 6, 10, 1, 2),
+        ("rhino.json", 4, 0, 1, 1),
     ] {
         let t = load(manifest);
         assert_eq!(
@@ -546,6 +548,7 @@ fn limbs_carry_the_role_that_creature_has() {
         ("horse.json", 0, 4, 0, 0),
         ("kaiju.json", 2, 2, 0, 0),
         ("dragon.json", 0, 4, 2, 0),
+        ("rhino.json", 0, 4, 0, 0),
     ] {
         let t = load(manifest);
         let count = |role: LimbRole| {

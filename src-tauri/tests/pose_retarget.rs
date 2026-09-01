@@ -170,3 +170,14 @@ fn a_clip_retargets_cleanly_onto_a_non_human_rig() {
     );
     assert_animates_cleanly_within(&glb, &clip, "dragon", 12.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_the_rhino() {
+    // P3-13: the rhino is a new authored quadruped template with its own
+    // animation library (its native clip, renamed to the template's bones).
+    let lib = "legacy/static/animations/rhino-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export("rhino", "legacy/static/models/model-rhino.glb", lib, &clip);
+    assert_animates_cleanly_within(&glb, &clip, "rhino", 12.0);
+}
