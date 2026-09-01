@@ -10,7 +10,14 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { Box3, PerspectiveCamera, Vector3 } from 'three'
-import { applyFraming, frameBounds, parseModel, skeletonSegments } from '../src/viewport/model'
+import {
+  applyFraming,
+  findClip,
+  frameBounds,
+  parseAnimated,
+  parseModel,
+  skeletonSegments
+} from '../src/viewport/model'
 
 function glb(path: string): ArrayBuffer {
   const file = readFileSync(path)
@@ -151,5 +158,53 @@ describe('skeletonSegments', () => {
 
     expect(points).toHaveLength(6)
     expect(Array.from(points).every(Number.isFinite)).toBe(true)
+  })
+})
+
+describe('parseAnimated and findClip', () => {
+  const animated = glb('legacy/static/animations/human-base-animations.glb')
+
+  test('an animated glb comes back with its clips as AnimationClips', async () => {
+    const model = await parseAnimated(animated)
+
+    expect(model.clips.length).toBe(87)
+    const chest = model.clips.find((c) => c.name === 'Chest_Open')
+    expect(chest).toBeDefined()
+    // The duration is what plays; assert it, not the track count, which three
+    // resamples.
+    expect(chest?.duration).toBeCloseTo(1.375, 2)
+  })
+
+  test('findClip matches an exact name', () => {
+    const clips = [
+      { name: 'Walk' },
+      { name: 'Chest_Open' }
+    ] as unknown as Parameters<typeof findClip>[0]
+    expect(findClip(clips, 'Chest_Open')?.name).toBe('Chest_Open')
+  })
+
+  test('findClip tolerates an importer-decorated name', () => {
+    // An FBX round trip names the action `Armature|Chest_Open|Layer0`; an exact
+    // match would miss it and the preview would silently show nothing.
+    const clips = [
+      { name: 'Armature|Chest_Open|Layer0' }
+    ] as unknown as Parameters<typeof findClip>[0]
+    expect(findClip(clips, 'Chest_Open')?.name).toBe('Armature|Chest_Open|Layer0')
+  })
+
+  test('an exact match wins over a longer name that merely contains it', () => {
+    // `Chest_Open_Slow` contains `Chest_Open`, and comes first. A
+    // contains-first search would return the wrong clip; the exact name has to
+    // win.
+    const clips = [
+      { name: 'Chest_Open_Slow' },
+      { name: 'Chest_Open' }
+    ] as unknown as Parameters<typeof findClip>[0]
+    expect(findClip(clips, 'Chest_Open')?.name).toBe('Chest_Open')
+  })
+
+  test('findClip returns undefined rather than guessing', () => {
+    const clips = [{ name: 'Walk' }] as unknown as Parameters<typeof findClip>[0]
+    expect(findClip(clips, 'Chest_Open')).toBeUndefined()
   })
 })

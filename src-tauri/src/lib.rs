@@ -165,6 +165,32 @@ async fn animation_clips(
     .map_err(|e| e.to_string())?
 }
 
+/// Returns the rigged model with a clip retargeted onto it, as a `.glb`.
+///
+/// The **bulk channel** again: this is a whole animated model, and the viewport
+/// hands it straight to the same loader it draws the imported mesh with. These
+/// are the very bytes `export_model` writes to disk for a `.glb`, so the
+/// preview and the export cannot drift — one code path, two destinations.
+#[tauri::command]
+async fn preview_animation(
+    app: tauri::AppHandle,
+    path: String,
+    skeleton: rig::FittedSkeleton,
+    falloff: f32,
+    template: String,
+    clip: String,
+) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+        let library = library_bytes(&app, &template)?;
+        let glb = rig::export_glb(&source, &skeleton, falloff, Some((&library, &clip)))
+            .map_err(|e| e.to_string())?;
+        Ok(tauri::ipc::Response::new(glb))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The creature templates the Choose Skeleton step offers.
 #[tauri::command]
 fn skeleton_templates() -> Result<Vec<rig::SkeletonTemplate>, String> {
@@ -303,7 +329,8 @@ pub fn run() {
             fit_skeleton,
             bind_weights,
             export_model,
-            animation_clips
+            animation_clips,
+            preview_animation
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

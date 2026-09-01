@@ -9,6 +9,7 @@ import {
   buildInfo,
   exportModel,
   fitSkeleton,
+  previewAnimation,
   importModel,
   isDesktop,
   loadModel,
@@ -72,6 +73,8 @@ let exporting = false
 /** The chosen creature's clips, once fetched, and the one selected. */
 let clips: ClipSummary[] | null = null
 let clip: string | null = null
+/** True while a clip is playing in the viewport. */
+let playing = false
 
 let viewport: Viewport | null = null
 
@@ -266,12 +269,43 @@ function renderAnimateStep(): string {
     )
     .join('')
 
+  if (clip === null) {
+    return `${list}<p style="color:var(--fg-2)">Pick a clip. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
+  }
+
+  const label = playing ? 'Playing\u2026' : `Preview ${escape(clip)}`
+  const stopButton = playing ? '<button id="stop" class="action">Stop</button>' : ''
   return `${list}
-    <p style="color:var(--fg-2)">${
-      clip === null
-        ? 'Pick a clip. It is retargeted onto your rig on export — the library and the template do not share a rest pose, so the motion is moved rather than copied.'
-        : `${escape(clip)} will be written into the export.`
-    }</p>`
+    <button id="preview" class="action" ${playing ? 'disabled' : ''}>${label}</button>
+    ${stopButton}
+    <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+}
+
+/** Plays the chosen clip in the viewport, or stops it. */
+async function runPreview(): Promise<void> {
+  if (loaded === null || fitted === null || chosen === null || clip === null || playing) return
+  playing = true
+  render()
+  try {
+    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip)
+    const duration = await ensureViewport().playAnimated(glb, clip)
+    if (duration === null) {
+      playing = false
+      render()
+    }
+  } catch (err) {
+    playing = false
+    render()
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('preview failed', message)
+  }
+}
+
+function stopPreview(): void {
+  if (!playing) return
+  ensureViewport().stop()
+  playing = false
+  render()
 }
 
 /** Fetches the chosen creature's clips once, then re-renders with them. */
@@ -475,11 +509,16 @@ function render(): void {
     button.addEventListener('click', () => void runExport(format))
   })
 
+  app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
+  app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
+
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']
     const clipName = button.dataset['clip']
     if (clipName !== undefined) {
       button.addEventListener('click', () => {
+        // Switching clips stops any playback of the old one.
+        stopPreview()
         clip = clipName
         exported = null
         render()

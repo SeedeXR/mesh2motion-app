@@ -8,6 +8,7 @@
  */
 
 import {
+  type AnimationClip,
   Bone,
   Box3,
   type Camera,
@@ -143,4 +144,49 @@ export function skeletonSegments(
     points.push(from[0], from[1], from[2], to[0], to[1], to[2])
   })
   return new Float32Array(points)
+}
+
+/**
+ * A rigged, animated `.glb` parsed for playback.
+ *
+ * Kept apart from [`parseModel`] because a preview is a different object with a
+ * different lifetime: it carries `AnimationClip`s and is swapped in and out as
+ * the user scrubs between clips, where the imported model persists.
+ */
+export interface AnimatedModel {
+  readonly root: Group
+  /** The clips the file carries, by the name the library gave them. */
+  readonly clips: readonly AnimationClip[]
+  readonly bounds: Box3
+}
+
+/**
+ * Parses an animated `.glb` from `preview_animation`.
+ *
+ * Nothing here needs a GPU — three parses the clips into `AnimationClip`s on
+ * the CPU — so the whole path from Rust bytes to a playable clip is testable in
+ * Node.
+ */
+export async function parseAnimated(data: ArrayBuffer): Promise<AnimatedModel> {
+  const gltf = await new GLTFLoader().parseAsync(data, '')
+  return {
+    root: gltf.scene,
+    clips: gltf.animations,
+    bounds: new Box3().setFromObject(gltf.scene)
+  }
+}
+
+/**
+ * Finds a clip by name, tolerating the prefixes importers add.
+ *
+ * Our exporter names the clip exactly (`Chest_Open`), but a name can arrive
+ * decorated — `Armature|Chest_Open|Layer0` from an FBX round trip — so an exact
+ * match is tried first and a contains-match second. Returns `undefined` rather
+ * than guessing when nothing matches.
+ */
+export function findClip(
+  clips: readonly AnimationClip[],
+  name: string
+): AnimationClip | undefined {
+  return clips.find((clip) => clip.name === name) ?? clips.find((clip) => clip.name.includes(name))
 }

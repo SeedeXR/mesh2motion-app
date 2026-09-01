@@ -19,6 +19,7 @@
 
 import {
   AmbientLight,
+  AnimationMixer,
   Box3,
   BufferAttribute,
   BufferGeometry,
@@ -39,7 +40,9 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import {
   applyFraming,
+  findClip,
   frameBounds,
+  parseAnimated,
   parseModel,
   skeletonSegments,
   type ModelContents
@@ -64,6 +67,16 @@ export interface Viewport {
     positions: readonly (readonly [number, number, number])[],
     parents: readonly (number | null)[]
   ): void
+  /**
+   * Plays a clip from an animated `.glb`, replacing whatever was shown.
+   *
+   * Returns the clip's duration in seconds, or `null` when the file carries no
+   * clip by that name. Rendering runs a frame loop only while a clip is
+   * playing (see `dispose`/`stop`), so an idle viewport still costs nothing.
+   */
+  playAnimated(data: ArrayBuffer, clipName: string): Promise<number | null>
+  /** Stops playback and returns to the event-driven, zero-idle-cost renderer. */
+  stop(): void
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
   /** Releases the GPU resources this viewport holds. */
@@ -95,6 +108,17 @@ export function createViewport(): Viewport {
   let model: Object3D | null = null
   let skeleton: SkeletonHelper | null = null
   let fittedSkeleton: LineSegments | null = null
+
+  // Playback state. The animated model is a separate object from `model` — the
+  // imported mesh — so playing a clip does not disturb what the earlier steps
+  // put on screen; it is removed again on `stop`.
+  let animated: Object3D | null = null
+  let mixer: AnimationMixer | null = null
+  // Elapsed-time tracked with performance.now() rather than three's Clock,
+  // which is deprecated. `lastFrame` is the timestamp the mixer last advanced
+  // from; the delta between frames is what it needs.
+  let lastFrame = 0
+  let playing = false
   let bounds = new Box3()
 
   // One frame per change, never a standing loop. `pending` collapses several
@@ -109,6 +133,18 @@ export function createViewport(): Viewport {
     })
   }
   controls.addEventListener('change', requestRender)
+
+  // A frame loop that runs ONLY while a clip plays. The event-driven
+  // `requestRender` keeps an idle viewport at zero cost; this is the one place
+  // that needs a continuous loop, and it stops itself the moment playback does.
+  function tick(): void {
+    if (!playing || mixer === null) return
+    const now = performance.now()
+    mixer.update((now - lastFrame) / 1000)
+    lastFrame = now
+    renderer.render(scene, camera)
+    requestAnimationFrame(tick)
+  }
 
   /** The canvas's own box, not its parent's — the stage also holds the
    * guidance strip, so the parent is taller than the drawing area. */
@@ -185,6 +221,46 @@ export function createViewport(): Viewport {
       return contents
     },
 
+    async playAnimated(data, clipName): Promise<number | null> {
+      const contents = await parseAnimated(data)
+      const clip = findClip(contents.clips, clipName)
+      if (clip === undefined) return null
+
+      // Replace any previous playback subject.
+      this.stop()
+      if (animated !== null) {
+        scene.remove(animated)
+        release(animated)
+      }
+      animated = contents.root
+      // The imported mesh and the animated one occupy the same space; show one
+      // at a time so they do not z-fight.
+      if (model !== null) model.visible = false
+      scene.add(animated)
+
+      mixer = new AnimationMixer(animated)
+      mixer.clipAction(clip).play()
+      playing = true
+      lastFrame = performance.now()
+      requestAnimationFrame(tick)
+      return clip.duration
+    },
+
+    stop(): void {
+      playing = false
+      if (mixer !== null) {
+        mixer.stopAllAction()
+        mixer = null
+      }
+      if (animated !== null) {
+        scene.remove(animated)
+        release(animated)
+        animated = null
+      }
+      if (model !== null) model.visible = true
+      requestRender()
+    },
+
     showFittedSkeleton(positions, parents): void {
       if (fittedSkeleton !== null) {
         scene.remove(fittedSkeleton)
@@ -215,6 +291,8 @@ export function createViewport(): Viewport {
     reframe,
 
     dispose(): void {
+      playing = false
+      if (animated !== null) release(animated)
       if (model !== null) release(model)
       if (fittedSkeleton !== null) {
         fittedSkeleton.geometry.dispose()

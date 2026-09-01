@@ -172,3 +172,26 @@ export interface ClipSummary {
 export async function animationClips(template: string): Promise<ClipSummary[]> {
   return await invoke<ClipSummary[]>('animation_clips', { template })
 }
+
+/**
+ * Returns the rigged model with a clip retargeted onto it, as a `.glb`.
+ *
+ * The **bulk channel**: a whole animated model as raw bytes, the same the
+ * viewport loads for the imported mesh. These are the bytes a `.glb` export
+ * writes to disk, so preview and export cannot drift.
+ */
+export async function previewAnimation(
+  path: string,
+  skeleton: FittedSkeleton,
+  falloff: number,
+  template: string,
+  clip: string
+): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>('preview_animation', {
+    path,
+    skeleton,
+    falloff,
+    template,
+    clip
+  })
+}
