@@ -4188,3 +4188,20 @@ source), P3-8b (no operation slow enough), P4-6 (ONNX closed by R-7), P3-P1 (sub
 metric), P3-P6 detection-labels (need folded/spread fixtures).
 
 The autonomous loop stops here.
+
+## Loop end confirmed — session 071 (final)
+
+The last doable item (P4-2/P4-1b Blender live bridge) is DONE + committed (9a2899c,
+CI green). Testing it against a live Blender via MCP found and FIXED a destructive
+bug (live import must not read_factory_settings — it wiped the scene + dropped the
+MCP add-on). Verified autonomously: headless live round-trip (66 bones), 4 pure
+protocol tests, add-on py_compile. **Pending human action:** the INTERACTIVE live
+re-test needs the user to restart Blender's MCP add-on (port 9876, which the reset
+disabled) OR install+enable mesh2motion_bridge.py and start its server — then
+`cargo test -p m2m-bridge --release --test live_mcp -- --ignored` confirms the
+non-destructive path. Not a code blocker; the fix is committed and verified headless.
+
+Every actionable P0-P4 item is complete. Remaining open [ ] items are all
+blocked/deferred: R-5 (source external CC0 assets — human), P2-10b (Maya/FBX SDK —
+not on this machine), P3-13 (needs R-5), P4-Q (last 2 S3776 smells — essential
+complexity, deferred). The autonomous loop stops here.
