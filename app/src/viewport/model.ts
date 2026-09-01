@@ -1,0 +1,117 @@
+/**
+ * Turning a `.glb` from the bulk channel into something drawable, and the
+ * arithmetic for looking at it.
+ *
+ * Kept apart from `scene.ts` because everything here is decidable without a
+ * renderer, a canvas or a GPU — which is what makes it testable. `scene.ts` is
+ * the part that needs a screen, and it is deliberately thin.
+ */
+
+import {
+  Bone,
+  Box3,
+  type Camera,
+  Group,
+  type Object3D,
+  PerspectiveCamera,
+  SkinnedMesh,
+  Sphere,
+  Vector3
+} from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+
+/** What a loaded model turned out to contain. */
+export interface ModelContents {
+  /** The scene graph to add to the viewport. */
+  readonly root: Group
+  /** Bones found anywhere under it. */
+  readonly bones: number
+  /** Meshes bound to a skeleton. */
+  readonly skinnedMeshes: number
+  /** Animation clip names. */
+  readonly clips: readonly string[]
+  /** World-space bounds, in metres. */
+  readonly bounds: Box3
+}
+
+/**
+ * Parses a `.glb` that arrived over the bulk channel.
+ *
+ * The payload is already bytes, so nothing is fetched and no URL is involved —
+ * `parseAsync` takes the buffer directly.
+ *
+ * Models converted from FBX carry no normals, which glTF allows and which the
+ * loader answers with flat shading. That is a real visual difference from a
+ * file authored with normals, not a failure to load.
+ */
+export async function parseModel(data: ArrayBuffer): Promise<ModelContents> {
+  const gltf = await new GLTFLoader().parseAsync(data, '')
+
+  let bones = 0
+  let skinnedMeshes = 0
+  gltf.scene.traverse((object: Object3D) => {
+    if (object instanceof Bone) bones++
+    if (object instanceof SkinnedMesh) skinnedMeshes++
+  })
+
+  return {
+    root: gltf.scene,
+    bones,
+    skinnedMeshes,
+    clips: gltf.animations.map((clip) => clip.name),
+    bounds: new Box3().setFromObject(gltf.scene)
+  }
+}
+
+/** Where a camera should sit to see the whole of `bounds`. */
+export interface Framing {
+  readonly position: Vector3
+  readonly target: Vector3
+}
+
+/**
+ * Frames a bounding box for a perspective camera.
+ *
+ * Fits the box's bounding **sphere** rather than the box, so the framing does
+ * not change as the model is orbited — fitting the box makes the camera lurch
+ * every time a wider silhouette rotates into view.
+ *
+ * Both axes are fitted: a wide model in a tall viewport is limited by width,
+ * and using the vertical fit alone crops its arms.
+ */
+export function frameBounds(
+  bounds: Box3,
+  fovDegrees: number,
+  aspect: number,
+  direction = new Vector3(0, 0.25, 1)
+): Framing {
+  const sphere = bounds.getBoundingSphere(new Sphere())
+  // An empty or degenerate box yields a zero radius, which would put the
+  // camera exactly on the target and leave nothing on screen.
+  const radius = sphere.radius > 0 ? sphere.radius : 1
+
+  const vertical = radius / Math.sin((fovDegrees * Math.PI) / 360)
+  const horizontal = vertical / Math.max(aspect, 0.01)
+  const distance = 1.15 * Math.max(vertical, horizontal)
+
+  const offset = direction.clone().normalize().multiplyScalar(distance)
+  return { position: sphere.center.clone().add(offset), target: sphere.center.clone() }
+}
+
+/** Points `camera` at a framing. */
+export function applyFraming(camera: Camera, framing: Framing): void {
+  camera.position.copy(framing.position)
+  camera.lookAt(framing.target)
+  if (camera instanceof PerspectiveCamera) {
+    // Near and far follow the subject, so a 2 m character and a 200 m one both
+    // get usable depth precision instead of one fixed guess. No floor on
+    // `near`: depth precision depends on the near/far RATIO, which stays
+    // constant here, and a floor would clamp exactly the small subjects it
+    // looks like it protects — a 20 cm model wants a near of half a
+    // millimetre. `frameBounds` guarantees a positive distance.
+    const distance = camera.position.distanceTo(framing.target)
+    camera.near = distance / 1000
+    camera.far = distance * 100
+    camera.updateProjectionMatrix()
+  }
+}

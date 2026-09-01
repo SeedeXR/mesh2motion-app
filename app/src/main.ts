@@ -12,6 +12,7 @@ import {
   type ImportedFile
 } from './ipc'
 import { detectBackend } from './viewport/backend'
+import { createViewport, type Viewport } from './viewport/scene'
 
 /** Index of the step the user is currently on. */
 // ponytail: nothing advances activeStep yet — each step gains its own completion
@@ -31,6 +32,20 @@ let loaded: ImportedFile | null = null
  * as 62.5k vertices until welding lands.
  */
 let geometryBytes: number | null = null
+
+/**
+ * The Three.js viewport, created on first use.
+ *
+ * Held across renders rather than rebuilt with the DOM: `render()` replaces the
+ * shell's markup, and a new canvas each time would mean a new WebGL context
+ * each time — browsers cap those and start dropping the oldest.
+ */
+let viewport: Viewport | null = null
+
+function ensureViewport(): Viewport {
+  viewport ??= createViewport()
+  return viewport
+}
 
 /**
  * Escapes text bound for `innerHTML`.
@@ -101,7 +116,13 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
     // A cancelled picker leaves the previous import alone rather than clearing it.
     if (picked !== null) {
       loaded = picked
-      geometryBytes = (await loadModel(picked.path)).byteLength
+      const geometry = await loadModel(picked.path)
+      geometryBytes = geometry.byteLength
+      // Rendered before drawing, so the canvas is in the DOM and has a size to
+      // frame the model against.
+      render()
+      await ensureViewport().show(geometry)
+      return
     }
     render()
   } catch (err) {
@@ -176,6 +197,13 @@ function render(): void {
         <span>— ms</span>
       </div>
     </div>`
+
+  // The canvas is moved into the freshly built shell rather than recreated.
+  if (loaded !== null) {
+    const stage = app.querySelector<HTMLElement>('.viewport')
+    stage?.querySelector('.viewport-empty')?.remove()
+    stage?.prepend(ensureViewport().canvas)
+  }
 
   createIcons({ icons: { Bone, Upload, Link, Play, Download, Move3d } })
 

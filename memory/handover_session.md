@@ -2786,3 +2786,78 @@ settled the order, not preference.
 **P3-7, the viewport** — now genuinely unblocked: `loadModel(path)` returns a
 `.glb` as an ArrayBuffer, and the frontend currently fetches it only to report
 its size. Three.js and a GLTFLoader turn that into something drawn.
+
+---
+
+## Session 041 — 2026-09-01 — P3-7: the viewport draws the model
+
+**HEAD in: `64e915f` (CI green, 7/7). Out: the viewport's scene, camera and skeleton overlay; transform gizmo deferred with a reason.**
+
+### The decision at the top of the session
+Took **P3-7**. `three@0.185`, `@types/three` and `vitest` were **already**
+dependencies, so the biggest cost I had assumed — adding a renderer and a test
+runner — did not exist. Checked before choosing rather than after.
+
+### The verification problem, and how it was solved
+Nothing here can look at pixels, and the Frontend CI job was only `tsc` +
+`vite build`. Shipping ~250 lines of unexercised rendering code would have been
+a draft, not a deliverable. Two things fixed that:
+
+1. **The decidable half was split out.** `viewport/model.ts` — parsing a `.glb`
+   and computing where the camera goes — needs no GPU, no canvas and no DOM.
+   `viewport/scene.ts` is the part that needs a screen and is kept thin.
+2. **three's `GLTFLoader` runs under Node** once `self` is aliased; it reaches
+   for `self` only on the texture path. So `app/tests/` parses a real `.glb`
+   with *the very loader the viewport uses*: 66 bones, 1 skinned mesh, 87 clips,
+   1.83 m tall. That tests the whole chain — Rust writer, wire format, loader.
+   `npx vitest run` is now a CI step, with `vitest.config.ts` scoped to
+   `app/tests/**` so `legacy/`'s own suite is untouched.
+
+### Findings worth keeping
+1. **A guard that clamped exactly what it looked like it protected.**
+   `near = max(distance / 1000, 0.001)` made the depth range non-proportional
+   for small subjects: a 20 cm model got a clamped near plane while a 20 m one
+   did not. Depth precision depends on the near/far *ratio*, which is constant
+   here, so the floor bought nothing and cost correctness. **Removed a guard
+   rather than added one.**
+2. **A test that brackets is weaker than a test that measures.** The first
+   version asserted `near < distance < far`, which a hard-coded `0.01/100` pair
+   passes. Rewritten to demand the range *move* with the subject — a 100x
+   larger model gets a 100x larger range — it caught the mutation immediately.
+3. **Event-driven rendering is cheaper to build in than to retrofit.** No
+   standing rAF; one frame per change; orbit damping off because damping needs
+   frames after input stops. That is P4-5's requirement met at the start, and an
+   always-on loop would have let state changes go unannounced until everything
+   depended on it.
+4. **Layout matters to correctness, not just looks.** The canvas first went in
+   as `position: absolute; inset: 0`, which covered the guidance strip — the
+   stage is a two-row grid. It now takes the grid row, and the renderer sizes
+   from the **canvas's own** box rather than its parent's, since the parent is
+   taller than the drawing area.
+
+### Deliberately not built
+- **`CustomTransformControls`.** It belongs with the Fit Skeleton step, where
+  something actually edits bone placement — not with displaying a model. P3-7b.
+- **A custom skeleton helper.** three ships `SkeletonHelper` and nothing yet
+  needs thicker bones.
+- **WebGPU.** `WebGLRenderer` is used and the backend is reported honestly;
+  `WebGPURenderer` is a different API and a separate, measurable change.
+
+### Verification
+- 338 Rust tests both profiles, 0 failures; **9 frontend tests**; fmt, clippy,
+  tsc, vite all clean.
+- Mutations **9/9 caught**, one a data mutation swapping the rigged fixture for
+  the plain mesh.
+- Self-reviewed; `/code-review` still 403s with `oauth_org_not_allowed`. It
+  caught a scratch vector written as `bounds.getSize(bounds.max.clone())`,
+  which works but reads like an accident.
+- **SonarQube not run** — third session in a row touching `app/src`. Still no
+  token, admin password unknown. **Ask the user; do not guess.**
+- Bundle: 11 KB → 642 KB of JS (three.js), against a 40 MB `.app` budget.
+
+### Next
+The viewport draws an imported model. What it cannot yet do is **anything to**
+it, so the next real step is the step rail actually advancing: choose a template
+(P3-1 data is ready), fit it (`m2m-rig::fit`), bind weights, retarget. All the
+Rust exists; none of it is reachable from the UI. **P3-8c** (vertex welding, 6x
+measured) and **P4-1** (Blender bridge) remain unclaimed.

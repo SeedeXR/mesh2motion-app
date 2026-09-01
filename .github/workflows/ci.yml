@@ -139,6 +139,8 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
+      - name: Test
+        run: npx vitest run
       - name: Build
         run: npx vite build
 
