@@ -3727,3 +3727,36 @@ numeric regression ever proves insufficient.
 the ~23 rust:S3776 parser-complexity smells (bounded refactors guarded by
 existing tests + fuzz + Blender numbers), P4-4 perf pass (measure first).
 Loop continues — P4 still has open, real items.
+
+## Session 057 — 2026-09-01 — README reflects the finished product (P4-8)
+
+**Done.** `README.md` (commit af66d29, docs-only). The status block still said
+"scaffold stage" — stale since the six-step product is feature-complete. Rewrote:
+- Status: scaffold → "the core rigging flow is complete" for all 9 templates,
+  pointing at `visual_regression.rs` as the Blender-verified proof.
+- Why: solver-replacement claim moved future → present tense (geodesic voxel
+  binding is implemented; every vertex binds with a full unit of weight).
+- New **six-step table** (import → skeleton → fit → bind → animate → export),
+  each row naming the Tauri command behind it — grounded by grepping
+  `lib.rs` for `#[tauri::command]` fns, not from memory.
+- New **Blender bridge** section (optional, the independent reader).
+- "Run the checks" gained the `#[ignore]d` / `--ignored` Blender note.
+
+**Grounding:** verified every quick-start command exists in package.json
+(`app:dev`=tauri dev, `app:build`=tauri build), the crate list matches the
+workspace members exactly, bundle is `Mesh2Motion.app` (productName), export is
+both `.glb`+`.fbx` (rig::export_glb:545 / export_fbx:1014), and O9 "keep existing
+bones" is really implemented (lib.rs:53 — import reports, never strips). All 12
+markdown links resolve to real files.
+
+**Decision:** left the SonarQube gate OUT of the public README — it's internal-only
+(local docker + gitignored token), not part of clone→running. The "Run the checks"
+section documents the reproducible public gates (cargo test/clippy, tsc, vitest).
+
+**Session start:** disk tripped the guard (8049 MB > 8000) → `cargo clean` freed
+9.5 GiB. CI was green on 7173235 (P4-3). Docs-only change, no src/ touched, so no
+Sonar scan, no cargo run.
+
+**Next candidates:** the ~23 rust:S3776 parser-complexity smells (bounded 5-8,
+behaviour-preserving, guarded by existing tests+fuzz+Blender numbers), P4-4 perf
+pass (MEASURE FIRST vs test.md §6). Loop continues — real P4 items remain open.

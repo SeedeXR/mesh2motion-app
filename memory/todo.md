@@ -528,7 +528,7 @@ between the two. Four distinct problems:
 - [ ] **P4-5** Idle CPU → 0% (event-driven render, no always-on rAF loop)
 - [ ] **P4-6** *(optional, gated on R-7)* UniRig ONNX opt-in path via `ort` + CoreML EP
 - [ ] **P4-7** Signed + notarised `.app`; release workflow on `v*` tag
-- [ ] **P4-8** `README.md` rewrite: clone → running in < 5 min
+- [x] **P4-8** `README.md` rewrite (af66d29): status block updated scaffold→"core rigging flow complete" for all 9 templates; solver-replacement claim moved future→present (implemented, every vertex binds with full weight); added a six-step table (import→skeleton→fit→bind→animate→export) each row naming its Tauri command, a Blender-bridge section (optional, the independent reader), and an #[ignore]d/Blender note in "Run the checks". Quick-start commands + crate layout + links all verified against the tree. Sonar gate deliberately omitted from the public README — internal-only (local docker + gitignored token), not part of clone→running.
 - [ ] **P4-9** User docs + in-app help complete
 
 ---
