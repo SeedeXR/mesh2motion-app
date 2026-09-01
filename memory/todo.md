@@ -515,7 +515,13 @@ between the two. Four distinct problems:
 
 ## P4 — Bridge, performance, release
 
-- [ ] **P4-1** `m2m-bridge` headless: spawn Blender, JSON-RPC over stdio
+- [~] **P4-1** **`m2m-bridge` headless Blender inspection** *(done 2026-09-01, session 055 — the headless half; live add-on round-trip deferred)*
+  - `m2m_bridge::inspect(bytes, ext, blender) -> BlenderReport` writes the bytes to a temp file, spawns `Blender --background --factory-startup --python <embedded script> -- <model> <report.json>`, and parses the typed report. This packages the `tools/blender-fbx-import-check.py` round trip — the only INDEPENDENT reader in the project — into a tested crate, the foundation the visual-regression harness (P4-3) needs.
+  - **Reads the report from a FILE, never stdout** — Blender writes unterminated progress to stdout, which once made a gate fail with a JSON `SyntaxError` instead of its assertion. The script is embedded via `include_str!` from `tools/` so there is one source, no drift. Temp files are cleaned by a `Drop` guard however `inspect` returns.
+  - `blender_path()` resolves `M2M_BLENDER` first (so CI or another machine points at its own install), then the macOS default, and never assumes a path exists without checking.
+  - **Verified end to end against real Blender** (the `#[ignore]`d live test, run this session): imported `rig-human.glb`, got 66 bones, 0 meshes, 1 armature. CI cannot run Blender, so parsing is CI-tested (success, failure-with-only-error-fields, and garbage → `BadReport` not a panic) and the live spawn is `#[ignore]`d.
+  - Mutations 3/3 (bad-report-is-an-error, mesh_vertices actually carried, and a fixture-range data mutation the frame-range assertion caught).
+- [ ] **P4-1b** `m2m-bridge` LIVE mode — attach to a running Blender via a companion add-on for artist round-tripping (`architecture.md` §6). Bigger; needs the add-on.
 - [ ] **P4-2** Blender add-on for live round-trip
 - [ ] **P4-3** Visual regression harness: render 6 poses per template in headless Blender, diff
 - [ ] **P4-4** Performance pass against every budget in `test.md` §6

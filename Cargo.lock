@@ -1856,6 +1856,8 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "m2m-io",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 

@@ -3650,3 +3650,45 @@ low-risk refactor), **P3-7b** transform gizmo, **P3-3d** move rigs out of
 `legacy/`, **P4** (Blender bridge, perf pass, release), the solver A/B. The
 six-step product is complete and both export formats carry a full rig; what
 remains is quality, tooling and release.
+
+---
+
+## Session 055 — 2026-09-01 — the Blender bridge (P4-1, headless)
+
+**HEAD in: `aed8dd7` (CI green, 7/7). The user's brief called a DCC bridge to
+Blender "very crucial"; `m2m-bridge` was a 16-line stub.**
+
+### What shipped
+`m2m_bridge::inspect(bytes, ext, blender) -> BlenderReport` — writes the bytes
+to temp, spawns Blender headless with an embedded Python script, parses a typed
+report. This packages the `tools/blender-fbx-import-check.py` round trip — the
+only INDEPENDENT reader in the project (ours and three.js share a design) —
+into a tested crate, which is the foundation P4-3 (render-and-diff visual
+regression) needs.
+
+- **Report read from a FILE, never stdout** — Blender's unterminated progress
+  once made a gate fail with a JSON SyntaxError instead of its assertion. The
+  module docs carry that reasoning.
+- Script embedded via `include_str!` from `tools/` — one source, no drift.
+- Temp files cleaned by a `Drop` guard on every return path.
+- `blender_path()` honours `M2M_BLENDER` first, then the macOS default, checking
+  the file exists rather than assuming it.
+
+### Verification, and the CI limitation named honestly
+CI has no Blender, so the split is: **parsing is CI-tested** (success report,
+failure report with only file/imported/error, and garbage → `BadReport` not a
+panic), and the **live spawn is `#[ignore]`d** and run locally this session — it
+imported `rig-human.glb` and returned 66 bones, 0 meshes, 1 armature, the same
+numbers every session's manual check has confirmed. Mutations 3/3.
+
+- 384 Rust tests both profiles (was 381), 0 failures; 18 frontend; fmt, clippy
+  clean. Touched only `crates/`, so Sonar not required; architecture boundary
+  intact (m2m-core does not depend on the bridge; bridge forbids unsafe).
+- Disk: `target/` ~7.7 GB, near the 8 GB guard — **clean next session.**
+
+### Next
+**P4-1b** live Blender round-trip (needs the companion add-on — bigger). The
+**23 rust:S3776** parser-complexity smells remain (Sonar backlog). **P3-7b**
+gizmo, **P3-3d** move rigs out of `legacy/`, **P4-3** visual regression (now has
+its bridge), **P4-4** perf pass, **P4-7** signed release, **P4-8** README.
+Most of P4 is genuinely open, so the loop continues.
