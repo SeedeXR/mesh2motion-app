@@ -97,9 +97,54 @@ const RHINO: Map = &[
     ("tail_5", "tail_05", "tail_4", "tail_05"),
 ];
 
+/// Buffalo: a large bovine quadruped. Its source rig is bilaterally symmetric,
+/// so each side maps from its own bone (no `@mirror`); the IK/pole-target helper
+/// bones are dropped and every leg is extended to the floor.
+#[rustfmt::skip]
+const BUFFALO: Map = &[
+    // `Back` (the croup hub the source hangs legs and tail off) is the root; the
+    // source's low `Body` anchor is dropped. The spine is the three Torso bones,
+    // which sit inside the mesh — `Back` itself is a high rear point that the
+    // uniform spine fit leaves outside, so it must not be a spine joint.
+    ("root", "Back", "", "Back"),
+    ("spine_1", "Torso", "root", "Torso"),
+    ("spine_2", "Torso2", "spine_1", "Torso2"),
+    ("spine_3", "Torso3", "spine_2", "Torso3"),
+    ("neck_1", "Neck1", "spine_3", "Neck1"),
+    ("neck_2", "Neck2", "neck_1", "Neck2"),
+    ("neck_3", "Neck3", "neck_2", "Neck3"),
+    ("head", "Head", "neck_3", "Head"),
+    ("front_shoulder_l", "FrontShoulder.L", "spine_2", "FrontShoulder.L"),
+    ("front_upper_l", "FrontUpperLeg.L", "front_shoulder_l", "FrontUpperLeg.L"),
+    ("front_lower_l", "FrontLowerLeg.L", "front_upper_l", "FrontLowerLeg.L"),
+    ("front_foot_l", "@ground", "front_lower_l", ""),
+    ("front_shoulder_r", "FrontShoulder.R", "spine_2", "FrontShoulder.R"),
+    ("front_upper_r", "FrontUpperLeg.R", "front_shoulder_r", "FrontUpperLeg.R"),
+    ("front_lower_r", "FrontLowerLeg.R", "front_upper_r", "FrontLowerLeg.R"),
+    ("front_foot_r", "@ground", "front_lower_r", ""),
+    ("back_hip_l", "BackShoulder.L", "root", "BackShoulder.L"),
+    ("back_upper_l", "BackLeg.L", "back_hip_l", "BackLeg.L"),
+    ("back_lower_l", "BackUpperLeg.L", "back_upper_l", "BackUpperLeg.L"),
+    ("back_foot_l", "BackLowerLeg.L", "back_lower_l", "BackLowerLeg.L"),
+    ("back_toe_l", "@ground", "back_foot_l", ""),
+    ("back_hip_r", "BackShoulder.R", "root", "BackShoulder.R"),
+    ("back_upper_r", "BackLeg.R", "back_hip_r", "BackLeg.R"),
+    ("back_lower_r", "BackUpperLeg.R", "back_upper_r", "BackUpperLeg.R"),
+    ("back_foot_r", "BackLowerLeg.R", "back_lower_r", "BackLowerLeg.R"),
+    ("back_toe_r", "@ground", "back_foot_r", ""),
+    ("tail_1", "Tail1", "root", "Tail1"),
+    ("tail_2", "Tail2", "tail_1", "Tail2"),
+    ("tail_3", "Tail3", "tail_2", "Tail3"),
+    ("tail_4", "Tail4", "tail_3", "Tail4"),
+    ("tail_5", "Tail5", "tail_4", "Tail5"),
+    ("tail_6", "Tail6", "tail_5", "Tail6"),
+    ("tail_7", "Tail7", "tail_6", "Tail7"),
+];
+
 fn mapping(creature: &str) -> Map {
     match creature {
         "rhino" => RHINO,
+        "buffalo" => BUFFALO,
         other => panic!("no mapping for {other:?}"),
     }
 }

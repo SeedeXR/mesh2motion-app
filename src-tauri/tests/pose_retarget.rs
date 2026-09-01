@@ -181,3 +181,17 @@ fn a_clip_retargets_cleanly_onto_the_rhino() {
     let glb = animated_export("rhino", "legacy/static/models/model-rhino.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "rhino", 12.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_the_buffalo() {
+    let lib = "legacy/static/animations/buffalo-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export(
+        "buffalo",
+        "legacy/static/models/model-buffalo.glb",
+        lib,
+        &clip,
+    );
+    assert_animates_cleanly_within(&glb, &clip, "buffalo", 12.0);
+}
