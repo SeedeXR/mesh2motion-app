@@ -285,12 +285,24 @@ impl Document {
     /// Callers need this because anything that asks "is this bone inside the
     /// mesh" or "should this bone be exported" gets the wrong answer for them.
     /// Returns indices into `skin.joints`.
-    pub fn non_deforming_joints(&self, skin: usize) -> Vec<usize> {
-        let Some(skin) = self.skins.get(skin) else {
+    pub fn non_deforming_joints(&self, index: usize) -> Vec<usize> {
+        let Some(skin) = self.skins.get(index) else {
             return Vec::new();
         };
         let mut deforms = vec![false; skin.joints.len()];
         for primitive in &self.primitives {
+            // Only the primitives THIS skin deforms. A joint index means
+            // nothing outside its own skin's joint list, so counting every
+            // primitive marks a joint as deforming because some other mesh's
+            // unrelated skin happened to use the same slot. On the converted
+            // reference rig that is the difference between 57 and 39.
+            let owner = primitive
+                .node
+                .and_then(|n| self.nodes.get(n))
+                .and_then(|n| n.skin);
+            if owner != Some(index) {
+                continue;
+            }
             for (joints, weights) in primitive
                 .joints
                 .chunks_exact(4)

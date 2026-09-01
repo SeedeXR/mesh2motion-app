@@ -221,3 +221,38 @@ fn rewrite_json(glb: &[u8], edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8
     out.extend_from_slice(rest);
     out
 }
+
+#[test]
+fn load_brings_either_format_to_the_same_document_model() {
+    // The bulk channel carries one format, whatever arrived
+    // (`memory/architecture.md` §4), so `load` must land both in `glb::Document`.
+    let from_fbx = m2m_io::import::load(MIXAMO_FBX).expect("fbx loads");
+    assert_eq!(from_fbx.nodes.len(), 67, "65 bones and 2 mesh models");
+    assert_eq!(from_fbx.skins.len(), 2);
+
+    let from_glb = m2m_io::import::load(ANIMATED).expect("glb loads");
+    assert_eq!(
+        from_glb,
+        m2m_io::glb::read(ANIMATED).expect("reads"),
+        "a glTF is passed through, not rebuilt"
+    );
+}
+
+#[test]
+fn what_load_returns_can_be_written_as_the_glb_that_goes_on_the_wire() {
+    let bytes =
+        m2m_io::glb::write(&m2m_io::import::load(MIXAMO_FBX).expect("loads")).expect("writes");
+    let back = m2m_io::glb::read(&bytes).expect("the wire payload reads back");
+
+    assert_eq!(back.nodes.len(), 67);
+    assert_eq!(back.skins.len(), 2);
+    assert!(back.nodes.iter().any(|n| n.name == "mixamorig:Hips"));
+}
+
+#[test]
+fn load_refuses_what_inspect_refuses() {
+    assert!(matches!(
+        m2m_io::import::load(b"\x89PNG\r\n\x1a\n not a model").expect_err("refused"),
+        ImportError::UnknownFormat
+    ));
+}

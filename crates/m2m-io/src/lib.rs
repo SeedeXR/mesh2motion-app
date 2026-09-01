@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod convert;
 pub mod fbx;
 pub mod glb;
 pub mod import;

@@ -175,6 +175,13 @@ pub struct Scene {
     /// reads a 148-frame 30fps clip as 123.5 frames when TimeMode is missing,
     /// i.e. the same keys played 20% slow, with every other number identical.
     pub time_mode: Option<i32>,
+    /// `GlobalSettings/UnitScaleFactor`, centimetres per file unit. `None` when
+    /// the file omits it.
+    ///
+    /// Carried for the same reason as [`Self::time_mode`]: dropping it silently
+    /// rescales space. Mixamo writes 1.0 and exports centimetres, so a
+    /// converter that assumes metres produces a 180-metre character.
+    pub unit_scale: Option<f64>,
 }
 
 impl Scene {
@@ -192,6 +199,7 @@ impl Scene {
         let links = collect_links(&doc);
         let version = doc.version;
         let time_mode = read_time_mode(&doc);
+        let unit_scale = read_unit_scale(&doc);
         let (objects, report) = collect_objects(doc);
         Self {
             version,
@@ -199,6 +207,7 @@ impl Scene {
             links,
             report,
             time_mode,
+            unit_scale,
         }
     }
 
@@ -382,6 +391,22 @@ fn read_time_mode(doc: &FbxDocument) -> Option<i32> {
         .children_named("P")
         .find_map(|p| match (p.properties.first(), p.properties.get(4)) {
             (Some(FbxProperty::Str(name)), Some(FbxProperty::I32(value))) if name == "TimeMode" => {
+                Some(*value)
+            }
+            _ => None,
+        })
+}
+
+/// `GlobalSettings/Properties70`'s `UnitScaleFactor`, in the same place and the
+/// same shape as `TimeMode` — a `Double` rather than an `int`.
+fn read_unit_scale(doc: &FbxDocument) -> Option<f64> {
+    doc.root("GlobalSettings")?
+        .child("Properties70")?
+        .children_named("P")
+        .find_map(|p| match (p.properties.first(), p.properties.get(4)) {
+            (Some(FbxProperty::Str(name)), Some(FbxProperty::F64(value)))
+                if name == "UnitScaleFactor" =>
+            {
                 Some(*value)
             }
             _ => None,

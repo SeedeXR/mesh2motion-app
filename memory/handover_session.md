@@ -2710,3 +2710,79 @@ P3-0 was the last unchecked P3 *core* item. What remains is **P4** (Blender
 bridge, performance, release) and the P3 UI series (P3-6 shell, P3-7 viewport,
 P3-8 binary IPC, P3-9..P3-13), plus the research items R-4..R-7. P3-7 is the
 natural follow-on: the import panel reports a model the viewport cannot yet draw.
+
+---
+
+## Session 040 — 2026-09-01 — P3-8: the bulk IPC channel, and FBX into glTF
+
+**HEAD in: `02f9f05` (CI green, 7/7). Out: P3-8's bulk channel done; progress events deferred with a reason.**
+
+### The decision at the top of the session
+The prompt suggested P3-7 (viewport) as the natural next item. `architecture.md`
+§4 says bulk data crosses as raw bytes, **never JSON** — so the viewport cannot
+draw anything until the bulk channel exists. Took **P3-8** instead. The doc
+settled the order, not preference.
+
+### What shipped
+- **glTF is the wire format.** §4 describes "bytes with a small JSON header",
+  which is what a `.glb` already is. No private encoding, no hand-written
+  decoder on the far side. `load_model` returns `tauri::ipc::Response` —
+  `InvokeResponseBody::Raw` confirmed at `tauri-2.11.5/src/ipc/mod.rs:99-104`,
+  read from the vendored crate rather than recalled.
+- **`crates/m2m-io/src/convert.rs`** — FBX into `glb::Document`, which had to
+  exist before the channel could carry anything. Hierarchy, meshes, skins,
+  inverse bind matrices, unit scale.
+- `import::load` alongside `inspect`, both over one private `read_any`.
+- `Scene::unit_scale` carries `GlobalSettings/UnitScaleFactor` beside
+  `time_mode`, for the same reason: dropping it silently rescales space.
+
+### Findings worth keeping
+1. **I nearly "fixed" correct code against an invented invariant.** The probe
+   asserted `jointWorld · IBM == meshWorld` and was off by 1.8. It is the wrong
+   invariant: FBX `Transform` is the mesh's global *at bind*, which for this rig
+   is not the mesh node's world (`skin.rs` module docs say so — I had not read
+   them). The real check is `jointWorld ≈ S · TransformLink`, which holds to
+   **5.8e-5**. The remaining 2.2 was my probe pairing glTF skin *n* with FBX
+   skin *n*; the converter emits skins in node order and `parse_all` returns its
+   own. The test now matches skins **by joint name**, so the ordering is proven
+   rather than assumed. *Measure the invariant before trusting it, and read the
+   module docs of the thing you are about to accuse.*
+2. **A real latent bug, found while chasing an assimp discrepancy.**
+   `Document::non_deforming_joints(skin)` scanned **every** primitive, not just
+   those the skin deforms — so a joint idle in skin A counted as deforming
+   because skin B used the same index. On the converted rig: 57/58 reported,
+   39/50 actual. No production caller yet, which is exactly why it was cheap to
+   fix now rather than when P3-9 makes it live.
+3. **An unexplained difference, recorded as unexplained.** assimp counts 129
+   bones for the FBX and 95 for our GLB. Two hypotheses measured, both refuted
+   (115 joints with any weight; 89 counting per-skin). Not rationalised into a
+   third story. Blender's weight distribution matching to 0.02% and the
+   bind-pose assertion at 1e-5 are the evidence the skin is right.
+4. **`cargo fmt` reflowed an edit target twice more** — the `generate_handler!`
+   list and a `let` binding. Both times the anchor assertion caught it instead
+   of a silent no-op. The habit is load-bearing.
+
+### Deliberately not built
+- **Progress events.** No long job exists to report on; `bind_skin` is not
+  wired. Filed as P3-8b, to be taken with the first operation slow enough.
+- **Animation in the converter.** The reader has it and `glb::Clip` holds it, so
+  it is work, not a question. The viewport needs geometry first.
+- **Vertex welding.** Measured cost: the reference rig crosses as 62,520 and
+  84,816 vertices instead of 10,514 and 14,232 — 5.9 MB. Welding on
+  position+joints+weights is lossless here because normals and UVs are not
+  carried. Filed as P3-8c; a 200k-vertex model would be ~50 MB.
+
+### Verification
+- 338 tests, 0 failures, **both** profiles (was 325). fmt, clippy, tsc, vite clean.
+- Mutations **9/9 caught**, one of them a data mutation (`UnitScaleFactor`).
+  Two anchors initially missed by fmt reflow and re-run individually rather than
+  left as "skipped".
+- Blender and assimp both read the converted file; numbers above.
+- Self-reviewed; `/code-review` still 403s with `oauth_org_not_allowed`.
+- **SonarQube not run** — this session touched `app/src` and `src-tauri/src`.
+  Still no token, admin password unknown. **Ask the user; do not guess.**
+
+### Next
+**P3-7, the viewport** — now genuinely unblocked: `loadModel(path)` returns a
+`.glb` as an ArrayBuffer, and the frontend currently fetches it only to report
+its size. Three.js and a GLTFLoader turn that into something drawn.

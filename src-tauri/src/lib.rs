@@ -39,6 +39,9 @@ fn report_startup(diagnostics: String) {
 pub struct ImportedFile {
     /// The file's name, for the UI to echo back.
     pub name: String,
+    /// Where it came from, so the viewport can ask for its geometry without a
+    /// second trip through the picker.
+    pub path: String,
     /// What reading it found.
     pub import: Import,
 }
@@ -73,11 +76,37 @@ fn pick_and_inspect(app: &tauri::AppHandle) -> Result<Option<ImportedFile>, Stri
     let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
 
     Ok(Some(ImportedFile {
+        path: path.to_string_lossy().into_owned(),
         name: path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
         import: m2m_io::import::inspect(&bytes).map_err(|e| e.to_string())?,
     }))
+}
+
+/// Returns a model's geometry as a `.glb`, for the viewport to draw.
+///
+/// **The bulk channel** (`memory/architecture.md` §4): the body is raw bytes,
+/// never JSON. A 50k-vertex mesh is about 1.2 MB binary and about 9 MB as a
+/// JSON number array, and the parse cost on the webview side would dominate
+/// everything the Rust core just did.
+///
+/// glTF is the wire format because it already *is* the thing §4 describes — a
+/// JSON header and a binary chunk — so neither side needs a private encoding.
+/// An FBX is converted on the way out; see `m2m_io::convert` for what that
+/// carries and what it does not.
+#[tauri::command]
+async fn load_model(path: String) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || read_as_glb(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file: {e}"))?;
+    let document = m2m_io::import::load(&bytes).map_err(|e| e.to_string())?;
+    let glb = m2m_io::glb::write(&document).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(glb))
 }
 
 #[tauri::command]
@@ -99,7 +128,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             build_info,
             report_startup,
-            import_model
+            import_model,
+            load_model
         ])
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");

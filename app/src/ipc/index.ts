@@ -42,6 +42,8 @@ export interface Import {
 
 export interface ImportedFile {
   readonly name: string
+  /** Where the file came from, so its geometry can be fetched without re-picking. */
+  readonly path: string
   readonly import: Import
 }
 
@@ -54,4 +56,19 @@ export interface ImportedFile {
  */
 export async function importModel(): Promise<ImportedFile | null> {
   return await invoke<ImportedFile | null>('import_model')
+}
+
+/**
+ * Fetches a model's geometry as a `.glb`, over the **bulk channel**.
+ *
+ * The body is raw bytes, never JSON — `memory/architecture.md` §4. A 50k-vertex
+ * mesh is ~1.2 MB binary and ~9 MB as a JSON number array, and parsing that
+ * array in the webview would cost more than the whole Rust-side solve.
+ *
+ * glTF is the wire format because it already is a JSON header plus a binary
+ * chunk, so a loader that already exists can read it. An FBX is converted on
+ * the Rust side.
+ */
+export async function loadModel(path: string): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>('load_model', { path })
 }

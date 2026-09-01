@@ -88,26 +88,55 @@ impl Import {
 
 /// Summarises a model file, deciding its format from its contents.
 ///
-/// The format is decided by magic and shape, never by the file's extension: an
-/// extension is a claim the user's filesystem makes, and a `.fbx` holding glTF
-/// should be read as what it is.
-///
 /// # Errors
 ///
 /// [`ImportError::UnknownFormat`] when nothing matches, or the underlying
 /// reader's error. Hostile input must reach one of those rather than a panic.
 pub fn inspect(bytes: &[u8]) -> Result<Import, ImportError> {
+    Ok(match read_any(bytes)? {
+        Source::Glb(document) => from_glb(&document),
+        Source::Fbx(scene) => from_fbx(&scene),
+    })
+}
+
+/// Reads a model file into the glTF document model, whatever it arrived as.
+///
+/// This is what crosses the IPC boundary: `memory/architecture.md` §4 requires
+/// bulk data to travel as bytes with a small JSON header, which is glTF's own
+/// shape, so the app sends a `.glb` rather than inventing a wire format.
+///
+/// # Errors
+///
+/// As [`inspect`], plus the conversion's own — see [`crate::convert`] for what
+/// an FBX carries across and what it does not.
+pub fn load(bytes: &[u8]) -> Result<glb::Document, ImportError> {
+    Ok(match read_any(bytes)? {
+        Source::Glb(document) => document,
+        Source::Fbx(scene) => crate::convert::fbx_to_gltf(&scene)?,
+    })
+}
+
+/// A file read far enough to know what it is.
+enum Source {
+    Glb(glb::Document),
+    Fbx(Scene),
+}
+
+/// Decides the format from the contents, never the extension: an extension is a
+/// claim the filesystem makes, and a `.fbx` holding glTF should be read as what
+/// it is.
+fn read_any(bytes: &[u8]) -> Result<Source, ImportError> {
     if bytes.starts_with(b"glTF") {
-        return Ok(from_glb(&glb::read(bytes)?));
+        return Ok(Source::Glb(glb::read(bytes)?));
     }
     let binary_error = match binary::parse(bytes) {
-        Ok(document) => return Ok(from_fbx(&Scene::from_document(document))),
+        Ok(document) => return Ok(Source::Fbx(Scene::from_document(document))),
         Err(error) => error,
     };
     // ASCII FBX is tried last, and only on valid UTF-8.
     if let Ok(source) = std::str::from_utf8(bytes) {
         if text::is_ascii_fbx(source) {
-            return Ok(from_fbx(&Scene::from_document(text::parse(source)?)));
+            return Ok(Source::Fbx(Scene::from_document(text::parse(source)?)));
         }
     }
     // A file carrying the FBX magic that then failed to parse gets to report

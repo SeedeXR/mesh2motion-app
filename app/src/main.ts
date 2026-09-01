@@ -3,7 +3,14 @@ import './ui/shell.css'
 
 import { createIcons, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
 import { STEPS, StepId, type StepDef } from './state/steps'
-import { buildInfo, importModel, isDesktop, reportStartup, type ImportedFile } from './ipc'
+import {
+  buildInfo,
+  importModel,
+  isDesktop,
+  loadModel,
+  reportStartup,
+  type ImportedFile
+} from './ipc'
 import { detectBackend } from './viewport/backend'
 
 /** Index of the step the user is currently on. */
@@ -14,6 +21,16 @@ let activeStep = 0
 
 /** The model the user imported, or `null` before they have. */
 let loaded: ImportedFile | null = null
+
+/**
+ * Size of the model's geometry payload, once it has crossed the bulk channel.
+ *
+ * Fetched but not yet drawn — the viewport arrives in P3-7. Reporting the size
+ * is what proves the binary channel works end to end, and it is the number that
+ * matters: FBX geometry is unshared per corner, so a 10.5k-vertex mesh crosses
+ * as 62.5k vertices until welding lands.
+ */
+let geometryBytes: number | null = null
 
 /**
  * Escapes text bound for `innerHTML`.
@@ -59,6 +76,7 @@ function renderInspector(step: StepDef): string {
       <dt>Meshes</dt><dd>${model.meshes}${model.skinned_meshes > 0 ? ` (${model.skinned_meshes} skinned)` : ''}</dd>
       <dt>Bones</dt><dd>${rigged ? model.bones.length : 'none'}</dd>
       <dt>Clips</dt><dd>${model.clips.length}</dd>
+      <dt>Geometry</dt><dd>${geometryBytes === null ? '—' : `${(geometryBytes / 1_000_000).toFixed(1)} MB`}</dd>
     </dl>
     ${
       rigged
@@ -81,7 +99,10 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
   try {
     const picked = await importModel()
     // A cancelled picker leaves the previous import alone rather than clearing it.
-    if (picked !== null) loaded = picked
+    if (picked !== null) {
+      loaded = picked
+      geometryBytes = (await loadModel(picked.path)).byteLength
+    }
     render()
   } catch (err) {
     button.disabled = false
