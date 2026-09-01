@@ -243,9 +243,13 @@ export function createViewport(): Viewport {
 
     gizmo = new TransformControls(camera, renderer.domElement)
     gizmo.setMode('translate')
-    // Freeing the orbit while dragging would spin the camera with the joint.
     gizmo.addEventListener('dragging-changed', (event) => {
-      controls.enabled = !(event as unknown as { value: boolean }).value
+      const dragging = (event as unknown as { value: boolean }).value
+      // Freeing the orbit while dragging would spin the camera with the joint.
+      controls.enabled = !dragging
+      // Notify once, when the drag ends — one edited placement per drag, so undo
+      // steps over whole moves rather than every pixel of one.
+      if (!dragging) onJointEdit?.(editPositions)
     })
     gizmo.addEventListener('objectChange', () => {
       const object = gizmo?.object
@@ -257,7 +261,6 @@ export function createViewport(): Viewport {
         object.position.z
       ])
       refreshFittedGeometry()
-      onJointEdit?.(editPositions)
       requestRender()
     })
     gizmo.addEventListener('change', requestRender)

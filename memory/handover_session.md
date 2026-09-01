@@ -4088,3 +4088,23 @@ buttons + focus-visible). The OPTIONAL transform gizmo (joint drag) is mouse-onl
 keyboard joint-nudge is a follow-up, not core-flow-blocking (automatic fit needs no gizmo).
 
 Guard: tsc clean, vitest 29/29, vite build green.
+
+## Session 068 — 2026-09-01 — P3-11 undo/redo
+
+**Done.** Undo/redo across the whole flow (design.md §11 "user control").
+- Pure `History<T>` core (app/src/state/history.ts): pointer over immutable
+  snapshots, a fresh push forks the timeline (drops redo). 5 vitest guards.
+- main.ts: a `Snapshot` of the rig state (chosen, fitted incl. gizmo edits, bound,
+  clip, activeStep, furthestStep — NOT the imported file; undo winds back rigging,
+  not the import). `record()` at: import (baseline), fit, each completed joint drag,
+  bind, clip-select. `undo()/redo()` restore + re-render (incl. re-showing the fitted
+  skeleton with its edit callback). Global Cmd/Ctrl+Z (undo) / Shift+ (redo) listener.
+- **Drag coalescing:** scene.ts now fires `onJointEdit` on `dragging-changed→false`
+  (drag end) rather than every `objectChange`, so undo steps over whole joint moves,
+  not every pixel. The live redraw still runs per-move (internal, unchanged).
+
+Guard: tsc clean, vitest 34/34, vite build green.
+
+**Remaining open:** P3-10 (creature guidance content), R-4/R-6/R-7 (research docs),
+P4-1b/P4-2 (Blender add-on). Blocked/deferred: R-5+P3-13 (assets), P4-Q S3776 (essential),
+P4-6 (closed), P3-P1 (metric), P3-P6 detection-labels (fixtures).

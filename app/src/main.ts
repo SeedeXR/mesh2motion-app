@@ -2,6 +2,7 @@ import './ui/tokens.css'
 import './ui/shell.css'
 
 import { createIcons, AlertTriangle, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
+import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
   animationClips,
@@ -82,6 +83,69 @@ let viewport: Viewport | null = null
 function ensureViewport(): Viewport {
   viewport ??= createViewport()
   return viewport
+}
+
+/**
+ * The rig state undo/redo covers (design.md §11, "undo/redo at every step").
+ *
+ * Only what the user edits: the template chosen, where its skeleton landed
+ * (including joints dragged by hand), whether it is bound, the selected clip,
+ * and where in the flow they are. The imported model is not here — undo winds
+ * back the rigging, it does not un-import the file.
+ */
+interface Snapshot {
+  chosen: string | null
+  fitted: FittedSkeleton | null
+  bound: BindReport | null
+  clip: string | null
+  activeStep: number
+  furthestStep: number
+}
+
+const history = new History<Snapshot>()
+
+/** Captures the current rig state. Values are reassigned immutably elsewhere, so
+ * holding references is safe — a snapshot never sees a later mutation. */
+function snapshot(): Snapshot {
+  return { chosen, fitted, bound, clip, activeStep, furthestStep }
+}
+
+/** Records the current state as an undo point. */
+function record(): void {
+  history.push(snapshot())
+}
+
+/** Applies a snapshot and redraws, including the viewport's fitted skeleton. */
+function restore(state: Snapshot): void {
+  chosen = state.chosen
+  fitted = state.fitted
+  bound = state.bound
+  clip = state.clip
+  activeStep = state.activeStep
+  furthestStep = state.furthestStep
+  if (fitted !== null) {
+    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents, onJointEdited)
+  }
+  render()
+}
+
+function undo(): void {
+  const state = history.undo()
+  if (state !== null) restore(state)
+}
+
+function redo(): void {
+  const state = history.redo()
+  if (state !== null) restore(state)
+}
+
+/** The fitted-skeleton edit callback: a dragged joint replaces the placement and
+ * makes any earlier weights stale, then becomes its own undo point. */
+function onJointEdited(positions: ReadonlyArray<readonly [number, number, number]>): void {
+  if (fitted === null) return
+  fitted = { ...fitted, positions }
+  bound = null
+  record()
 }
 
 /**
@@ -275,6 +339,7 @@ async function runBind(): Promise<void> {
     // Animate sits in between and has nothing to complete yet, so it does not
     // gate the one after it.
     furthestStep = Math.max(furthestStep, 5)
+    record()
   } finally {
     binding = false
     render()
@@ -413,16 +478,11 @@ async function runFit(name: string): Promise<void> {
     // A different creature has a different library.
     clips = null
     clip = null
-    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents, (positions) => {
-      // Dragging a joint moves it for real: the edited placement replaces the
-      // fitted one, so binding solves against where the user put the bones. A
-      // moved skeleton makes any earlier weights stale.
-      if (fitted !== null) fitted = { ...fitted, positions }
-      bound = null
-    })
+    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents, onJointEdited)
     // A placed skeleton is what binding needs. The Fit step in between has
     // nothing to complete yet, so it does not gate the one after it.
     furthestStep = Math.max(furthestStep, 3)
+    record()
   } finally {
     fitting = false
     render()
@@ -446,6 +506,8 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       geometryBytes = geometry.byteLength
       // A model is what the skeleton step needs, so earning it unlocks that step.
       furthestStep = Math.max(furthestStep, 1)
+      // The imported-but-unrigged state is the baseline undo returns to.
+      record()
       // Rendered before drawing, so the canvas is in the DOM and has a size to
       // frame the model against.
       render()
@@ -565,6 +627,7 @@ function render(): void {
         stopPreview()
         clip = clipName
         exported = null
+        record()
         render()
       })
       return
@@ -614,5 +677,16 @@ async function showEnvironment(): Promise<void> {
     console.error('ipc failed', err)
   }
 }
+
+// Undo/redo across the whole flow (design.md §11). Global, not per-render:
+// render() replaces the shell's markup, so a listener bound inside it would be
+// torn down and rebound every draw. Cmd/Ctrl+Z undoes, add Shift to redo.
+window.addEventListener('keydown', (event) => {
+  const meta = event.metaKey || event.ctrlKey
+  if (!meta || event.key.toLowerCase() !== 'z') return
+  event.preventDefault()
+  if (event.shiftKey) redo()
+  else undo()
+})
 
 render()
