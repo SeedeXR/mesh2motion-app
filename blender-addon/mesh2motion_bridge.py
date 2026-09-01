@@ -166,7 +166,7 @@ def serve_once(port):
 
 # --- Add-on plumbing (interactive mode) -----------------------------------
 
-_server_state = {"thread": None, "stop": False, "queue": [], "port": DEFAULT_PORT}
+_server_state = {"thread": None, "stop": False, "queue": [], "port": DEFAULT_PORT, "socket": None}
 
 
 def _drain_queue():
@@ -187,9 +187,16 @@ def _drain_queue():
 
 
 def _accept_loop():
-    """Background thread: accept connections and queue them for the main thread."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    """Background thread: accept connections and queue them for the main thread.
+
+    The listening socket is kept on `_server_state` so `stop_server` can close it
+    even if this loop is blocked, and is always closed on the way out so the port
+    is never leaked to a later start (found the hard way).
+    """
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    _server_state["socket"] = server
+    try:
         server.bind(("127.0.0.1", _server_state["port"]))
         server.listen(4)
         server.settimeout(0.5)
@@ -206,6 +213,12 @@ def _accept_loop():
                 continue
             # bpy is main-thread only, so the actual import is handed to the timer.
             _server_state["queue"].append((conn, header, payload))
+    finally:
+        try:
+            server.close()
+        except OSError:
+            pass
+        _server_state["socket"] = None
 
 
 def start_server(port=DEFAULT_PORT):
@@ -227,6 +240,15 @@ def stop_server():
 
     _server_state["stop"] = True
     _server_state["thread"] = None
+    # Close the listening socket directly so the port is released now, not only
+    # when the accept loop next wakes from its timeout.
+    server = _server_state.get("socket")
+    if server is not None:
+        try:
+            server.close()
+        except OSError:
+            pass
+        _server_state["socket"] = None
     if bpy.app.timers.is_registered(_drain_queue):
         bpy.app.timers.unregister(_drain_queue)
 

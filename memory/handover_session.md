@@ -4205,3 +4205,25 @@ Every actionable P0-P4 item is complete. Remaining open [ ] items are all
 blocked/deferred: R-5 (source external CC0 assets — human), P2-10b (Maya/FBX SDK —
 not on this machine), P3-13 (needs R-5), P4-Q (last 2 S3776 smells — essential
 complexity, deferred). The autonomous loop stops here.
+
+## Session 072 — 2026-09-01 — live bridge VERIFIED against a running Blender (+ two bugs fixed)
+
+Tested the P4-2/P4-1b live bridge against the user's live Blender 5.2 (via the
+Blender MCP add-on). Fully verified end-to-end, and found + fixed two real bugs:
+1. **Destructive import (fixed session 071):** handle_request called
+   read_factory_settings, wiping the artist's scene. Now imports non-destructively;
+   confirmed live — pushing rig-human.glb left the artist's "Armature" in place and
+   added "Armature.001", report scoped to only the pushed rig (66 bones / 1 armature).
+2. **Leaked port on thread death (fixed session 072):** a dead accept thread left
+   its socket bound, so the next start hit "Address already in use". The accept loop
+   now keeps the socket on _server_state, always closes it on exit, and stop_server
+   closes it directly. Confirmed live: after stop_server, port 47829 re-binds cleanly.
+
+**End-to-end verified live:** inspect_live (default port 47829) → the add-on's
+background accept thread → main-thread timer → non-destructive gltf import →
+report → back to Rust: imported=true, 66 bones, 1 armature. Clean start/stop
+lifecycle, port released, scene intact throughout.
+
+The live bridge is DONE and now genuinely proven, not just headless. No open work
+remains that is doable autonomously; the todo's remaining items stay blocked/deferred
+(R-5, P2-10b, P3-13, P4-Q).
