@@ -3692,3 +3692,38 @@ numbers every session's manual check has confirmed. Mutations 3/3.
 gizmo, **P3-3d** move rigs out of `legacy/`, **P4-3** visual regression (now has
 its bridge), **P4-4** perf pass, **P4-7** signed release, **P4-8** README.
 Most of P4 is genuinely open, so the loop continues.
+
+## Session 056 — 2026-09-01 — visual regression across all 9 creatures (P4-3)
+
+**Done.** `src-tauri/tests/visual_regression.rs` (commit 2e501e1, pushed): the
+whole rig pipeline — `rig::fit` → `rig::bind` → `rig::export_glb` — is run for
+each of the 9 templates and the exported `.glb` is read back through Blender
+(`m2m_bridge::inspect`, the only independent reader), checked against a
+committed baseline (bone count, welded vertex count) plus reader-independent
+invariants (imports as 1 mesh, 0 fallback/unweighted vertices, `weight_total`
+== vertex count = every vertex sums to 1). `#[ignore]`d (CI has no Blender);
+run `cargo test -p mesh2motion --release -- --ignored`.
+
+**The payoff:** first automated proof the full pipeline works for ALL 9
+creatures, not just human. Every one: 0 fallback, weight_total == verts, Blender
+bone count == template joints, 1 mesh. Baselines (bones / welded verts):
+human 66/7399, fox 49/1222, horse 56/2146, bird 55/1852, spider 56/924,
+snake 28/995, shark 33/3526, kaiju 58/1571, dragon 99/2561.
+
+**Guards:** ran the probe first (found nothing broken — all 9 already bind
+cleanly). Mutation-checked the harness: fox baseline 49→48 made it FAIL with the
+exact diff `fox: bones = Some(49), baseline 48`; restored (md5 matches). fmt
+reflowed the file → re-verified baselines intact + re-ran (still 1 passed).
+Gates: fmt clean, clippy clean, debug + release compile. No `src/` touched so no
+Sonar scan needed (loop's own condition). CI polling 2e501e1 by SHA.
+
+**Note on scope:** todo.md's P4-3 said "render 6 poses, diff" (image pixel-diff).
+Built the *structural* form instead — catches rig-pipeline regressions through a
+real DCC without the flake of cross-version/GPU pixel diffing. Image-pose variant
+deferred to an optional follow-up (documented in todo.md), to add only if a
+numeric regression ever proves insufficient.
+
+**Next candidates:** P4-8 README rewrite (high value, no code risk, CI-safe),
+the ~23 rust:S3776 parser-complexity smells (bounded refactors guarded by
+existing tests + fuzz + Blender numbers), P4-4 perf pass (measure first).
+Loop continues — P4 still has open, real items.

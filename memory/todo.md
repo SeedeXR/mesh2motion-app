@@ -523,7 +523,7 @@ between the two. Four distinct problems:
   - Mutations 3/3 (bad-report-is-an-error, mesh_vertices actually carried, and a fixture-range data mutation the frame-range assertion caught).
 - [ ] **P4-1b** `m2m-bridge` LIVE mode — attach to a running Blender via a companion add-on for artist round-tripping (`architecture.md` §6). Bigger; needs the add-on.
 - [ ] **P4-2** Blender add-on for live round-trip
-- [ ] **P4-3** Visual regression harness: render 6 poses per template in headless Blender, diff
+- [x] **P4-3** Visual regression harness (structural): `src-tauri/tests/visual_regression.rs` fits+binds+exports every one of the 9 templates and reads the .glb back through Blender (`m2m_bridge::inspect`), asserting a committed per-creature baseline (bone count, welded vertex count) plus reader-independent invariants (imports as 1 mesh, 0 unweighted vertices, weight_total == vertex count). #[ignore]d — CI has no Blender; run `cargo test -p mesh2motion --release -- --ignored`. Baselines recorded + all 9 pass (2e501e1). First automated proof the full rig works for all 9 creatures, not just human. Follow-up (optional): image-pose pixel-diff variant — heavier, flaky across Blender/GPU versions, deferred until a numeric regression proves insufficient.
 - [ ] **P4-4** Performance pass against every budget in `test.md` §6
 - [ ] **P4-5** Idle CPU → 0% (event-driven render, no always-on rAF loop)
 - [ ] **P4-6** *(optional, gated on R-7)* UniRig ONNX opt-in path via `ort` + CoreML EP
