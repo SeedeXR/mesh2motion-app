@@ -415,7 +415,7 @@ What our readers make of them, and what it taught us:
   - Deferred: **`CustomTransformControls`** belongs with the Fit Skeleton step, not with displaying a model — filed as P3-7b. The stock `SkeletonHelper` is used rather than a custom one; three ships it and nothing yet needs thicker bones.
   - Known: models converted from FBX carry no normals, which glTF answers with flat shading. Real visual difference, not a load failure. Bundle grew 11 KB to 642 KB (three.js), against a 40 MB budget.
   - Mutation-tested **9 for 9**, one of them a data mutation swapping the rigged fixture for the plain mesh.
-- [ ] **P3-7b** Transform gizmo for editing bone placement — take with the Fit Skeleton step, where it has a caller
+- [x] **P3-7b** DONE (session 063, c3bf233): Transform gizmo for editing bone placement — take with the Fit Skeleton step, where it has a caller
 - [~] **P3-8** Binary IPC layer with progress events (`architecture.md` §4) — *bulk channel done 2026-09-01, session 040; progress events deferred*
   - **glTF is the wire format.** §4 describes bulk data as bytes with a small JSON header, which is exactly what a `.glb` is — so neither side needs a private encoding and the frontend can hand the payload to a loader that already exists. `load_model` returns `tauri::ipc::Response`, whose body is `InvokeResponseBody::Raw` (verified in `tauri-2.11.5/src/ipc/mod.rs:99-104,190-202`, not quoted from memory).
   - `m2m_io::import::load` brings **either** format to `glb::Document`; `inspect` and `load` share one private `read_any`, so the format sniffing exists once.
