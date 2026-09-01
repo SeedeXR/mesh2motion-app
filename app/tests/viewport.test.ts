@@ -17,7 +17,8 @@ import {
   hasVertexColors,
   parseAnimated,
   parseModel,
-  skeletonSegments
+  skeletonSegments,
+  withJointMoved
 } from '../src/viewport/model'
 
 function glb(path: string): ArrayBuffer {
@@ -159,6 +160,32 @@ describe('skeletonSegments', () => {
 
     expect(points).toHaveLength(6)
     expect(Array.from(points).every(Number.isFinite)).toBe(true)
+  })
+})
+
+describe('withJointMoved', () => {
+  const line: Array<[number, number, number]> = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [2, 0, 0]
+  ]
+
+  test('moves only the named joint, leaving the rest', () => {
+    const moved = withJointMoved(line, 1, [1, 5, 0])
+    expect(moved[1]).toEqual([1, 5, 0])
+    expect(moved[0]).toEqual([0, 0, 0])
+    expect(moved[2]).toEqual([2, 0, 0])
+  })
+
+  test('returns a fresh array, never mutating the input', () => {
+    const moved = withJointMoved(line, 0, [9, 9, 9])
+    expect(moved).not.toBe(line)
+    expect(line[0]).toEqual([0, 0, 0])
+  })
+
+  test('an out-of-range index changes nothing', () => {
+    const moved = withJointMoved(line, 99, [9, 9, 9])
+    expect(moved).toEqual(line)
   })
 })
 

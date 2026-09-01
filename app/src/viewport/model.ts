@@ -147,6 +147,23 @@ export function skeletonSegments(
   return new Float32Array(points)
 }
 
+/**
+ * A copy of `positions` with joint `index` moved to `to`.
+ *
+ * The gizmo edits one joint at a time; the fitted skeleton's positions are
+ * `readonly`, so binding gets a fresh array rather than a mutated one. An
+ * out-of-range index returns the positions unchanged.
+ */
+export function withJointMoved(
+  positions: readonly (readonly [number, number, number])[],
+  index: number,
+  to: readonly [number, number, number]
+): Array<[number, number, number]> {
+  return positions.map((p, i): [number, number, number] =>
+    i === index ? [to[0], to[1], to[2]] : [p[0], p[1], p[2]]
+  )
+}
+
 /** Whether any mesh under a parsed model carries per-vertex colours. */
 export function hasVertexColors(root: Object3D): boolean {
   let found = false

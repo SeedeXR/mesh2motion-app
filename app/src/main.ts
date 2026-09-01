@@ -388,7 +388,13 @@ async function runFit(name: string): Promise<void> {
     // A different creature has a different library.
     clips = null
     clip = null
-    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents)
+    ensureViewport().showFittedSkeleton(fitted.positions, fitted.parents, (positions) => {
+      // Dragging a joint moves it for real: the edited placement replaces the
+      // fitted one, so binding solves against where the user put the bones. A
+      // moved skeleton makes any earlier weights stale.
+      if (fitted !== null) fitted = { ...fitted, positions }
+      bound = null
+    })
     // A placed skeleton is what binding needs. The Fit step in between has
     // nothing to complete yet, so it does not gate the one after it.
     furthestStep = Math.max(furthestStep, 3)

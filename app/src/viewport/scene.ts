@@ -33,12 +33,16 @@ import {
   MeshBasicMaterial,
   type Object3D,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SkeletonHelper,
+  SphereGeometry,
+  Vector2,
   Vector3,
   WebGLRenderer
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import {
   applyFraming,
   findClip,
@@ -47,6 +51,7 @@ import {
   parseAnimated,
   parseModel,
   skeletonSegments,
+  withJointMoved,
   type ModelContents
 } from './model'
 
@@ -67,7 +72,8 @@ export interface Viewport {
    */
   showFittedSkeleton(
     positions: readonly (readonly [number, number, number])[],
-    parents: readonly (number | null)[]
+    parents: readonly (number | null)[],
+    onEdit?: (positions: ReadonlyArray<readonly [number, number, number]>) => void
   ): void
   /**
    * Plays a clip from an animated `.glb`, replacing whatever was shown.
@@ -117,6 +123,21 @@ export function createViewport(): Viewport {
   let skeleton: SkeletonHelper | null = null
   let fittedSkeleton: LineSegments | null = null
 
+  // Bone-placement editing (Fit step). When `showFittedSkeleton` is given an
+  // edit callback, a draggable handle sits on each joint and a translate gizmo
+  // attaches to whichever the user clicks. The edited positions feed straight
+  // back to binding — the callback is how they get there.
+  let jointHandles: Mesh[] = []
+  let handleGeometry: SphereGeometry | null = null
+  let handleMaterial: MeshBasicMaterial | null = null
+  let gizmo: TransformControls | null = null
+  let editPositions: Array<[number, number, number]> = []
+  let editParents: readonly (number | null)[] = []
+  let onJointEdit: ((positions: ReadonlyArray<readonly [number, number, number]>) => void) | null =
+    null
+  const raycaster = new Raycaster()
+  const pointer = new Vector2()
+
   // Playback state. The animated model is a separate object from `model` — the
   // imported mesh — so playing a clip does not disturb what the earlier steps
   // put on screen; it is removed again on `stop`.
@@ -142,6 +163,107 @@ export function createViewport(): Viewport {
     })
   }
   controls.addEventListener('change', requestRender)
+
+  /** A grabbable handle size: ~1.5% of the skeleton's diagonal, so it works at
+   * any creature scale rather than being a speck on a whale or a boulder on a
+   * bird. */
+  function handleRadius(
+    positions: readonly (readonly [number, number, number])[]
+  ): number {
+    const box = new Box3()
+    for (const p of positions) box.expandByPoint(new Vector3(p[0], p[1], p[2]))
+    return Math.max(box.getSize(new Vector3()).length() * 0.015, 0.005)
+  }
+
+  /** Rewrites the skeleton line from the current edited joint positions. */
+  function refreshFittedGeometry(): void {
+    if (fittedSkeleton === null) return
+    const points = skeletonSegments(editPositions, editParents)
+    fittedSkeleton.geometry.setAttribute('position', new BufferAttribute(points, 3))
+    fittedSkeleton.geometry.getAttribute('position').needsUpdate = true
+    fittedSkeleton.geometry.computeBoundingSphere()
+  }
+
+  /** Picks the joint handle under the pointer and attaches the gizmo to it. A
+   * miss leaves the current selection alone. */
+  function onPointerDown(event: PointerEvent): void {
+    if (gizmo === null || gizmo.dragging) return
+    const rect = renderer.domElement.getBoundingClientRect()
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObjects(jointHandles, false)[0]
+    if (hit !== undefined) {
+      gizmo.attach(hit.object)
+      requestRender()
+    }
+  }
+
+  /** Tears down any joint handles and the gizmo, restoring the plain overlay. */
+  function clearFittedEditing(): void {
+    if (gizmo !== null) {
+      gizmo.detach()
+      scene.remove(gizmo.getHelper())
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      gizmo.dispose()
+      gizmo = null
+    }
+    for (const handle of jointHandles) scene.remove(handle)
+    jointHandles = []
+    handleGeometry?.dispose()
+    handleGeometry = null
+    handleMaterial?.dispose()
+    handleMaterial = null
+    onJointEdit = null
+    controls.enabled = true
+  }
+
+  /** Puts a draggable handle on every joint and a translate gizmo in the scene. */
+  function startFittedEditing(
+    positions: readonly (readonly [number, number, number])[],
+    parents: readonly (number | null)[],
+    onEdit: (positions: ReadonlyArray<readonly [number, number, number]>) => void
+  ): void {
+    editPositions = positions.map((p): [number, number, number] => [p[0], p[1], p[2]])
+    editParents = parents
+    onJointEdit = onEdit
+
+    handleGeometry = new SphereGeometry(handleRadius(positions), 8, 8)
+    // Drawn over the mesh like the skeleton itself, so a handle inside the body
+    // is still grabbable.
+    handleMaterial = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
+    positions.forEach((p, index) => {
+      const handle = new Mesh(handleGeometry as SphereGeometry, handleMaterial as MeshBasicMaterial)
+      handle.position.set(p[0], p[1], p[2])
+      handle.renderOrder = 2
+      handle.userData.jointIndex = index
+      jointHandles.push(handle)
+      scene.add(handle)
+    })
+
+    gizmo = new TransformControls(camera, renderer.domElement)
+    gizmo.setMode('translate')
+    // Freeing the orbit while dragging would spin the camera with the joint.
+    gizmo.addEventListener('dragging-changed', (event) => {
+      controls.enabled = !(event as unknown as { value: boolean }).value
+    })
+    gizmo.addEventListener('objectChange', () => {
+      const object = gizmo?.object
+      if (object === undefined) return
+      const index = object.userData.jointIndex as number
+      editPositions = withJointMoved(editPositions, index, [
+        object.position.x,
+        object.position.y,
+        object.position.z
+      ])
+      refreshFittedGeometry()
+      onJointEdit?.(editPositions)
+      requestRender()
+    })
+    gizmo.addEventListener('change', requestRender)
+    scene.add(gizmo.getHelper())
+    renderer.domElement.addEventListener('pointerdown', onPointerDown)
+  }
 
   // A frame loop that runs ONLY while a clip plays. The event-driven
   // `requestRender` keeps an idle viewport at zero cost; this is the one place
@@ -203,6 +325,7 @@ export function createViewport(): Viewport {
     async show(data: ArrayBuffer): Promise<ModelContents> {
       const contents = await parseModel(data)
 
+      clearFittedEditing()
       if (model !== null) {
         scene.remove(model)
         release(model)
@@ -237,6 +360,7 @@ export function createViewport(): Viewport {
 
       // Replace any previous playback subject.
       this.stop()
+      clearFittedEditing()
       if (animated !== null) {
         scene.remove(animated)
         release(animated)
@@ -257,6 +381,7 @@ export function createViewport(): Viewport {
 
     async showOverlay(data): Promise<void> {
       const contents = await parseModel(data)
+      clearFittedEditing()
       if (overlay !== null) {
         scene.remove(overlay)
         release(overlay)
@@ -296,7 +421,8 @@ export function createViewport(): Viewport {
       requestRender()
     },
 
-    showFittedSkeleton(positions, parents): void {
+    showFittedSkeleton(positions, parents, onEdit): void {
+      clearFittedEditing()
       if (fittedSkeleton !== null) {
         scene.remove(fittedSkeleton)
         fittedSkeleton.geometry.dispose()
@@ -320,6 +446,7 @@ export function createViewport(): Viewport {
       )
       fittedSkeleton.renderOrder = 1
       scene.add(fittedSkeleton)
+      if (onEdit !== undefined) startFittedEditing(positions, parents, onEdit)
       requestRender()
     },
 
@@ -327,6 +454,7 @@ export function createViewport(): Viewport {
 
     dispose(): void {
       playing = false
+      clearFittedEditing()
       if (overlay !== null) release(overlay)
       if (animated !== null) release(animated)
       if (model !== null) release(model)
