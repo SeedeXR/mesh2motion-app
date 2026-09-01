@@ -834,6 +834,128 @@ fn mesh_owners(gltf: &gltf::Gltf) -> HashMap<usize, usize> {
     owners
 }
 
+/// Checks that every attribute and index accessor this reader will touch has the
+/// layout the spec fixes and the `gltf` crate assumes. Returns whether the
+/// primitive is usable and whether it declares extra (ignored) influence sets.
+fn validate_primitive_accessors(primitive: &gltf::Primitive<'_>) -> (bool, bool) {
+    let mut usable = true;
+    let mut extra_influence_sets = false;
+    for (semantic, accessor) in primitive.attributes() {
+        if let gltf::Semantic::Joints(set) = semantic {
+            extra_influence_sets |= set > 0;
+        }
+        let ok = match semantic {
+            gltf::Semantic::Positions | gltf::Semantic::Normals => accessor_is(
+                &accessor,
+                gltf::accessor::Dimensions::Vec3,
+                &[gltf::accessor::DataType::F32],
+            ),
+            gltf::Semantic::Joints(_) => accessor_is(
+                &accessor,
+                gltf::accessor::Dimensions::Vec4,
+                &[gltf::accessor::DataType::U8, gltf::accessor::DataType::U16],
+            ),
+            gltf::Semantic::Weights(_) => accessor_is(
+                &accessor,
+                gltf::accessor::Dimensions::Vec4,
+                &[
+                    gltf::accessor::DataType::F32,
+                    gltf::accessor::DataType::U8,
+                    gltf::accessor::DataType::U16,
+                ],
+            ),
+            // Attributes this reader does not touch cannot panic it.
+            _ => true,
+        };
+        if !ok {
+            usable = false;
+        }
+    }
+    if let Some(accessor) = primitive.indices() {
+        if !accessor_is(
+            &accessor,
+            gltf::accessor::Dimensions::Scalar,
+            &[
+                gltf::accessor::DataType::U8,
+                gltf::accessor::DataType::U16,
+                gltf::accessor::DataType::U32,
+            ],
+        ) {
+            usable = false;
+        }
+    }
+    (usable, extra_influence_sets)
+}
+
+/// Keeps only whole triangles whose every corner indexes a vertex the primitive
+/// has, counting the ones dropped. Callers treat `indices` as valid offsets into
+/// `positions`, so that has to be true here rather than hopefully true.
+fn valid_triangles(raw: &[u32], vertex_count: usize, report: &mut GlbReport) -> Vec<u32> {
+    if raw.len() % 3 != 0 {
+        report.incomplete_triangles += 1;
+    }
+    let mut indices = Vec::with_capacity(raw.len());
+    for triangle in raw.chunks_exact(3) {
+        if triangle.iter().all(|&i| (i as usize) < vertex_count) {
+            indices.extend_from_slice(triangle);
+        } else {
+            report.out_of_range_triangles += 1;
+        }
+    }
+    indices
+}
+
+/// Reads one validated triangle primitive's geometry and skin data.
+fn read_primitive_data<'a>(
+    primitive: &gltf::Primitive<'_>,
+    mesh_index: usize,
+    mesh_owner: &HashMap<usize, usize>,
+    get_buffer_data: impl Clone + Fn(gltf::Buffer) -> Option<&'a [u8]>,
+    report: &mut GlbReport,
+) -> Result<Primitive, GlbError> {
+    let reader = primitive.reader(get_buffer_data);
+    let mut positions: Vec<f32> = reader
+        .read_positions()
+        .ok_or(GlbError::NoPositions {
+            mesh: mesh_index,
+            primitive: primitive.index(),
+        })?
+        .flatten()
+        .collect();
+    sanitize(&mut positions, &mut report.non_finite_values);
+
+    // A primitive with no index buffer draws its vertices in order.
+    let vertex_count = positions.len() / 3;
+    let raw: Vec<u32> = match reader.read_indices() {
+        Some(indices) => indices.into_u32().collect(),
+        None => (0..vertex_count as u32).collect(),
+    };
+    let indices = valid_triangles(&raw, vertex_count, report);
+
+    let joints: Vec<u16> = reader
+        .read_joints(0)
+        .map(|j| j.into_u16().flatten().collect())
+        .unwrap_or_default();
+    let mut weights: Vec<f32> = reader
+        .read_weights(0)
+        .map(|w| w.into_f32().flatten().collect())
+        .unwrap_or_default();
+    sanitize(&mut weights, &mut report.non_finite_values);
+    if joints.is_empty() != weights.is_empty() {
+        report.half_skinned_primitives += 1;
+    }
+
+    Ok(Primitive {
+        mesh: mesh_index,
+        node: mesh_owner.get(&mesh_index).copied(),
+        positions,
+        indices,
+        joints,
+        weights,
+        colors: Vec::new(),
+    })
+}
+
 fn read_primitives<'a, F>(
     gltf: &gltf::Gltf,
     mesh_owner: &HashMap<usize, usize>,
@@ -852,52 +974,7 @@ where
             }
             // Check every accessor's declared layout before reading it. The
             // spec fixes these, and the `gltf` crate assumes them.
-            let mut usable = true;
-            let mut extra_influence_sets = false;
-            for (semantic, accessor) in primitive.attributes() {
-                if let gltf::Semantic::Joints(set) = semantic {
-                    extra_influence_sets |= set > 0;
-                }
-                let ok = match semantic {
-                    gltf::Semantic::Positions | gltf::Semantic::Normals => accessor_is(
-                        &accessor,
-                        gltf::accessor::Dimensions::Vec3,
-                        &[gltf::accessor::DataType::F32],
-                    ),
-                    gltf::Semantic::Joints(_) => accessor_is(
-                        &accessor,
-                        gltf::accessor::Dimensions::Vec4,
-                        &[gltf::accessor::DataType::U8, gltf::accessor::DataType::U16],
-                    ),
-                    gltf::Semantic::Weights(_) => accessor_is(
-                        &accessor,
-                        gltf::accessor::Dimensions::Vec4,
-                        &[
-                            gltf::accessor::DataType::F32,
-                            gltf::accessor::DataType::U8,
-                            gltf::accessor::DataType::U16,
-                        ],
-                    ),
-                    // Attributes this reader does not touch cannot panic it.
-                    _ => true,
-                };
-                if !ok {
-                    usable = false;
-                }
-            }
-            if let Some(accessor) = primitive.indices() {
-                if !accessor_is(
-                    &accessor,
-                    gltf::accessor::Dimensions::Scalar,
-                    &[
-                        gltf::accessor::DataType::U8,
-                        gltf::accessor::DataType::U16,
-                        gltf::accessor::DataType::U32,
-                    ],
-                ) {
-                    usable = false;
-                }
-            }
+            let (usable, extra_influence_sets) = validate_primitive_accessors(&primitive);
             if !usable {
                 report.invalid_accessors += 1;
                 continue;
@@ -905,63 +982,13 @@ where
             if extra_influence_sets {
                 report.primitives_over_influence_limit += 1;
             }
-
-            let reader = primitive.reader(get_buffer_data.clone());
-            let mut positions: Vec<f32> = reader
-                .read_positions()
-                .ok_or(GlbError::NoPositions {
-                    mesh: mesh.index(),
-                    primitive: primitive.index(),
-                })?
-                .flatten()
-                .collect();
-            sanitize(&mut positions, &mut report.non_finite_values);
-
-            // A primitive with no index buffer draws its vertices in order.
-            let vertex_count = positions.len() / 3;
-            let raw: Vec<u32> = match reader.read_indices() {
-                Some(indices) => indices.into_u32().collect(),
-                None => (0..vertex_count as u32).collect(),
-            };
-
-            // Every corner must be a vertex this primitive actually has.
-            // Callers — renderers above all — treat `indices` as valid offsets
-            // into `positions`, so that has to be true here rather than
-            // hopefully true.
-            if raw.len() % 3 != 0 {
-                report.incomplete_triangles += 1;
-            }
-            let mut indices = Vec::with_capacity(raw.len());
-            for triangle in raw.chunks_exact(3) {
-                if triangle.iter().all(|&i| (i as usize) < vertex_count) {
-                    indices.extend_from_slice(triangle);
-                } else {
-                    report.out_of_range_triangles += 1;
-                }
-            }
-
-            let joints: Vec<u16> = reader
-                .read_joints(0)
-                .map(|j| j.into_u16().flatten().collect())
-                .unwrap_or_default();
-            let mut weights: Vec<f32> = reader
-                .read_weights(0)
-                .map(|w| w.into_f32().flatten().collect())
-                .unwrap_or_default();
-            sanitize(&mut weights, &mut report.non_finite_values);
-            if joints.is_empty() != weights.is_empty() {
-                report.half_skinned_primitives += 1;
-            }
-
-            out.push(Primitive {
-                mesh: mesh.index(),
-                node: mesh_owner.get(&mesh.index()).copied(),
-                positions,
-                indices,
-                joints,
-                weights,
-                colors: Vec::new(),
-            });
+            out.push(read_primitive_data(
+                &primitive,
+                mesh.index(),
+                mesh_owner,
+                get_buffer_data.clone(),
+                report,
+            )?);
         }
     }
     Ok(out)

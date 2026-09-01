@@ -434,6 +434,41 @@ fn merged_times(node: &CurveNode) -> Vec<f64> {
 ///
 /// Where an axis has no key at a given time, the previous key's value carries
 /// forward — starting from the Model's own value for that axis.
+/// Advances one axis's forward cursor to `time` and, if a key sits exactly
+/// there, updates `previous` with it — holding the last good value and counting
+/// a lost key when the value is non-finite.
+fn advance_axis(
+    curve: Option<&Curve>,
+    time: f64,
+    cursor: &mut usize,
+    previous: &mut f64,
+    non_finite: &mut usize,
+) {
+    let Some(curve) = curve else {
+        return;
+    };
+    // Skip any of this curve's keys that the merged array has already passed.
+    // That cannot happen while the curve's times are sorted — and they are, in
+    // every real file — but a malformed one must not make the cursor stick.
+    while *cursor < curve.times.len() && curve.times[*cursor] < time {
+        *cursor += 1;
+    }
+    // Exact equality is right here: the merged array is built from these very
+    // floats, so a key either is in it or is not.
+    if curve.times.get(*cursor) == Some(&time) {
+        let i = *cursor;
+        *cursor += 1;
+        match curve.values.get(i) {
+            // A non-finite position or scale would place the bone nowhere and
+            // take the mesh with it. Hold the last good value instead, and say
+            // that a key was lost.
+            Some(&v) if v.is_finite() => *previous = v,
+            Some(_) => *non_finite += 1,
+            None => {}
+        }
+    }
+}
+
 fn vector_track(
     model: i64,
     kind: TrackKind,
@@ -460,29 +495,7 @@ fn vector_track(
             .zip(previous.iter_mut())
             .zip(cursor.iter_mut())
         {
-            if let Some(curve) = curve {
-                // Skip any of this curve's keys that the merged array has
-                // already passed. That cannot happen while the curve's times
-                // are sorted — and they are, in every real file — but a
-                // malformed one must not make the cursor stick.
-                while *cursor < curve.times.len() && curve.times[*cursor] < time {
-                    *cursor += 1;
-                }
-                // Exact equality is right here: the merged array is built from
-                // these very floats, so a key either is in it or is not.
-                if curve.times.get(*cursor) == Some(&time) {
-                    let i = *cursor;
-                    *cursor += 1;
-                    match curve.values.get(i) {
-                        // A non-finite position or scale would place the bone
-                        // nowhere and take the mesh with it. Hold the last
-                        // good value instead, and say that a key was lost.
-                        Some(&v) if v.is_finite() => *previous = v,
-                        Some(_) => non_finite += 1,
-                        None => {}
-                    }
-                }
-            }
+            advance_axis(curve.as_ref(), time, cursor, previous, &mut non_finite);
             values.push(*previous as f32);
         }
     }
