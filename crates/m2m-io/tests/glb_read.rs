@@ -548,3 +548,41 @@ fn a_json_chunk_that_is_not_valid_utf8_is_refused_rather_than_trusted() {
         "an unreadable JSON chunk must be refused, not handed on"
     );
 }
+
+/// A file that only *requires* an appearance extension this reader ignores —
+/// `KHR_texture_transform`, which real Marvelous Designer and Blender exports
+/// declare — must load, where the strict `gltf` parse rejects it. A required
+/// *geometry* extension (draco), whose data the reader genuinely cannot read,
+/// must still fail rather than import a broken mesh.
+#[test]
+fn a_required_appearance_extension_loads_but_a_geometry_one_does_not() {
+    fn glb(json: &[u8]) -> Vec<u8> {
+        let mut chunk = json.to_vec();
+        while chunk.len() % 4 != 0 {
+            chunk.push(b' ');
+        }
+        let total = (12 + 8 + chunk.len()) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"glTF");
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&total.to_le_bytes());
+        out.extend_from_slice(&(chunk.len() as u32).to_le_bytes());
+        out.extend_from_slice(&0x4E4F_534Au32.to_le_bytes()); // "JSON"
+        out.extend_from_slice(&chunk);
+        out
+    }
+
+    let appearance =
+        glb(br#"{"asset":{"version":"2.0"},"extensionsRequired":["KHR_texture_transform"]}"#);
+    assert!(
+        glb::read(&appearance).is_ok(),
+        "a required appearance extension must be dropped, not rejected"
+    );
+
+    let geometry =
+        glb(br#"{"asset":{"version":"2.0"},"extensionsRequired":["KHR_draco_mesh_compression"]}"#);
+    assert!(
+        glb::read(&geometry).is_err(),
+        "a required geometry extension the reader cannot read must still fail"
+    );
+}

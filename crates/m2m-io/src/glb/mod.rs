@@ -409,7 +409,17 @@ impl Document {
 pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
     check_glb_header(bytes)?;
     check_indices(bytes)?;
-    let gltf = gltf::Gltf::from_slice(bytes)?;
+    let gltf = match gltf::Gltf::from_slice(bytes) {
+        Ok(gltf) => gltf,
+        // A required appearance-only extension is the one rejection worth
+        // retrying past: drop those from `extensionsRequired` and parse again.
+        // If nothing droppable was required, the original error stands — a real
+        // problem (a required geometry extension, malformed JSON) still fails.
+        Err(error) => match without_ignorable_extensions(bytes) {
+            Some(cleaned) => gltf::Gltf::from_slice(&cleaned)?,
+            None => return Err(error.into()),
+        },
+    };
 
     // Every buffer must be the BIN chunk. glTF gives buffer 0 no URI in a GLB;
     // anything with a URI is external by definition, and is refused here rather
@@ -449,6 +459,84 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
         clips,
         report,
     })
+}
+
+/// Extensions this reader can safely ignore when a file *requires* one.
+///
+/// They only affect appearance — texture UV transforms and material models —
+/// which this reader never resolves (it reads geometry, skins and animation).
+/// The `gltf` crate is built without any extension features, so it rejects
+/// every entry in `extensionsRequired`; for these that rejection is wrong, and
+/// dropping them lets a real Marvelous Designer / Blender export load.
+///
+/// Deliberately absent: `KHR_draco_mesh_compression`, `EXT_meshopt_compression`
+/// and `KHR_mesh_quantization`. Those change how the geometry itself is stored,
+/// so a file that requires one we genuinely cannot read — it must still fail.
+const IGNORABLE_REQUIRED_EXTENSIONS: &[&str] = &[
+    "KHR_texture_transform",
+    "KHR_materials_unlit",
+    "KHR_materials_pbrSpecularGlossiness",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_specular",
+    "KHR_materials_transmission",
+    "KHR_materials_volume",
+    "KHR_materials_clearcoat",
+    "KHR_materials_sheen",
+    "KHR_materials_variants",
+    "KHR_materials_anisotropy",
+    "KHR_materials_iridescence",
+    "KHR_texture_basisu",
+];
+
+/// Rebuilds `bytes` with the [`IGNORABLE_REQUIRED_EXTENSIONS`] removed from
+/// `extensionsRequired`, or `None` if none of them was required (so the caller
+/// keeps the original parse error). The binary chunk is copied verbatim, so the
+/// geometry the reader cares about is untouched.
+fn without_ignorable_extensions(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut root: serde_json::Value = serde_json::from_slice(json_chunk(bytes)?).ok()?;
+    let required = root.get_mut("extensionsRequired")?.as_array_mut()?;
+    let before = required.len();
+    required.retain(|entry| {
+        !entry
+            .as_str()
+            .is_some_and(|name| IGNORABLE_REQUIRED_EXTENSIONS.contains(&name))
+    });
+    if required.len() == before {
+        return None;
+    }
+    if required.is_empty() {
+        root.as_object_mut()?.remove("extensionsRequired");
+    }
+    Some(reassemble_glb(bytes, &serde_json::to_vec(&root).ok()?))
+}
+
+/// A GLB with `new_json` as its JSON chunk and `original`'s binary chunk kept
+/// byte-for-byte. For a plain `.gltf` (no binary header) the JSON is the file.
+fn reassemble_glb(original: &[u8], new_json: &[u8]) -> Vec<u8> {
+    if !original.starts_with(b"glTF") {
+        return new_json.to_vec();
+    }
+    // The binary chunk (its own 8-byte header included) begins right after the
+    // original JSON chunk; header check already ran, so these ranges are sound.
+    let json_len = u32::from_le_bytes(original[12..16].try_into().unwrap()) as usize;
+    let bin = original.get(20 + json_len..).unwrap_or(&[]);
+
+    let mut json = new_json.to_vec();
+    while json.len() % 4 != 0 {
+        json.push(b' '); // glTF requires the JSON chunk 4-byte aligned, padded with spaces
+    }
+
+    let total = 12 + 8 + json.len() + bin.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(b"glTF");
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    out.extend_from_slice(&0x4E4F_534Au32.to_le_bytes()); // "JSON"
+    out.extend_from_slice(&json);
+    out.extend_from_slice(bin);
+    out
 }
 
 /// Replaces non-finite floats with zero, counting what it replaced.
