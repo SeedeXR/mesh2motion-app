@@ -37,3 +37,9 @@ Verified: imports through `m2m-io` (glb reader, clean report — 0 over-influenc
 0 non-finite), renders as an intact deforming character in Blender 5.2.
 
 _New rows are added as each creature is prepared and verified._
+
+## Textures
+
+The elephant's source rig ships untextured; a UV colour + roughness map for it
+was supplied by the maintainer and applied (`elephant_skin` material). Its
+licence rides with the R-5 asset record like the meshes.
