@@ -511,6 +511,7 @@ fn each_creature_has_the_chains_it_should() {
         ("rhino.json", 4, 0, 1, 1),
         ("buffalo.json", 4, 0, 1, 0),
         ("hyena.json", 4, 0, 1, 1),
+        ("elephant.json", 4, 0, 1, 1),
     ] {
         let t = load(manifest);
         assert_eq!(
@@ -555,6 +556,7 @@ fn limbs_carry_the_role_that_creature_has() {
         ("rhino.json", 0, 4, 0, 0),
         ("buffalo.json", 0, 4, 0, 0),
         ("hyena.json", 0, 4, 0, 0),
+        ("elephant.json", 0, 4, 0, 0),
     ] {
         let t = load(manifest);
         let count = |role: LimbRole| {

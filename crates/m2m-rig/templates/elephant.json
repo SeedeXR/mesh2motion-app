@@ -1,0 +1,53 @@
+{
+  "name": "elephant",
+  "skeleton": "rig-elephant.glb",
+  "guidance": "Large graviportal quadruped with a trunk — columnar plantigrade legs on broad padded feet, so ground the foot. Carry the spine level and high; the trunk is a long articulated chain hanging from the head, the tusks curve out beside it, and the ears are broad flat fans.",
+  "chains": [
+    { "name": "root", "kind": "root", "bones": ["root"] },
+    { "name": "spine", "kind": "spine", "bones": ["spine_1", "spine_2", "spine_3", "spine_4", "spine_5", "spine_6"] },
+    { "name": "head", "kind": "head", "bones": ["head"] },
+    { "name": "jaw", "kind": "jaw", "bones": ["jaw_1", "jaw_2", "jaw_3", "jaw_4", "jaw_5"] },
+    {
+      "name": "trunk",
+      "kind": "accessory",
+      "bones": ["trunk_1", "trunk_2", "trunk_3", "trunk_4", "trunk_5", "trunk_6", "trunk_7", "trunk_8", "trunk_9", "trunk_10", "trunk_11", "trunk_12", "trunk_13"]
+    },
+    { "name": "tusk_l", "kind": "accessory", "side": "left", "bones": ["tusk_l1", "tusk_l2"] },
+    { "name": "tusk_r", "kind": "accessory", "side": "right", "bones": ["tusk_r1", "tusk_r2"] },
+    { "name": "ear_l", "kind": "accessory", "side": "left", "bones": ["ear_l"] },
+    { "name": "ear_r", "kind": "accessory", "side": "right", "bones": ["ear_r"] },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": ["front_hip_l", "front_upper_l", "front_lower_l", "front_ankle_l", "front_foot_l"]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": ["front_hip_r", "front_upper_r", "front_lower_r", "front_ankle_r", "front_foot_r"]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": ["back_hip_l", "back_upper_l", "back_lower_l", "back_ankle_l", "back_foot_l"]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": ["back_hip_r", "back_upper_r", "back_lower_r", "back_ankle_r", "back_foot_r"]
+    },
+    { "name": "tail", "kind": "tail", "bones": ["tail_1", "tail_2", "tail_3", "tail_4", "tail_5"] }
+  ]
+}

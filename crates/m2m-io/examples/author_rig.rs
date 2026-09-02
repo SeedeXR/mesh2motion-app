@@ -195,11 +195,77 @@ const HYENA: Map = &[
     ("tail_4", "Tail4", "tail_3", "Tail4"),
 ];
 
+/// Elephant: a large graviportal quadruped with a trunk. Trimmed from a 153-bone
+/// Maya rig thick with helper joints (`jointNN`, eyes, control nulls). Its back
+/// legs hang off disconnected roots in the source, so they are reparented onto
+/// the root here; the world positions are preserved either way. Symmetric.
+#[rustfmt::skip]
+const ELEPHANT: Map = &[
+    ("root", "rootJ", "", "rootJ"),
+    ("spine_1", "spineJ_1", "root", "spineJ_1"),
+    ("spine_2", "spineJ_2", "spine_1", "spineJ_2"),
+    ("spine_3", "spineJ_3", "spine_2", "spineJ_3"),
+    ("spine_4", "spineJ_4", "spine_3", "spineJ_4"),
+    ("spine_5", "spineJ_5", "spine_4", "spineJ_5"),
+    ("spine_6", "spineJ_6", "spine_5", "spineJ_6"),
+    ("head", "headJ", "spine_6", "headJ"),
+    ("jaw_1", "mouthJ1", "head", "mouthJ1"),
+    ("jaw_2", "mouthJ2", "jaw_1", "mouthJ2"),
+    ("jaw_3", "mouthJ3", "jaw_2", "mouthJ3"),
+    ("jaw_4", "mouthJ4", "jaw_3", "mouthJ4"),
+    ("jaw_5", "mouthJ5", "jaw_4", "mouthJ5"),
+    ("trunk_1", "trunkJ_", "head", "trunkJ_"),
+    ("trunk_2", "trunkJ_1", "trunk_1", "trunkJ_1"),
+    ("trunk_3", "trunkJ_2", "trunk_2", "trunkJ_2"),
+    ("trunk_4", "trunkJ_3", "trunk_3", "trunkJ_3"),
+    ("trunk_5", "trunkJ_4", "trunk_4", "trunkJ_4"),
+    ("trunk_6", "trunkJ_5", "trunk_5", "trunkJ_5"),
+    ("trunk_7", "trunkJ_6", "trunk_6", "trunkJ_6"),
+    ("trunk_8", "trunkJ_7", "trunk_7", "trunkJ_7"),
+    ("trunk_9", "trunkJ_8", "trunk_8", "trunkJ_8"),
+    ("trunk_10", "trunkJ_9", "trunk_9", "trunkJ_9"),
+    ("trunk_11", "trunkJ_10", "trunk_10", "trunkJ_10"),
+    ("trunk_12", "trunkJ_11", "trunk_11", "trunkJ_11"),
+    ("trunk_13", "trunkJ_12", "trunk_12", "trunkJ_12"),
+    ("tusk_l1", "leftTusk1", "head", "leftTusk1"),
+    ("tusk_l2", "leftTusk2", "tusk_l1", "leftTusk2"),
+    ("tusk_r1", "rightTusk1", "head", "rightTusk1"),
+    ("tusk_r2", "rightTusk2", "tusk_r1", "rightTusk2"),
+    ("ear_l", "leftEarJ1", "head", "leftEarJ1"),
+    ("ear_r", "rightEarJ1", "head", "rightEarJ1"),
+    ("front_hip_l", "leftFrontLegJ_1", "spine_5", "leftFrontLegJ_1"),
+    ("front_upper_l", "leftFrontThigh", "front_hip_l", "leftFrontThigh"),
+    ("front_lower_l", "leftFrontLegJ_3", "front_upper_l", "leftFrontLegJ_3"),
+    ("front_ankle_l", "leftFrontLegJ_4", "front_lower_l", "leftFrontLegJ_4"),
+    ("front_foot_l", "leftFrontLegJ_5", "front_ankle_l", "leftFrontLegJ_5"),
+    ("front_hip_r", "rightFrontLegJ_1", "spine_5", "rightFrontLegJ_1"),
+    ("front_upper_r", "rightFrontThigh", "front_hip_r", "rightFrontThigh"),
+    ("front_lower_r", "rightFrontLegJ_3", "front_upper_r", "rightFrontLegJ_3"),
+    ("front_ankle_r", "rightFrontLegJ_4", "front_lower_r", "rightFrontLegJ_4"),
+    ("front_foot_r", "rightFrontLegJ_5", "front_ankle_r", "rightFrontLegJ_5"),
+    ("back_hip_l", "lefBackLegJ_1", "root", "lefBackLegJ_1"),
+    ("back_upper_l", "leftRearThigh", "back_hip_l", "leftRearThigh"),
+    ("back_lower_l", "lefBackLegJ_3", "back_upper_l", "lefBackLegJ_3"),
+    ("back_ankle_l", "lefBackLegJ_4", "back_lower_l", "lefBackLegJ_4"),
+    ("back_foot_l", "lefBackLegJ_5", "back_ankle_l", "lefBackLegJ_5"),
+    ("back_hip_r", "lefBackLegJ_11", "root", "lefBackLegJ_11"),
+    ("back_upper_r", "rightRearThigh", "back_hip_r", "rightRearThigh"),
+    ("back_lower_r", "lefBackLegJ_3.001", "back_upper_r", "lefBackLegJ_3.001"),
+    ("back_ankle_r", "lefBackLegJ_4.001", "back_lower_r", "lefBackLegJ_4.001"),
+    ("back_foot_r", "lefBackLegJ_5.001", "back_ankle_r", "lefBackLegJ_5.001"),
+    ("tail_1", "tailJ_", "root", "tailJ_"),
+    ("tail_2", "tailJ_1", "tail_1", "tailJ_1"),
+    ("tail_3", "tailJ_2", "tail_2", "tailJ_2"),
+    ("tail_4", "tailJ_3", "tail_3", "tailJ_3"),
+    ("tail_5", "tailJ_4", "tail_4", "tailJ_4"),
+];
+
 fn mapping(creature: &str) -> Map {
     match creature {
         "rhino" => RHINO,
         "buffalo" => BUFFALO,
         "hyena" => HYENA,
+        "elephant" => ELEPHANT,
         other => panic!("no mapping for {other:?}"),
     }
 }

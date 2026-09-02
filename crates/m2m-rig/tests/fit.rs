@@ -191,6 +191,11 @@ fn each_template_reports_the_body_axis_its_spine_implies() {
         ("rigs/rig-rhino.glb", "rhino.json", BodyAxis::Horizontal),
         ("rigs/rig-buffalo.glb", "buffalo.json", BodyAxis::Horizontal),
         ("rigs/rig-hyena.glb", "hyena.json", BodyAxis::Horizontal),
+        (
+            "rigs/rig-elephant.glb",
+            "elephant.json",
+            BodyAxis::Horizontal,
+        ),
     ] {
         let rest = rest_pose_of(rig);
         let axis = body_axis(&rest, &spine_of(manifest));
@@ -944,14 +949,14 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
     assert_eq!(
         names,
         [
-            "bird", "buffalo", "dragon", "fox", "horse", "human", "hyena", "kaiju", "rhino",
-            "shark", "snake", "spider",
+            "bird", "buffalo", "dragon", "elephant", "fox", "horse", "human", "hyena", "kaiju",
+            "rhino", "shark", "snake", "spider",
         ]
     );
 
     // 500 bones, each claimed exactly once — the count P3-1 established.
     let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
-    assert_eq!(bones, 607);
+    assert_eq!(bones, 664);
 }
 
 /// The embedded manifests are the files on disk, not a stale copy.
