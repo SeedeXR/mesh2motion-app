@@ -38,3 +38,8 @@ references/
 
 # packaged app artifacts (scripts/build.sh)
 /output/
+
+# playwright artifacts
+/e2e/*.png
+/test-results/
+/playwright-report/
