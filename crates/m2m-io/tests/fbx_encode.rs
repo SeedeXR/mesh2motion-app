@@ -32,7 +32,7 @@
 use m2m_io::fbx::{binary, encode};
 
 const RIG: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 
 #[test]
 fn the_reference_rig_survives_a_round_trip() {

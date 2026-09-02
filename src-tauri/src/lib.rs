@@ -125,8 +125,7 @@ fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
 fn library_bytes(app: &tauri::AppHandle, template: &str) -> Result<Vec<u8>, String> {
     use tauri::Manager;
 
-    let repository =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../legacy/static/animations");
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/animations");
     for name in [
         format!("{template}-animations.glb"),
         format!("{template}-base-animations.glb"),

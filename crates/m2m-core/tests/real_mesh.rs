@@ -3,7 +3,7 @@
 //! Synthetic tetrahedra cannot exhibit the defects that actually matter —
 //! seam-split duplicate vertices, degenerate triangles from decimation, open
 //! boundaries at the eyes and mouth. This fixture is the geometry of
-//! `legacy/static/test-files/human-small.glb`, exported by
+//! `assets/test-files/human-small.glb`, exported by
 //! `legacy/bench/dump-fixtures.ts`.
 
 #[path = "fixture_support.rs"]

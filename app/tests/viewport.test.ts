@@ -26,8 +26,8 @@ function glb(path: string): ArrayBuffer {
   return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer
 }
 
-const RIGGED = 'legacy/static/animations/human-base-animations.glb'
-const PLAIN = 'legacy/static/models/model-human.glb'
+const RIGGED = 'assets/animations/human-base-animations.glb'
+const PLAIN = 'assets/models/model-human.glb'
 
 describe('parseModel', () => {
   test('a rigged model arrives with its skeleton and its clips', async () => {
@@ -190,7 +190,7 @@ describe('withJointMoved', () => {
 })
 
 describe('parseAnimated and findClip', () => {
-  const animated = glb('legacy/static/animations/human-base-animations.glb')
+  const animated = glb('assets/animations/human-base-animations.glb')
 
   test('an animated glb comes back with its clips as AnimationClips', async () => {
     const model = await parseAnimated(animated)

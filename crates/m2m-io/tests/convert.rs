@@ -6,7 +6,7 @@ use m2m_io::fbx::{binary, dom::Scene};
 use m2m_io::glb;
 
 const RIG: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 
 fn scene() -> Scene {
     Scene::from_document(binary::parse(RIG).expect("the reference rig parses"))

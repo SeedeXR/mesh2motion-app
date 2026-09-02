@@ -85,7 +85,7 @@ fn every_creature_rigs_and_reads_back_the_same_in_blender() {
 
     let mut failures = Vec::new();
     for base in BASELINES {
-        let path = format!("../legacy/static/models/model-{}.glb", base.creature);
+        let path = format!("../assets/models/model-{}.glb", base.creature);
         let bytes = std::fs::read(&path).expect("a creature model");
 
         // The whole pipeline the app runs.

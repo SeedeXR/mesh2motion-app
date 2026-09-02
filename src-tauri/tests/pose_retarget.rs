@@ -127,14 +127,14 @@ fn assert_animates_cleanly_within(bytes: &[u8], clip_name: &str, label: &str, li
     }
 }
 
-const HUMAN_LIB: &str = "legacy/static/animations/human-base-animations.glb";
+const HUMAN_LIB: &str = "assets/animations/human-base-animations.glb";
 
 #[test]
 #[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
 fn a_clip_retargets_cleanly_onto_a_t_pose_human() {
     let glb = animated_export(
         "human",
-        "legacy/static/models/model-human.glb",
+        "assets/models/model-human.glb",
         HUMAN_LIB,
         "Chop_Tree",
     );
@@ -147,7 +147,7 @@ fn a_t_pose_clip_retargets_cleanly_onto_an_a_pose_human() {
     // The case the whole epic is for: a T-pose Mixamo clip on an A-pose bind.
     let glb = animated_export(
         "human",
-        "legacy/static/test-files/bone-correction-tests/human-a-pose.glb",
+        "assets/test-files/bone-correction-tests/human-a-pose.glb",
         HUMAN_LIB,
         "Chop_Tree",
     );
@@ -160,14 +160,9 @@ fn a_clip_retargets_cleanly_onto_a_non_human_rig() {
     // P3-P6: the dragon reorients its wings and legs by ~44°, so its animation
     // exercises the pose-matched rotations on non-human limbs. A larger box —
     // a dragon is a big creature — but the same "nothing flies off" bar.
-    let lib = "legacy/static/animations/dragon-animations.glb";
+    let lib = "assets/animations/dragon-animations.glb";
     let clip = first_clip(lib);
-    let glb = animated_export(
-        "dragon",
-        "legacy/static/models/model-dragon.glb",
-        lib,
-        &clip,
-    );
+    let glb = animated_export("dragon", "assets/models/model-dragon.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "dragon", 12.0);
 }
 
@@ -176,45 +171,35 @@ fn a_clip_retargets_cleanly_onto_a_non_human_rig() {
 fn a_clip_retargets_cleanly_onto_the_rhino() {
     // P3-13: the rhino is a new authored quadruped template with its own
     // animation library (its native clip, renamed to the template's bones).
-    let lib = "legacy/static/animations/rhino-animations.glb";
+    let lib = "assets/animations/rhino-animations.glb";
     let clip = first_clip(lib);
-    let glb = animated_export("rhino", "legacy/static/models/model-rhino.glb", lib, &clip);
+    let glb = animated_export("rhino", "assets/models/model-rhino.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "rhino", 12.0);
 }
 
 #[test]
 #[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
 fn a_clip_retargets_cleanly_onto_the_buffalo() {
-    let lib = "legacy/static/animations/buffalo-animations.glb";
+    let lib = "assets/animations/buffalo-animations.glb";
     let clip = first_clip(lib);
-    let glb = animated_export(
-        "buffalo",
-        "legacy/static/models/model-buffalo.glb",
-        lib,
-        &clip,
-    );
+    let glb = animated_export("buffalo", "assets/models/model-buffalo.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "buffalo", 12.0);
 }
 
 #[test]
 #[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
 fn a_clip_retargets_cleanly_onto_the_hyena() {
-    let lib = "legacy/static/animations/hyena-animations.glb";
+    let lib = "assets/animations/hyena-animations.glb";
     let clip = first_clip(lib);
-    let glb = animated_export("hyena", "legacy/static/models/model-hyena.glb", lib, &clip);
+    let glb = animated_export("hyena", "assets/models/model-hyena.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "hyena", 12.0);
 }
 
 #[test]
 #[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
 fn a_clip_retargets_cleanly_onto_the_elephant() {
-    let lib = "legacy/static/animations/elephant-animations.glb";
+    let lib = "assets/animations/elephant-animations.glb";
     let clip = first_clip(lib);
-    let glb = animated_export(
-        "elephant",
-        "legacy/static/models/model-elephant.glb",
-        lib,
-        &clip,
-    );
+    let glb = animated_export("elephant", "assets/models/model-elephant.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "elephant", 12.0);
 }

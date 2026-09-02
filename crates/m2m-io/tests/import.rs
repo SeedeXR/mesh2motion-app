@@ -10,13 +10,12 @@
 use m2m_io::import::{inspect, Format, ImportError};
 
 const MIXAMO_FBX: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 const RIG_ONLY: &[u8] = include_bytes!("../../../assets/rigs/rig-human.glb");
-const PLAIN_MESH: &[u8] = include_bytes!("../../../legacy/static/models/model-human.glb");
-const ANIMATED: &[u8] =
-    include_bytes!("../../../legacy/static/animations/human-base-animations.glb");
+const PLAIN_MESH: &[u8] = include_bytes!("../../../assets/models/model-human.glb");
+const ANIMATED: &[u8] = include_bytes!("../../../assets/animations/human-base-animations.glb");
 const INTERLEAVED: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/human-interleaved-buffer-mesh.glb");
+    include_bytes!("../../../assets/test-files/human-interleaved-buffer-mesh.glb");
 
 #[test]
 fn a_rigged_fbx_arrives_rigged() {

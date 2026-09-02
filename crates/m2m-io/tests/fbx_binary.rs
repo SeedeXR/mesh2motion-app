@@ -8,7 +8,7 @@ use m2m_io::fbx::FbxError;
 
 /// A real Mixamo FBX 7.7 export, 2.1 MB.
 const MIXAMO: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 
 #[test]
 fn parses_a_real_mixamo_export() {

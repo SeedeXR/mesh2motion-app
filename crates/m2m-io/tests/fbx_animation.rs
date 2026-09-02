@@ -11,7 +11,7 @@ use m2m_io::fbx::animation::{self, Clip, TrackKind};
 use m2m_io::fbx::{binary, dom::Scene, model};
 
 const MIXAMO: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 const FIXTURE: &[u8] = include_bytes!("fixtures/fbx-anim.bin");
 const NAMES: &str = include_str!("fixtures/fbx-anim-names.txt");
 

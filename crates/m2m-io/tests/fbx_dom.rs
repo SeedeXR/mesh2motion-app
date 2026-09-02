@@ -11,7 +11,7 @@ use m2m_io::fbx::dom::{Scene, SceneReport, TypedProperty};
 use m2m_io::fbx::text;
 
 const MIXAMO: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 
 fn mixamo_scene() -> Scene {
     Scene::from_document(binary::parse(MIXAMO).expect("parses"))
@@ -492,7 +492,7 @@ fn objects_the_scene_cannot_key_are_counted_rather_than_asserted_away() {
     // And a clean file reports nothing, so the counters stay honest.
     let clean = Scene::from_document(
         binary::parse(include_bytes!(
-            "../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx"
+            "../../../assets/test-files/retarget testing/mixamo-original-rig.fbx"
         ))
         .expect("parses"),
     );

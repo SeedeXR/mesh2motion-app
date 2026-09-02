@@ -12,7 +12,7 @@ use m2m_io::fbx::{binary, dom::Scene};
 use std::collections::HashMap;
 
 const MIXAMO: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 const FIXTURE: &[u8] = include_bytes!("fixtures/fbx-models.bin");
 const NAMES: &str = include_str!("fixtures/fbx-models-names.txt");
 

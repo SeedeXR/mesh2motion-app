@@ -19,7 +19,7 @@ pub struct Mesh {
 
 /// Default weld epsilon as a fraction of the mesh's bounding-box diagonal.
 ///
-/// Measured by sweeping the ratio on `legacy/static/test-files/human-small.glb`
+/// Measured by sweeping the ratio on `assets/test-files/human-small.glb`
 /// (all 3 meshes merged, world transforms baked — 8691 verts, diagonal 1.126):
 ///
 /// | ratio | duplicates | components | degenerate tris |

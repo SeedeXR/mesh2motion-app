@@ -10,7 +10,7 @@ use m2m_io::fbx::{binary, dom::Scene, text};
 use std::collections::HashMap;
 
 const MIXAMO: &[u8] =
-    include_bytes!("../../../legacy/static/test-files/retarget testing/mixamo-original-rig.fbx");
+    include_bytes!("../../../assets/test-files/retarget testing/mixamo-original-rig.fbx");
 
 fn scene() -> Scene {
     Scene::from_document(binary::parse(MIXAMO).expect("parses"))

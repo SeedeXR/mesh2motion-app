@@ -1347,7 +1347,7 @@ mod tests {
     use super::{fit, templates};
 
     fn model(relative: &str) -> Vec<u8> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../legacy/static/").to_owned() + relative;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/").to_owned() + relative;
         std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
     }
 
@@ -1835,11 +1835,11 @@ mod tests {
     /// Every template the app offers has an animation library to draw on.
     #[test]
     fn every_shipped_template_has_a_library_the_bundle_will_carry() {
-        // `tauri.conf.json` globs `legacy/static/animations/*.glb` into the
+        // `tauri.conf.json` globs `assets/animations/*.glb` into the
         // bundle. A template whose library is missing would list no clips only
         // when a user picked that creature — the same failure mode `available`
         // exists to prevent for rigs.
-        let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../legacy/static/animations");
+        let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/animations");
         for template in templates().expect("manifests parse") {
             let found = super::library_names(&template.name)
                 .iter()
@@ -1884,10 +1884,8 @@ mod tests {
     /// The human's library is the `-base-` one, which is why two names are tried.
     #[test]
     fn the_human_library_is_found_under_its_second_name() {
-        let directory = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../legacy/static/animations"
-        ));
+        let directory =
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/animations"));
         let [first, second] = super::library_names("human");
 
         assert!(

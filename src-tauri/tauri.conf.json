@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "resources": {
-      "../legacy/static/animations/*.glb": "animations/",
+      "../assets/animations/*.glb": "animations/",
       "../assets/characters/*.glb": "characters/"
     },
     "targets": [

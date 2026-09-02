@@ -473,7 +473,7 @@ fn load_rig(relative: &str) -> LoadedRig {
     // Rig `.glb` files moved to `assets/rigs/` (P3-3d); other fixtures stay in legacy.
     let path = match relative.strip_prefix("rigs/") {
         Some(rig) => concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/rigs/").to_owned() + rig,
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../legacy/static/").to_owned() + relative,
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/").to_owned() + relative,
     };
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let document = m2m_io::glb::read(&bytes).expect("reads");
