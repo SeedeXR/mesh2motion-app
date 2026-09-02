@@ -8,6 +8,29 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
+/**
+ * Normalises a bulk-channel (raw-bytes) response to an `ArrayBuffer`.
+ *
+ * The Rust side sends these as raw bytes, but depending on the IPC transport
+ * they reach the webview as an `ArrayBuffer`, a typed array, or — over the
+ * postMessage path a restrictive CSP can force — a plain number array. three's
+ * loaders need an `ArrayBuffer`; a number array has `byteLength` undefined, so
+ * the model silently never draws (the "Geometry NaN MB", empty-viewport bug).
+ */
+function bulk(value: ArrayBuffer | ArrayBufferView | number[]): ArrayBuffer {
+  if (value instanceof ArrayBuffer) return value
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(
+      value.byteOffset,
+      value.byteOffset + value.byteLength
+    ) as ArrayBuffer
+  }
+  return new Uint8Array(value).buffer
+}
+
+/** The raw-bytes response types a bulk command can arrive as. */
+type BulkResponse = ArrayBuffer | ArrayBufferView | number[]
+
 export interface BuildInfo {
   readonly version: string
   readonly target: string
@@ -70,7 +93,7 @@ export async function importModel(): Promise<ImportedFile | null> {
  * the Rust side.
  */
 export async function loadModel(path: string): Promise<ArrayBuffer> {
-  return await invoke<ArrayBuffer>('load_model', { path })
+  return bulk(await invoke<BulkResponse>('load_model', { path }))
 }
 
 /** A creature template offered in the Choose Skeleton step. */
@@ -195,13 +218,9 @@ export async function previewAnimation(
   template: string,
   clip: string
 ): Promise<ArrayBuffer> {
-  return await invoke<ArrayBuffer>('preview_animation', {
-    path,
-    skeleton,
-    falloff,
-    template,
-    clip
-  })
+  return bulk(
+    await invoke<BulkResponse>('preview_animation', { path, skeleton, falloff, template, clip })
+  )
 }
 
 /**
@@ -215,5 +234,5 @@ export async function weightOverlay(
   skeleton: FittedSkeleton,
   falloff: number
 ): Promise<ArrayBuffer> {
-  return await invoke<ArrayBuffer>('weight_overlay', { path, skeleton, falloff })
+  return bulk(await invoke<BulkResponse>('weight_overlay', { path, skeleton, falloff }))
 }

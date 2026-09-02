@@ -365,3 +365,27 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("failed to start mesh2motion");
 }
+
+#[cfg(test)]
+mod ipc_tests {
+    use tauri::ipc::{InvokeResponseBody, IpcResponse};
+
+    /// The viewport gets a model over the bulk channel as raw bytes, which the
+    /// frontend reads as an `ArrayBuffer`. If it ever came back as JSON, that
+    /// `ArrayBuffer` would be a number array instead — `byteLength` undefined,
+    /// so the model never draws (the "Geometry NaN MB" bug).
+    #[test]
+    fn read_as_glb_delivers_raw_bytes_not_json() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/models/model-human.glb"
+        );
+        let response = super::read_as_glb(path).expect("reads the fixture");
+        match response.body().expect("has a body") {
+            InvokeResponseBody::Raw(bytes) => assert!(bytes.len() > 1000, "raw but tiny"),
+            InvokeResponseBody::Json(json) => {
+                panic!("delivered as JSON ({} chars), not raw bytes", json.len())
+            }
+        }
+    }
+}

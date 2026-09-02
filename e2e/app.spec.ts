@@ -36,8 +36,13 @@ test('the real app shows the imported model, textured', async ({ page }) => {
             return null
           case 'import_model':
             return imported
-          case 'load_model':
-            return await (await fetch('/model.glb')).arrayBuffer()
+          case 'load_model': {
+            // Reproduce the real bug: some IPC transports deliver raw bytes as a
+            // plain number array (not an ArrayBuffer). The frontend's bulk()
+            // normaliser must recover from this, or the model never draws.
+            const buf = await (await fetch('/model.glb')).arrayBuffer()
+            return Array.from(new Uint8Array(buf))
+          }
           case 'skeleton_templates':
             return []
           default:
@@ -56,4 +61,10 @@ test('the real app shows the imported model, textured', async ({ page }) => {
   console.log('page errors:', logs.join(' | ') || 'none')
   await page.screenshot({ path: 'e2e/app-import.png' })
   await expect(page.locator('.viewport canvas')).toBeVisible()
+
+  // The bug showed "Geometry NaN MB" and an empty viewport; the fix must give a
+  // real size and a mesh on screen.
+  const geometry = await page.getByText(/MB$/).innerText()
+  console.log('geometry cell:', geometry)
+  expect(geometry).not.toContain('NaN')
 })
