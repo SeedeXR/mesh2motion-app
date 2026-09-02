@@ -208,6 +208,8 @@ const ELEPHANT: Map = &[
     ("spine_4", "spineJ_4", "spine_3", "spineJ_4"),
     ("spine_5", "spineJ_5", "spine_4", "spineJ_5"),
     ("spine_6", "spineJ_6", "spine_5", "spineJ_6"),
+    // Marker at the domed back over the shoulders; keeps the fit from over-scaling.
+    ("back_ridge", "@raise:spine_5:0.20", "spine_5", ""),
     ("head", "headJ", "spine_6", "headJ"),
     ("jaw_1", "mouthJ1", "head", "mouthJ1"),
     ("jaw_2", "mouthJ2", "jaw_1", "mouthJ2"),
@@ -284,6 +286,26 @@ fn main() {
         author_anim(&input, map, &creature, &output);
         return;
     }
+    if mode == "model" {
+        // Scale a plain (skin already baked) mesh into a fixture at the skeleton's
+        // metre scale. Kept in the same frame as the skeleton by reading the glb
+        // directly rather than round-tripping through Blender again.
+        let scale: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+        let mut doc = glb::read(&std::fs::read(&input).unwrap()).unwrap();
+        for prim in &mut doc.primitives {
+            for c in &mut prim.positions {
+                *c *= scale;
+            }
+        }
+        doc.skins.clear();
+        doc.clips.clear();
+        for node in &mut doc.nodes {
+            node.skin = None;
+        }
+        std::fs::write(&output, glb::write(&doc).unwrap()).unwrap();
+        println!("{creature} model: scaled x{scale}");
+        return;
+    }
 
     let doc = glb::read(&std::fs::read(&input).unwrap()).unwrap();
     let world = doc.world_transforms();
@@ -332,6 +354,14 @@ fn main() {
         } else if let Some(from) = src.strip_prefix("@mirror:") {
             let p = raw[index_of(from).expect("mirrored-from bone precedes it")];
             raw[i] = glam::Vec3::new(-p.x, p.y, p.z);
+        } else if let Some(spec) = src.strip_prefix("@raise:") {
+            // `@raise:<ref>:<dy>` — a marker lifted `dy` above a reference bone,
+            // so a template whose bones sit below the mesh's dome (the elephant's
+            // back rides above its mid-body spine) spans the mesh height and the
+            // uniform fit does not over-scale.
+            let (from, dy) = spec.split_once(':').expect("@raise:<ref>:<dy>");
+            let p = raw[index_of(from).expect("raised-from bone precedes it")];
+            raw[i] = glam::Vec3::new(p.x, p.y + dy.parse::<f32>().expect("a number"), p.z);
         }
     }
     let world_pos: Vec<glam::Vec3> = raw

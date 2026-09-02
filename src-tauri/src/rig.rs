@@ -1367,7 +1367,7 @@ mod tests {
                 template.name
             );
         }
-        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 664);
+        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 665);
     }
 
     #[test]
