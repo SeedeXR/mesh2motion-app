@@ -35,3 +35,6 @@ bench/results/
 # Contributors supply their own; see memory/test.md §4.
 references/
 .sonar-token
+
+# packaged app artifacts (scripts/build.sh)
+/output/

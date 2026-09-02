@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
-# Install the built Mesh2Motion.app into /Applications.
-# Uses the built .app directly; falls back to mounting the .dmg if only that
-# exists (e.g. a downloaded release). Run scripts/build.sh first for a local build.
+# One-shot: build (signing + notarizing when Apple credentials are set), then
+# install Mesh2Motion.app into /Applications. This is the entry point — it runs
+# the other scripts for you; you do not need to run build.sh first.
+#
+# Pass-through args go to the build, e.g. scripts/install.sh --bundles app
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BUNDLE="target/release/bundle"
+OUT="output"
 DEST="/Applications"
 
-install_app() {  # $1 = path to .app
-  local app="$1" name; name=$(basename "$app")
-  rm -rf "${DEST:?}/$name"
-  cp -R "$app" "$DEST/"
-  echo "Installed $DEST/$name"
-}
-
-APP=$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' 2>/dev/null | head -1 || true)
-if [ -n "$APP" ]; then
-  install_app "$APP"
-  exit 0
+# Full Apple credentials present? Then build + sign + notarize + verify;
+# otherwise a plain (unsigned, local) build.
+signing=0
+if { [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || [ -n "${APPLE_CERTIFICATE:-}" ]; } && {
+     { [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; } ||
+     { [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; }
+   }; then
+  signing=1
 fi
 
-DMG=$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' 2>/dev/null | head -1 || true)
-[ -z "$DMG" ] && { echo "error: no .app or .dmg found — run scripts/build.sh first" >&2; exit 1; }
-echo "==> Mounting $DMG…"
-MNT=$(hdiutil attach "$DMG" -nobrowse -readonly | awk -F'\t' '/\/Volumes\//{print $NF; exit}')
-trap '[ -n "${MNT:-}" ] && hdiutil detach "$MNT" -quiet || true' EXIT
-install_app "$(find "$MNT" -maxdepth 1 -name '*.app' | head -1)"
+if [ "$signing" = 1 ]; then
+  echo "==> Apple credentials found — building, signing and notarizing…"
+  bash scripts/notarize.sh "$@"
+else
+  echo "==> No Apple credentials — building unsigned (fine for local use)…"
+  bash scripts/build.sh "$@"
+fi
+
+APP=$(find "$OUT" -maxdepth 1 -name '*.app' | head -1 || true)
+[ -z "$APP" ] && { echo "error: no .app in ./$OUT after build" >&2; exit 1; }
+
+name=$(basename "$APP")
+echo "==> Installing $name into ${DEST}…"
+rm -rf "${DEST:?}/$name"
+cp -R "$APP" "$DEST/"
+echo "Installed $DEST/$name"

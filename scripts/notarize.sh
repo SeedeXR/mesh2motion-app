@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Produce a SIGNED + NOTARIZED release build and verify it.
+# Produce a SIGNED + NOTARIZED release build (into ./output) and verify it.
 #
 # Tauri v2 signs and notarizes during `tauri build` when the Apple credentials
-# are in the environment. This script checks they are set, runs the build, then
-# verifies the signature and stapled notarization ticket with Apple's own tools.
+# are in the environment. This checks they are set, runs build.sh, then verifies
+# the signature and stapled notarization ticket with Apple's own tools.
 #
 # Signing identity (one of):
 #   APPLE_SIGNING_IDENTITY   e.g. "Developer ID Application: Name (TEAMID)"
@@ -30,9 +30,9 @@ fi
 
 bash scripts/build.sh "$@"
 
-BUNDLE="target/release/bundle"
-APP=$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -1)
-DMG=$(find "$BUNDLE/dmg"   -maxdepth 1 -name '*.dmg' 2>/dev/null | head -1 || true)
+OUT="output"
+APP=$(find "$OUT" -maxdepth 1 -name '*.app' | head -1)
+DMG=$(find "$OUT" -maxdepth 1 -name '*.dmg' 2>/dev/null | head -1 || true)
 
 echo "==> Verifying signature and notarization…"
 codesign --verify --deep --strict --verbose=2 "$APP"

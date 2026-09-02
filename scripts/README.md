@@ -1,29 +1,31 @@
 # Build & release scripts (macOS)
 
-Three scripts that turn a checkout into an installed app. Run them from anywhere;
-each resolves the repo root itself.
+`install.sh` is the entry point — it builds and installs in one step. You do not
+need to run the others by hand.
 
 | Script | Does |
 |--------|------|
-| `build.sh` | `tauri build` → `.app` + `.dmg` (builds the frontend first). Unsigned unless the signing env vars below are set. |
-| `notarize.sh` | Checks Apple credentials are set, runs `build.sh` (Tauri signs + notarizes inline), then verifies the signature and stapled ticket. |
-| `install.sh` | Mounts the built `.dmg` (or uses the `.app`) and copies `Mesh2Motion.app` into `/Applications`. |
+| `install.sh` | **Start here.** Builds (signing + notarizing if Apple creds are set), then copies `Mesh2Motion.app` into `/Applications`. |
+| `build.sh` | `tauri build` → `.app` + `.dmg`, collected into **`./output/`** (created if missing, git-ignored). Unsigned unless the signing env vars below are set. |
+| `notarize.sh` | Checks Apple credentials, runs `build.sh`, then verifies the signature and stapled ticket. `install.sh` calls this automatically when the creds are present. |
 
-Artifacts land in `target/release/bundle/{macos,dmg}/`.
+Artifacts land in **`./output/`** (`Mesh2Motion.app` and `Mesh2Motion_<version>_<arch>.dmg`).
 
-## Local build (no Apple account)
+## Install locally (no Apple account)
 
 ```sh
-scripts/build.sh        # .app + .dmg, unsigned
-scripts/install.sh      # into /Applications
+scripts/install.sh
 ```
 
-An unsigned build runs locally; other machines get a Gatekeeper warning.
+Builds unsigned and installs into `/Applications`. An unsigned build runs on the
+machine that built it; other machines get a Gatekeeper warning. Pass build args
+through, e.g. `scripts/install.sh --bundles app` for a faster app-only build.
 
 ## Signed & notarized release
 
-Set a signing identity and one notarization method, then run `notarize.sh`.
-Variable names are Tauri v2's — it reads them during `tauri build`.
+Set a signing identity and one notarization method, then run `install.sh` (or
+`notarize.sh` to build + verify without installing). The variable names are
+Tauri v2's — it reads them during `tauri build`.
 
 Signing identity (one of):
 
@@ -40,7 +42,7 @@ export APPLE_SIGNING_IDENTITY="Developer ID Application: Name (TEAMID)"
 export APPLE_ID="you@example.com"
 export APPLE_PASSWORD="abcd-efgh-ijkl-mnop"   # app-specific password
 export APPLE_TEAM_ID="TEAMID"
-scripts/notarize.sh
+scripts/install.sh
 ```
 
 An app-specific password is created at <https://account.apple.com> → Sign-In and
