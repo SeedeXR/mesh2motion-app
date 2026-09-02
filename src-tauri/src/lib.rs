@@ -106,6 +106,17 @@ async fn load_model(path: String) -> Result<tauri::ipc::Response, String> {
 
 fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file: {e}"))?;
+    // A glb the viewport can render itself is sent as-is, so its materials and
+    // textures reach the screen. `glb::write` carries only geometry and skin
+    // weights — all the rigging backend needs, but it shows as an untextured
+    // grey mesh, which is not the model the user recognises. It is still read
+    // first, so a corrupt file fails here with a clear error rather than in the
+    // loader. FBX has no direct viewer path (three cannot read our FBX), so it
+    // is converted — losing appearance the FBX reader does not carry anyway.
+    if bytes.starts_with(b"glTF") {
+        m2m_io::glb::read(&bytes).map_err(|e| e.to_string())?;
+        return Ok(tauri::ipc::Response::new(bytes));
+    }
     let document = m2m_io::import::load(&bytes).map_err(|e| e.to_string())?;
     let glb = m2m_io::glb::write(&document).map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(glb))
