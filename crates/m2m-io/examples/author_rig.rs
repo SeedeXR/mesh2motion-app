@@ -141,10 +141,65 @@ const BUFFALO: Map = &[
     ("tail_7", "Tail7", "tail_6", "Tail7"),
 ];
 
+/// Hyena: a digitigrade canine. Detailed source rig (122 bones) trimmed to the
+/// deformation set — its many `_end` leaf tips, tongue and mouth bones are
+/// dropped. Bilaterally symmetric, so each side maps from its own bone. The toe
+/// (`Digit11`) is the ground contact, so no ground extension is needed.
+#[rustfmt::skip]
+const HYENA: Map = &[
+    ("root", "Root", "", "Root"),
+    ("spine_1", "Pelvis", "root", "Pelvis"),
+    ("spine_2", "Spine1", "spine_1", "Spine1"),
+    ("spine_3", "Spine2", "spine_2", "Spine2"),
+    ("spine_4", "Chest", "spine_3", "Chest"),
+    ("neck_1", "Neck1", "spine_4", "Neck1"),
+    ("neck_2", "Neck2", "neck_1", "Neck2"),
+    ("neck_3", "Neck3", "neck_2", "Neck3"),
+    ("head", "Head", "neck_3", "Head"),
+    ("jaw", "Jaw", "head", "Jaw"),
+    ("ear_l1", "EarL1", "head", "EarL1"),
+    ("ear_l2", "EarL2", "ear_l1", "EarL2"),
+    ("ear_l3", "EarL3", "ear_l2", "EarL3"),
+    ("ear_r1", "EarR1", "head", "EarR1"),
+    ("ear_r2", "EarR2", "ear_r1", "EarR2"),
+    ("ear_r3", "EarR3", "ear_r2", "EarR3"),
+    ("front_collar_l", "LegFLCollarbone", "spine_4", "LegFLCollarbone"),
+    ("front_upper_l", "LegFL1", "front_collar_l", "LegFL1"),
+    ("front_lower_l", "LegFL2", "front_upper_l", "LegFL2"),
+    ("front_knee_l", "LegFL3", "front_lower_l", "LegFL3"),
+    ("front_ankle_l", "LegFLAnkle", "front_knee_l", "LegFLAnkle"),
+    ("front_foot_l", "LegFLDigit11", "front_ankle_l", "LegFLDigit11"),
+    ("front_collar_r", "LegFRCollarbone", "spine_4", "LegFRCollarbone"),
+    ("front_upper_r", "LegFR1", "front_collar_r", "LegFR1"),
+    ("front_lower_r", "LegFR2", "front_upper_r", "LegFR2"),
+    ("front_knee_r", "LegFR3", "front_lower_r", "LegFR3"),
+    ("front_ankle_r", "LegFRAnkle", "front_knee_r", "LegFRAnkle"),
+    ("front_foot_r", "LegFRDigit11", "front_ankle_r", "LegFRDigit11"),
+    ("back_upper_l", "LegBL1", "spine_1", "LegBL1"),
+    ("back_lower_l", "LegBL2", "back_upper_l", "LegBL2"),
+    ("back_knee_l", "LegBL3", "back_lower_l", "LegBL3"),
+    ("back_ankle_l", "LegBLAnkle", "back_knee_l", "LegBLAnkle"),
+    ("back_foot_l", "LegBLDigit11", "back_ankle_l", "LegBLDigit11"),
+    // The back legs are a segment shorter than the front, so their toe lands
+    // above the floor after fitting; a ground-contact bone reaches it down.
+    ("back_toe_l", "@ground", "back_foot_l", ""),
+    ("back_upper_r", "LegBR1", "spine_1", "LegBR1"),
+    ("back_lower_r", "LegBR2", "back_upper_r", "LegBR2"),
+    ("back_knee_r", "LegBR3", "back_lower_r", "LegBR3"),
+    ("back_ankle_r", "LegBRAnkle", "back_knee_r", "LegBRAnkle"),
+    ("back_foot_r", "LegBRDigit11", "back_ankle_r", "LegBRDigit11"),
+    ("back_toe_r", "@ground", "back_foot_r", ""),
+    ("tail_1", "Tail1", "spine_1", "Tail1"),
+    ("tail_2", "Tail2", "tail_1", "Tail2"),
+    ("tail_3", "Tail3", "tail_2", "Tail3"),
+    ("tail_4", "Tail4", "tail_3", "Tail4"),
+];
+
 fn mapping(creature: &str) -> Map {
     match creature {
         "rhino" => RHINO,
         "buffalo" => BUFFALO,
+        "hyena" => HYENA,
         other => panic!("no mapping for {other:?}"),
     }
 }
@@ -195,10 +250,13 @@ fn main() {
             }
         })
         .collect();
+    // Ground on the lowest real, non-root bone: the feet, not the root. Some
+    // source rigs put the root at the origin, below the body, which would
+    // otherwise leave the feet floating above y=0.
     let ground = map
         .iter()
         .zip(&raw)
-        .filter(|((_, src, _, _), _)| !synthetic(src))
+        .filter(|((_, src, parent, _), _)| !synthetic(src) && !parent.is_empty())
         .map(|(_, p)| p.y)
         .fold(f32::INFINITY, f32::min);
     for (i, (_, src, parent, _)) in map.iter().enumerate() {
@@ -300,7 +358,15 @@ fn author_anim(input: &str, map: Map, creature: &str, output: &str) {
     if doc.skins.is_empty() {
         panic!("the character has no skin to carry the clip");
     }
+    // Keep rotation channels only. A source clip's translations are the bone's
+    // absolute position in the source's units (often FBX centimetres), which do
+    // not carry across to a fitted skeleton in normalised units — applied raw
+    // they fling bones off. Canned preview clips animate in place, so rotations
+    // are all that is wanted; the retargeter is a rotation retarget anyway.
     let clips = doc.clips.len();
+    for clip in &mut doc.clips {
+        clip.channels.retain(|c| c.path == glb::Path::Rotation);
+    }
     doc.primitives.clear(); // library is skeleton + clips only, no mesh
     let bytes = glb::write(&doc).unwrap();
     std::fs::write(output, &bytes).unwrap();

@@ -195,3 +195,12 @@ fn a_clip_retargets_cleanly_onto_the_buffalo() {
     );
     assert_animates_cleanly_within(&glb, &clip, "buffalo", 12.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_the_hyena() {
+    let lib = "legacy/static/animations/hyena-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export("hyena", "legacy/static/models/model-hyena.glb", lib, &clip);
+    assert_animates_cleanly_within(&glb, &clip, "hyena", 12.0);
+}
