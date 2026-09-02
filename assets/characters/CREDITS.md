@@ -40,8 +40,9 @@ _New rows are added as each creature is prepared and verified._
 
 ## Textures
 
-The elephant's source rig ships untextured; two UV skins for it were supplied by
-the maintainer and applied as two matte variants: `elephant.glb` (natural
-colour, default) and `elephant-dark.glb` (dark hide). The tusks sample the
-texture's ivory hoof region. Licences ride with the R-5 asset record like the
-meshes.
+The elephant's source rig ships untextured; the maintainer supplied a colour UV
+skin (applied matte, roughness 0.95) and an eye texture. Tusks sample the
+texture's ivory hoof region; the eyes use the eye map. The character is
+re-oriented Y-up standing on its four legs, grounded and centred (the source
+asset was rotated on its side at centimetre scale). Licences ride with the R-5
+asset record like the meshes.
