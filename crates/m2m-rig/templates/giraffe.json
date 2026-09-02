@@ -1,0 +1,20 @@
+{
+  "name": "giraffe",
+  "skeleton": "rig-giraffe.glb",
+  "guidance": "Very tall unguligrade quadruped — a long five-bone neck carried high off short-backed shoulders, columnar legs on hooves (ground the foot), and a level back sloping slightly down to the hindquarters. The forelegs are longer than the hind; keep the neck near-vertical and the head small at its top.",
+  "chains": [
+    { "name": "root", "kind": "root", "bones": ["root"] },
+    { "name": "spine", "kind": "spine", "bones": ["spine_1", "spine_2"] },
+    { "name": "neck", "kind": "neck", "bones": ["neck_1", "neck_2", "neck_3", "neck_4", "neck_5"] },
+    { "name": "head", "kind": "head", "bones": ["head"] },
+    { "name": "front_leg_l", "kind": "limb", "side": "left", "role": "leg", "posture": "plantigrade",
+      "bones": ["front_upper_l", "front_lower_l", "front_foot_l"] },
+    { "name": "front_leg_r", "kind": "limb", "side": "right", "role": "leg", "posture": "plantigrade",
+      "bones": ["front_upper_r", "front_lower_r", "front_foot_r"] },
+    { "name": "back_leg_l", "kind": "limb", "side": "left", "role": "leg", "posture": "plantigrade",
+      "bones": ["back_upper_l", "back_lower_l", "back_foot_l"] },
+    { "name": "back_leg_r", "kind": "limb", "side": "right", "role": "leg", "posture": "plantigrade",
+      "bones": ["back_upper_r", "back_lower_r", "back_foot_r"] },
+    { "name": "tail", "kind": "tail", "bones": ["tail_1", "tail_2", "tail_3", "tail_4", "tail_5"] }
+  ]
+}

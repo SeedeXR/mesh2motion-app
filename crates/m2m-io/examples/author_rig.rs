@@ -262,12 +262,73 @@ const ELEPHANT: Map = &[
     ("tail_5", "tailJ_4", "tail_4", "tailJ_4"),
 ];
 
+/// Giraffe: the source is an auto-rig with meaningless `Bone.0NN` names and a
+/// flat hierarchy (every bone hangs straight off the armature), so the map both
+/// renames the deformation bones and rebuilds the chains. The long neck is five
+/// bones; the right side mirrors the left for a symmetric rest (the source legs
+/// sit at slightly different x). The source carries no animation of its own, so
+/// the giraffe's library is retargeted from a quadruped, not authored here.
+const GIRAFFE: Map = &[
+    ("root", "Bone.029", "", "Bone.029"),
+    ("spine_1", "Bone", "root", "Bone"),
+    ("spine_2", "Bone.009", "spine_1", "Bone.009"),
+    ("neck_1", "Bone.030", "spine_2", "Bone.030"),
+    ("neck_2", "Bone.031", "neck_1", "Bone.031"),
+    ("neck_3", "Bone.032", "neck_2", "Bone.032"),
+    ("neck_4", "Bone.033", "neck_3", "Bone.033"),
+    ("neck_5", "Bone.034", "neck_4", "Bone.034"),
+    ("head", "Bone.035", "neck_5", "Bone.035"),
+    ("front_upper_l", "Bone.020", "spine_2", "Bone.020"),
+    ("front_lower_l", "Bone.021", "front_upper_l", "Bone.021"),
+    ("front_foot_l", "Bone.022", "front_lower_l", "Bone.022"),
+    (
+        "front_upper_r",
+        "@mirror:front_upper_l",
+        "spine_2",
+        "Bone.017",
+    ),
+    (
+        "front_lower_r",
+        "@mirror:front_lower_l",
+        "front_upper_r",
+        "Bone.018",
+    ),
+    (
+        "front_foot_r",
+        "@mirror:front_foot_l",
+        "front_lower_r",
+        "Bone.019",
+    ),
+    ("back_upper_l", "Bone.026", "root", "Bone.026"),
+    ("back_lower_l", "Bone.027", "back_upper_l", "Bone.027"),
+    ("back_foot_l", "Bone.028", "back_lower_l", "Bone.028"),
+    ("back_upper_r", "@mirror:back_upper_l", "root", "Bone.023"),
+    (
+        "back_lower_r",
+        "@mirror:back_lower_l",
+        "back_upper_r",
+        "Bone.024",
+    ),
+    (
+        "back_foot_r",
+        "@mirror:back_foot_l",
+        "back_lower_r",
+        "Bone.025",
+    ),
+    ("tail_1", "Bone.010", "root", "Bone.010"),
+    ("tail_2", "Bone.011", "tail_1", "Bone.011"),
+    ("tail_3", "Bone.012", "tail_2", "Bone.012"),
+    ("tail_4", "Bone.013", "tail_3", "Bone.013"),
+    ("tail_5", "Bone.014", "tail_4", "Bone.014"),
+];
+
 fn mapping(creature: &str) -> Map {
     match creature {
         "rhino" => RHINO,
         "buffalo" => BUFFALO,
         "hyena" => HYENA,
         "elephant" => ELEPHANT,
+        "giraffe" => GIRAFFE,
         other => panic!("no mapping for {other:?}"),
     }
 }

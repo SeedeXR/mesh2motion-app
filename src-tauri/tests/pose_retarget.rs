@@ -203,3 +203,15 @@ fn a_clip_retargets_cleanly_onto_the_elephant() {
     let glb = animated_export("elephant", "assets/models/model-elephant.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "elephant", 12.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_the_giraffe() {
+    // The giraffe's donor mesh carried no animation, so its library is an
+    // authored idle rather than a captured walk. It still fits, binds and
+    // retargets; a giraffe is tall, so allow a larger box than the others.
+    let lib = "assets/animations/giraffe-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export("giraffe", "assets/models/model-giraffe.glb", lib, &clip);
+    assert_animates_cleanly_within(&glb, &clip, "giraffe", 16.0);
+}
