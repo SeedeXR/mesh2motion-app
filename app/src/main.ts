@@ -519,7 +519,13 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       // Rendered before drawing, so the canvas is in the DOM and has a size to
       // frame the model against.
       render()
-      await ensureViewport().show(geometry)
+      const viewport = ensureViewport()
+      await viewport.show(geometry)
+      // Surface the render diagnostics for "the viewport is blank" reports.
+      const diag = viewport.info()
+      console.log('viewport:', diag)
+      const el = document.querySelector<HTMLSpanElement>('#diag')
+      if (el !== null) el.textContent = diag
       return
     }
     render()
@@ -593,8 +599,7 @@ function render(): void {
       <div class="status" role="status">
         <span id="env">—</span>
         <span class="spacer"></span>
-        <span>0 verts</span>
-        <span>— ms</span>
+        <span id="diag">—</span>
       </div>
     </div>`
 

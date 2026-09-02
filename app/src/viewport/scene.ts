@@ -93,6 +93,9 @@ export interface Viewport {
   showOverlay(data: ArrayBuffer): Promise<void>
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
+  /** A one-line diagnostic string: canvas size, buffer size, frames drawn, GL
+   *  renderer, context-lost state. For "the viewport is blank" reports. */
+  info(): string
   /** Releases the GPU resources this viewport holds. */
   dispose(): void
 }
@@ -103,6 +106,22 @@ export function createViewport(): Viewport {
   // Above 2x the cost grows faster than anyone can see the difference, and a
   // 3x display would otherwise render nine times the pixels.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+
+  // Diagnostics for "the viewport is blank" reports (WKWebView vs the browser
+  // this is tested in): a running count of frames actually drawn, and whether
+  // the GL context was lost. Surfaced by `info()`.
+  let renders = 0
+  let contextLost = false
+  renderer.domElement.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault()
+    contextLost = true
+    console.error('viewport: WebGL context lost')
+  })
+  renderer.domElement.addEventListener('webglcontextrestored', () => {
+    contextLost = false
+    console.warn('viewport: WebGL context restored')
+    requestRender()
+  })
 
   const scene = new Scene()
   scene.background = new Color(0x14161a)
@@ -160,6 +179,7 @@ export function createViewport(): Viewport {
     requestAnimationFrame(() => {
       pending = false
       renderer.render(scene, camera)
+      renders++
     })
   }
   controls.addEventListener('change', requestRender)
@@ -346,6 +366,11 @@ export function createViewport(): Viewport {
         scene.add(skeleton)
       }
 
+      // Size the drawing buffer to the canvas now, rather than waiting for the
+      // ResizeObserver — its timing differs across webviews, and a frame drawn
+      // before it fires would draw into a default-sized (or zero) buffer.
+      resize()
+
       bounds = contents.bounds
       // The grid is sized to the subject: a 4 m grid under a 30 m creature
       // reads as a postage stamp, and under a 20 cm one as a runway.
@@ -454,6 +479,15 @@ export function createViewport(): Viewport {
     },
 
     reframe,
+
+    info(): string {
+      const el = renderer.domElement
+      const size = renderer.getSize(new Vector2())
+      const gl = renderer.getContext()
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+      const name = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : 'gl'
+      return `canvas ${el.clientWidth}x${el.clientHeight} · buffer ${size.x}x${size.y} · frames ${renders}${contextLost ? ' · CONTEXT LOST' : ''} · ${name}`
+    },
 
     dispose(): void {
       playing = false
