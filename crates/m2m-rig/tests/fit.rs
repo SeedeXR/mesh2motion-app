@@ -949,14 +949,14 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
     assert_eq!(
         names,
         [
-            "bird", "buffalo", "dragon", "elephant", "fox", "giraffe", "horse", "human", "hyena",
-            "kaiju", "rhino", "shark", "snake", "spider",
+            "bird", "buffalo", "crow", "dragon", "elephant", "fox", "giraffe", "horse", "human",
+            "hyena", "kaiju", "rhino", "shark", "snake", "spider",
         ]
     );
 
     // 500 bones, each claimed exactly once — the count P3-1 established.
     let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
-    assert_eq!(bones, 691);
+    assert_eq!(bones, 715);
 }
 
 /// The embedded manifests are the files on disk, not a stale copy.

@@ -322,6 +322,39 @@ const GIRAFFE: Map = &[
     ("tail_5", "Bone.014", "tail_4", "Bone.014"),
 ];
 
+/// Crow: a bird. The source rig is cleanly named and bilaterally symmetric, so
+/// each side maps from its own bone. Front limbs are wings (clavicle → hand),
+/// hind limbs are digitigrade bird legs (thigh → toe through the "HorseLink"
+/// hock), and the fan of tail feathers is reduced to a single tail bone. The
+/// many `WingLeft*`/feather helper bones are dropped to the deformation set.
+#[rustfmt::skip]
+const CROW: Map = &[
+    ("root", "CROW_", "", "CROW_"),
+    ("spine_1", "CROW_ Pelvis", "root", "CROW_ Pelvis"),
+    ("spine_2", "CROW_ Spine", "spine_1", "CROW_ Spine"),
+    ("neck_1", "CROW_ Neck", "spine_2", "CROW_ Neck"),
+    ("head", "CROW_ Head", "neck_1", "CROW_ Head"),
+    ("leg_upper_l", "CROW_ L Thigh", "spine_1", "CROW_ L Thigh"),
+    ("leg_lower_l", "CROW_ L Calf", "leg_upper_l", "CROW_ L Calf"),
+    ("leg_ankle_l", "CROW_ L HorseLink", "leg_lower_l", "CROW_ L HorseLink"),
+    ("leg_foot_l", "CROW_ L Foot", "leg_ankle_l", "CROW_ L Foot"),
+    ("leg_toe_l", "CROW_ L Toe0", "leg_foot_l", "CROW_ L Toe0"),
+    ("leg_upper_r", "CROW_ R Thigh", "spine_1", "CROW_ R Thigh"),
+    ("leg_lower_r", "CROW_ R Calf", "leg_upper_r", "CROW_ R Calf"),
+    ("leg_ankle_r", "CROW_ R HorseLink", "leg_lower_r", "CROW_ R HorseLink"),
+    ("leg_foot_r", "CROW_ R Foot", "leg_ankle_r", "CROW_ R Foot"),
+    ("leg_toe_r", "CROW_ R Toe0", "leg_foot_r", "CROW_ R Toe0"),
+    ("wing_1_l", "CROW_ L Clavicle", "spine_2", "CROW_ L Clavicle"),
+    ("wing_2_l", "CROW_ L UpperArm", "wing_1_l", "CROW_ L UpperArm"),
+    ("wing_3_l", "CROW_ L Forearm", "wing_2_l", "CROW_ L Forearm"),
+    ("wing_4_l", "CROW_ L Hand", "wing_3_l", "CROW_ L Hand"),
+    ("wing_1_r", "CROW_ R Clavicle", "spine_2", "CROW_ R Clavicle"),
+    ("wing_2_r", "CROW_ R UpperArm", "wing_1_r", "CROW_ R UpperArm"),
+    ("wing_3_r", "CROW_ R Forearm", "wing_2_r", "CROW_ R Forearm"),
+    ("wing_4_r", "CROW_ R Hand", "wing_3_r", "CROW_ R Hand"),
+    ("tail_1", "CrowTailLeftFeatherA", "spine_1", "CrowTailLeftFeatherA"),
+];
+
 fn mapping(creature: &str) -> Map {
     match creature {
         "rhino" => RHINO,
@@ -329,6 +362,7 @@ fn mapping(creature: &str) -> Map {
         "hyena" => HYENA,
         "elephant" => ELEPHANT,
         "giraffe" => GIRAFFE,
+        "crow" => CROW,
         other => panic!("no mapping for {other:?}"),
     }
 }

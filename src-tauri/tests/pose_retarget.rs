@@ -215,3 +215,13 @@ fn a_clip_retargets_cleanly_onto_the_giraffe() {
     let glb = animated_export("giraffe", "assets/models/model-giraffe.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "giraffe", 16.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_clip_retargets_cleanly_onto_the_crow() {
+    // A small perching bird with an idle library; wings and legs stay put.
+    let lib = "assets/animations/crow-animations.glb";
+    let clip = first_clip(lib);
+    let glb = animated_export("crow", "assets/models/model-crow.glb", lib, &clip);
+    assert_animates_cleanly_within(&glb, &clip, "crow", 12.0);
+}
