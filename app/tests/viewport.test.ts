@@ -35,7 +35,7 @@ describe('parseModel', () => {
 
     expect(model.bones).toBe(66)
     expect(model.skinnedMeshes).toBe(1)
-    expect(model.clips).toHaveLength(87)
+    expect(model.clips).toHaveLength(94)
     expect(model.clips[0]).toBe('Chest_Open')
   })
 
@@ -195,7 +195,7 @@ describe('parseAnimated and findClip', () => {
   test('an animated glb comes back with its clips as AnimationClips', async () => {
     const model = await parseAnimated(animated)
 
-    expect(model.clips.length).toBe(87)
+    expect(model.clips.length).toBe(94)
     const chest = model.clips.find((c) => c.name === 'Chest_Open')
     expect(chest).toBeDefined()
     // The duration is what plays; assert it, not the track count, which three
