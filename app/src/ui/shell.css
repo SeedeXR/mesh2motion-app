@@ -100,9 +100,15 @@ body {
   display: grid;
   grid-template-rows: 1fr auto;
   min-width: 640px;
+  /* A grid item defaults to min-height:auto — it refuses to shrink below its
+     content. Without this the canvas's backing-store height inflates .viewport
+     past its row, which grows the measured size, which grows the buffer on the
+     next resize: a runaway that pushes the rendered model off-screen while only
+     the clear colour stays visible. min-height:0 confines it to its row. */
+  min-height: 0;
 }
 
-.viewport canvas { display: block; width: 100%; height: 100%; }
+.viewport canvas { display: block; width: 100%; height: 100%; transform: translateZ(0); }
 
 .viewport-empty {
   display: grid;

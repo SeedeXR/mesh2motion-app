@@ -46,6 +46,32 @@ export async function reportStartup(diagnostics: string): Promise<void> {
   await invoke('report_startup', { diagnostics })
 }
 
+/** Dev/screenshot harness: a model path to auto-import at startup, or null. */
+export async function devAutoload(): Promise<string | null> {
+  return await invoke<string | null>('dev_autoload')
+}
+
+/** Mirrors a log line to the Rust stdout (fire-and-forget). */
+export function logLine(level: string, message: string): void {
+  void invoke('log_line', { level, message }).catch(() => {})
+}
+
+/** Forwards console.log/warn/error to the Rust terminal, so the webview's logs
+ *  are debuggable outside the inspector. Idempotent; no-op in a plain browser. */
+export function forwardConsoleToTerminal(): void {
+  if (!isDesktop()) return
+  for (const level of ['log', 'warn', 'error'] as const) {
+    const original = console[level].bind(console)
+    console[level] = (...args: unknown[]): void => {
+      original(...args)
+      logLine(
+        level,
+        args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+      )
+    }
+  }
+}
+
 /** True when running inside the Tauri webview rather than a plain browser. */
 export function isDesktop(): boolean {
   return '__TAURI_INTERNALS__' in window

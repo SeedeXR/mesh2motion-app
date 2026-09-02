@@ -8,6 +8,8 @@ import {
   animationClips,
   bindWeights,
   buildInfo,
+  devAutoload,
+  forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
   fitSkeleton,
@@ -25,6 +27,9 @@ import {
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
+
+// Mirror all webview console output to the Rust terminal for debugging.
+forwardConsoleToTerminal()
 
 /** Index of the step the user is currently on. */
 // ponytail: nothing advances activeStep yet — each step gains its own completion
@@ -524,6 +529,7 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       // Surface the render diagnostics for "the viewport is blank" reports.
       const diag = viewport.info()
       console.log('viewport:', diag)
+      void reportStartup(`viewport ${diag}`)
       const el = document.querySelector<HTMLSpanElement>('#diag')
       if (el !== null) el.textContent = diag
       return
@@ -703,3 +709,19 @@ window.addEventListener('keydown', (event) => {
 })
 
 render()
+
+/** Dev/screenshot harness: when `M2M_AUTOLOAD` is set, import that model at
+ *  startup without the native picker, so the viewport can be screenshotted. */
+async function maybeAutoload(): Promise<void> {
+  if (!isDesktop()) return
+  let path: string | null = null
+  try {
+    path = await devAutoload()
+  } catch {
+    return
+  }
+  if (path === null) return
+  const button = document.querySelector<HTMLButtonElement>('#import')
+  if (button !== null) await runImport(button)
+}
+void maybeAutoload()

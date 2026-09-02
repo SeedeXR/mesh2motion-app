@@ -36,6 +36,20 @@ fn report_startup(diagnostics: String) {
     println!("[m2m] startup: {diagnostics}");
 }
 
+/// Mirrors a webview console line to stdout, so the dev terminal and bug reports
+/// see the frontend's logs — otherwise they are only visible in the inspector.
+#[tauri::command]
+fn log_line(level: String, message: String) {
+    println!("[webview:{level}] {message}");
+}
+
+/// Dev/screenshot harness: a model path to auto-import at startup, from
+/// `M2M_AUTOLOAD`, so the viewport can be exercised without the native picker.
+#[tauri::command]
+fn dev_autoload() -> Option<String> {
+    std::env::var("M2M_AUTOLOAD").ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -66,15 +80,20 @@ async fn import_model(app: tauri::AppHandle) -> Result<Option<ImportedFile>, Str
 }
 
 fn pick_and_inspect(app: &tauri::AppHandle) -> Result<Option<ImportedFile>, String> {
-    let Some(chosen) = app
-        .dialog()
-        .file()
-        .add_filter("Model", &["glb", "fbx"])
-        .blocking_pick_file()
-    else {
-        return Ok(None);
+    // Dev/screenshot harness: skip the native picker and use this path.
+    let path = if let Ok(preset) = std::env::var("M2M_AUTOLOAD") {
+        std::path::PathBuf::from(preset)
+    } else {
+        let Some(chosen) = app
+            .dialog()
+            .file()
+            .add_filter("Model", &["glb", "fbx"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        chosen.into_path().map_err(|e| e.to_string())?
     };
-    let path = chosen.into_path().map_err(|e| e.to_string())?;
     let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
 
     Ok(Some(ImportedFile {
@@ -352,6 +371,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             build_info,
             report_startup,
+            dev_autoload,
+            log_line,
             import_model,
             load_model,
             skeleton_templates,

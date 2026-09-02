@@ -5,16 +5,13 @@
  * needs a screen, and it is kept thin on purpose because it is the part no test
  * can look at.
  *
- * # Rendering is event-driven
+ * # Rendering runs a standing loop
  *
- * There is no permanent `requestAnimationFrame` loop. A frame is drawn when
- * something changes — the camera moved, the model changed, the canvas resized —
- * so an idle viewport costs no CPU and no GPU (todo P4-5). This is far easier
- * to build in than to retrofit, because a always-on loop lets state changes go
- * unannounced and everything quietly depends on that.
- *
- * Orbit damping is off for the same reason: damping needs a frame every tick
- * after the input stops, which is exactly the idle cost being avoided.
+ * `setAnimationLoop` draws every frame, the way a 3D tool's viewport does. A
+ * draw-on-change renderer would save idle CPU (todo P4-5), but the always-on
+ * loop is simpler and can never miss a state change, and it is where the
+ * animation mixer is advanced while a clip plays. Orbit damping stays off:
+ * it buys nothing and only adds work now that a frame is drawn regardless.
  */
 
 import {
@@ -93,8 +90,8 @@ export interface Viewport {
   showOverlay(data: ArrayBuffer): Promise<void>
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
-  /** A one-line diagnostic string: canvas size, buffer size, frames drawn, GL
-   *  renderer, context-lost state. For "the viewport is blank" reports. */
+  /** A one-line diagnostic string: canvas size, buffer size, frames drawn, and
+   *  the active render backend. For "the viewport is blank" reports. */
   info(): string
   /** Releases the GPU resources this viewport holds. */
   dispose(): void
@@ -102,26 +99,13 @@ export interface Viewport {
 
 /** Creates a viewport. The canvas is returned unmounted. */
 export function createViewport(): Viewport {
-  const renderer = new WebGLRenderer({ antialias: true })
+  const renderer = new WebGLRenderer({ antialias: false })
   // Above 2x the cost grows faster than anyone can see the difference, and a
   // 3x display would otherwise render nine times the pixels.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
-  // Diagnostics for "the viewport is blank" reports (WKWebView vs the browser
-  // this is tested in): a running count of frames actually drawn, and whether
-  // the GL context was lost. Surfaced by `info()`.
+  // Frames-drawn counter for the "viewport is blank" diagnostic (`info()`).
   let renders = 0
-  let contextLost = false
-  renderer.domElement.addEventListener('webglcontextlost', (event) => {
-    event.preventDefault()
-    contextLost = true
-    console.error('viewport: WebGL context lost')
-  })
-  renderer.domElement.addEventListener('webglcontextrestored', () => {
-    contextLost = false
-    console.warn('viewport: WebGL context restored')
-    requestRender()
-  })
 
   const scene = new Scene()
   scene.background = new Color(0x14161a)
@@ -170,19 +154,19 @@ export function createViewport(): Viewport {
   let playing = false
   let bounds = new Box3()
 
-  // One frame per change, never a standing loop. `pending` collapses several
-  // changes in the same tick into a single draw.
-  let pending = false
-  function requestRender(): void {
-    if (pending) return
-    pending = true
-    requestAnimationFrame(() => {
-      pending = false
-      renderer.render(scene, camera)
-      renders++
-    })
-  }
-  controls.addEventListener('change', requestRender)
+  // A standing render loop drives every frame and advances the animation mixer
+  // while a clip plays.
+  renderer.setAnimationLoop((now: number) => {
+    if (playing && mixer !== null) mixer.update((now - lastFrame) / 1000)
+    lastFrame = now
+    controls.update()
+    renderer.render(scene, camera)
+    renders++
+  })
+
+  /** A no-op now the loop draws every frame; kept so the many call sites that
+   *  ask for a redraw after a change still type-check. */
+  function requestRender(): void {}
 
   /** A grabbable handle size: ~1.5% of the skeleton's diagonal, so it works at
    * any creature scale rather than being a speck on a whale or a boulder on a
@@ -288,18 +272,6 @@ export function createViewport(): Viewport {
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
   }
 
-  // A frame loop that runs ONLY while a clip plays. The event-driven
-  // `requestRender` keeps an idle viewport at zero cost; this is the one place
-  // that needs a continuous loop, and it stops itself the moment playback does.
-  function tick(): void {
-    if (!playing || mixer === null) return
-    const now = performance.now()
-    mixer.update((now - lastFrame) / 1000)
-    lastFrame = now
-    renderer.render(scene, camera)
-    requestAnimationFrame(tick)
-  }
-
   /** The canvas's own box, not its parent's — the stage also holds the
    * guidance strip, so the parent is taller than the drawing area. */
   function viewportAspect(): number {
@@ -403,7 +375,6 @@ export function createViewport(): Viewport {
       mixer.clipAction(clip).play()
       playing = true
       lastFrame = performance.now()
-      requestAnimationFrame(tick)
       return clip.duration
     },
 
@@ -483,10 +454,7 @@ export function createViewport(): Viewport {
     info(): string {
       const el = renderer.domElement
       const size = renderer.getSize(new Vector2())
-      const gl = renderer.getContext()
-      const dbg = gl.getExtension('WEBGL_debug_renderer_info')
-      const name = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : 'gl'
-      return `canvas ${el.clientWidth}x${el.clientHeight} · buffer ${size.x}x${size.y} · frames ${renders}${contextLost ? ' · CONTEXT LOST' : ''} · ${name}`
+      return `canvas ${el.clientWidth}x${el.clientHeight} · buffer ${size.x}x${size.y} · frames ${renders} · webgl`
     },
 
     dispose(): void {
