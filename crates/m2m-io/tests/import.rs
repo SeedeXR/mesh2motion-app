@@ -64,7 +64,7 @@ fn a_skeleton_with_no_mesh_still_counts_as_rigged() {
 fn animation_is_part_of_what_survives_import() {
     let import = inspect(ANIMATED).expect("reads");
 
-    assert_eq!(import.clips.len(), 87);
+    assert_eq!(import.clips.len(), 94);
     assert_eq!(import.clips[0], "Chest_Open");
     assert_eq!(import.bones.len(), 66);
 }

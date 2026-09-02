@@ -549,7 +549,8 @@ fn load_rig(relative: &str) -> LoadedRig {
 ///
 /// Verified independently outside CI: Blender reports the written file as 65
 /// bones and 87 actions, with `Chest_Open` at frames **0.00–33.00** — the same
-/// range as the source. assimp reads 87 animations and 5,655 channels. Neither
+/// range as the source. assimp read 87 animations and 5,655 channels (the
+/// library since gained 7 retargeted Mixamo run clips, 94 in total). Neither
 /// runs in CI, so the properties they confirmed are asserted here.
 #[test]
 fn a_real_clip_retargets_between_real_rigs() {

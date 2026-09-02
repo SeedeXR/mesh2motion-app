@@ -159,7 +159,7 @@ fn bone_transforms_survive_exactly() {
 #[test]
 fn animation_and_its_time_axis_survive() {
     let (before, after) = round_trip("animations/human-base-animations.glb");
-    assert_eq!(after.clips.len(), 87);
+    assert_eq!(after.clips.len(), 94);
     assert_eq!(after.clips.len(), before.clips.len());
 
     for (a, b) in after.clips.iter().zip(&before.clips) {

@@ -1901,7 +1901,7 @@ mod tests {
     fn the_library_offers_its_clips() {
         let clips = super::library_clips(&library()).expect("lists");
 
-        assert_eq!(clips.len(), 87);
+        assert_eq!(clips.len(), 94);
         assert_eq!(clips[0].name, "Chest_Open");
         assert!((clips[0].duration - 1.375).abs() < 1e-3, "{:?}", clips[0]);
         assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));

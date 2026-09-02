@@ -159,7 +159,7 @@ fn many_primitives_can_belong_to_one_mesh() {
 #[test]
 fn animation_matches_blender_on_channels_keys_and_time() {
     let document = glb::read(&fixture("animations/human-base-animations.glb")).expect("reads");
-    assert_eq!(document.clips.len(), 87);
+    assert_eq!(document.clips.len(), 94);
 
     let clip = document
         .clips

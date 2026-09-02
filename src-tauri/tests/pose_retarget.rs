@@ -225,3 +225,17 @@ fn a_clip_retargets_cleanly_onto_the_crow() {
     let glb = animated_export("crow", "assets/models/model-crow.glb", lib, &clip);
     assert_animates_cleanly_within(&glb, &clip, "crow", 12.0);
 }
+
+#[test]
+#[ignore = "runs the full fit+bind+retarget+export pipeline; slow"]
+fn a_mixamo_run_clip_retargets_cleanly_onto_the_human() {
+    // The Mixamo run clips added to the human library (retargeted mixamorig ->
+    // the human template, rotation-only). An in-place run stays in the box.
+    let glb = animated_export(
+        "human",
+        "assets/models/model-human.glb",
+        HUMAN_LIB,
+        "ninja_run",
+    );
+    assert_animates_cleanly(&glb, "ninja_run", "ninja_run");
+}
