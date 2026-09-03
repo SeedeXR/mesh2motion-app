@@ -17,6 +17,15 @@ export default defineConfig({
     target: 'safari15',
     // Tauri v2 sets TAURI_ENV_DEBUG; TAURI_DEBUG was the v1 name.
     sourcemap: !!process.env['TAURI_ENV_DEBUG'],
-    minify: process.env['TAURI_ENV_DEBUG'] ? false : 'esbuild'
+    minify: process.env['TAURI_ENV_DEBUG'] ? false : 'esbuild',
+    rollupOptions: {
+      // Split three.js (the bulk of the bundle, and stable) into its own chunk
+      // so app code and the vendor rebuild/cache independently. three is ~25 MB
+      // of source; its minified chunk is inherently large, so the warning limit
+      // covers it — this is a Tauri app served from local disk, where chunk size
+      // is not a network cost.
+      output: { manualChunks: { three: ['three'] } }
+    },
+    chunkSizeWarningLimit: 800
   }
 })
