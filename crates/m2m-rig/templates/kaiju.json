@@ -1,0 +1,177 @@
+{
+  "name": "kaiju",
+  "skeleton": "rig-kaiju.glb",
+  "guidance": "A heavy biped — arms and legs like a human's but bulkier. Sit the hips low over the legs and keep the shoulders wide.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "Hips",
+        "Spine_1",
+        "Spine_2",
+        "Spine_2.001",
+        "Spine_3",
+        "Spine_4"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "Head",
+        "Nose",
+        "Head.tip"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "Chin",
+        "Chin_Tip"
+      ]
+    },
+    {
+      "name": "stomach",
+      "kind": "accessory",
+      "bones": [
+        "Stomach",
+        "Stomach_tip"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "Tail_Base",
+        "Tail_Mid",
+        "Tail_Mid.001",
+        "Tail_Mid.002",
+        "Tail_Mid.003",
+        "Tail_Tip"
+      ]
+    },
+    {
+      "name": "arm_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "arm",
+      "bones": [
+        "Front_Leg_Shoulder_L",
+        "Front_Leg_Upper_L",
+        "Front_Leg_Lower_L",
+        "Hand_L"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Back_Leg_Pelvis_L",
+        "Back_Leg_Upper_L",
+        "Back_Leg_Lower_L",
+        "Back_Leg_Ankle_L",
+        "Back_Leg_Foot_L",
+        "Back_Leg_Foot_1_L",
+        "Back_Leg_Foot_2_L",
+        "Back_Leg_Tip_L"
+      ]
+    },
+    {
+      "name": "thumb_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "Thumb_01_L",
+        "Thumb_02_L",
+        "Thumb_Tip_L"
+      ]
+    },
+    {
+      "name": "index_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "Finger_Index_L",
+        "Finger_Index_Tip_L"
+      ]
+    },
+    {
+      "name": "pinky_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "Finger_Pinky_01_L",
+        "Finger_Pinky_Tip_L"
+      ]
+    },
+    {
+      "name": "arm_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "arm",
+      "bones": [
+        "Front_Leg_Shoulder_R",
+        "Front_Leg_Upper_R",
+        "Front_Leg_Lower_R",
+        "Hand_R"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Back_Leg_Pelvis_R",
+        "Back_Leg_Upper_R",
+        "Back_Leg_Lower_R",
+        "Back_Leg_Ankle_R",
+        "Back_Leg_Foot_R",
+        "Back_Leg_Foot_1_R",
+        "Back_Leg_Foot_2_R",
+        "Back_Leg_Tip_R"
+      ]
+    },
+    {
+      "name": "thumb_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "Thumb_01_R",
+        "Thumb_02_R",
+        "Thumb_Tip_R"
+      ]
+    },
+    {
+      "name": "index_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "Finger_Index_R",
+        "Finger_Index_Tip_R"
+      ]
+    },
+    {
+      "name": "pinky_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "Finger_Pinky_01_R",
+        "Finger_Pinky_Tip_R"
+      ]
+    }
+  ]
+}

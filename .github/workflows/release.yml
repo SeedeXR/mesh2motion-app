@@ -1,0 +1,64 @@
+# Signed + notarised release on a version tag (P4-7).
+#
+# Push a tag like `v0.1.0` and this builds the macOS bundle, signs and
+# notarises it, and attaches the .dmg/.app to a GitHub release.
+#
+# Signing is skipped gracefully until the repository has the Apple secrets
+# below — an unsigned bundle still builds and uploads, so the workflow is
+# useful before the certificate is in place. To sign + notarise, add these
+# repository secrets (Settings → Secrets and variables → Actions):
+#
+#   APPLE_CERTIFICATE           base64 of your "Developer ID Application" .p12
+#   APPLE_CERTIFICATE_PASSWORD  the .p12 export password
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID                    your Apple ID email
+#   APPLE_PASSWORD              an app-specific password for that Apple ID
+#   APPLE_TEAM_ID               your 10-character Apple Developer Team ID
+#
+# Tauri reads these at build time to codesign and submit for notarisation.
+# See https://tauri.app/distribute/sign/macos/.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# The release job creates a GitHub release, which needs write access.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, sign, publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Build, sign, and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Signing + notarisation. Absent secrets leave these empty and the
+          # bundle builds unsigned rather than failing.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Uses the pushed tag (e.g. v0.1.0) as the release tag and title.
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Mesh2Motion ${{ github.ref_name }}'
+          releaseBody: 'See the changelog for what changed in this release.'
+          releaseDraft: true
+          prerelease: false

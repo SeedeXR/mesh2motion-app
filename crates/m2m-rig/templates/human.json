@@ -1,0 +1,201 @@
+{
+  "name": "human",
+  "skeleton": "rig-human.glb",
+  "guidance": "Place the hips at the pelvis, about navel height. The spine runs up to the head; the arms hang from the clavicles, so keep the shoulders where the mesh's shoulders are.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "pelvis",
+        "spine_01",
+        "spine_02",
+        "spine_03"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "neck_01"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head",
+        "head_leaf"
+      ]
+    },
+    {
+      "name": "arm_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "arm",
+      "bones": [
+        "clavicle_l",
+        "upperarm_l",
+        "lowerarm_l",
+        "hand_l"
+      ]
+    },
+    {
+      "name": "leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "thigh_l",
+        "calf_l",
+        "foot_l",
+        "ball_l",
+        "ball_leaf_l"
+      ]
+    },
+    {
+      "name": "thumb_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "thumb_01_l",
+        "thumb_02_l",
+        "thumb_03_l",
+        "thumb_04_leaf_l"
+      ]
+    },
+    {
+      "name": "index_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "index_01_l",
+        "index_02_l",
+        "index_03_l",
+        "index_04_leaf_l"
+      ]
+    },
+    {
+      "name": "middle_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "middle_01_l",
+        "middle_02_l",
+        "middle_03_l",
+        "middle_04_leaf_l"
+      ]
+    },
+    {
+      "name": "ring_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "ring_01_l",
+        "ring_02_l",
+        "ring_03_l",
+        "ring_04_leaf_l"
+      ]
+    },
+    {
+      "name": "pinky_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "pinky_01_l",
+        "pinky_02_l",
+        "pinky_03_l",
+        "pinky_04_leaf_l"
+      ]
+    },
+    {
+      "name": "arm_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "arm",
+      "bones": [
+        "clavicle_r",
+        "upperarm_r",
+        "lowerarm_r",
+        "hand_r"
+      ]
+    },
+    {
+      "name": "leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "plantigrade",
+      "bones": [
+        "thigh_r",
+        "calf_r",
+        "foot_r",
+        "ball_r",
+        "ball_leaf_r"
+      ]
+    },
+    {
+      "name": "thumb_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "thumb_01_r",
+        "thumb_02_r",
+        "thumb_03_r",
+        "thumb_04_leaf_r"
+      ]
+    },
+    {
+      "name": "index_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "index_01_r",
+        "index_02_r",
+        "index_03_r",
+        "index_04_leaf_r"
+      ]
+    },
+    {
+      "name": "middle_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "middle_01_r",
+        "middle_02_r",
+        "middle_03_r",
+        "middle_04_leaf_r"
+      ]
+    },
+    {
+      "name": "ring_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "ring_01_r",
+        "ring_02_r",
+        "ring_03_r",
+        "ring_04_leaf_r"
+      ]
+    },
+    {
+      "name": "pinky_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "pinky_01_r",
+        "pinky_02_r",
+        "pinky_03_r",
+        "pinky_04_leaf_r"
+      ]
+    }
+  ]
+}

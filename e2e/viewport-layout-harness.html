@@ -1,0 +1,24 @@
+<!doctype html>
+<html data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The REAL app stylesheets: this harness reproduces the shell layout the
+         viewport actually lives in, so a CSS regression that only shows up
+         there (the canvas-size runaway) is caught here and not just in the
+         simplified viewport-harness. -->
+    <link rel="stylesheet" href="/app/src/ui/tokens.css" />
+    <link rel="stylesheet" href="/app/src/ui/shell.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div class="shell">
+        <div class="titlebar"></div>
+        <nav class="rail"></nav>
+        <main class="viewport"></main>
+        <aside class="inspector"></aside>
+        <div class="status"></div>
+      </div>
+    </div>
+    <script type="module" src="/e2e/viewport-layout-harness.ts"></script>
+  </body>
+</html>

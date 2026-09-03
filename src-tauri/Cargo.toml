@@ -1,0 +1,28 @@
+[package]
+name = "mesh2motion"
+description = "Native rigging and animation for every creature"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "mesh2motion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+glam.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+m2m-core = { path = "../crates/m2m-core" }
+m2m-io = { path = "../crates/m2m-io" }
+m2m-rig = { path = "../crates/m2m-rig" }
+m2m-bridge = { path = "../crates/m2m-bridge" }
+m2m-pipeline = { path = "../crates/m2m-pipeline" }

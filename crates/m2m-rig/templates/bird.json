@@ -1,0 +1,188 @@
+{
+  "name": "bird",
+  "skeleton": "rig-bird.glb",
+  "guidance": "The wing chain runs shoulder → elbow → wrist out to the primaries; keep the keel bone forward of the hips. The legs fold back at the ankle and the tail is a short chain.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "hips",
+        "spine_0",
+        "spine_1",
+        "spine_2",
+        "spine_3"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head"
+      ]
+    },
+    {
+      "name": "jaw_upper",
+      "kind": "jaw",
+      "bones": [
+        "mouth_upper",
+        "mouth_upper_tip"
+      ]
+    },
+    {
+      "name": "jaw_lower",
+      "kind": "jaw",
+      "bones": [
+        "mouth_lower",
+        "mouth_lower_tip"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_tip"
+      ]
+    },
+    {
+      "name": "leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "UpperLeg_L",
+        "LowerLeg_L",
+        "AnkleLeg_L",
+        "Foot_L",
+        "Toes_L",
+        "Toes_tip_L"
+      ]
+    },
+    {
+      "name": "wing_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "wing",
+      "bones": [
+        "wing_1_L",
+        "wing_2_L",
+        "wing_3_L",
+        "wing_4_L",
+        "wing_5_L",
+        "wing_tip_L"
+      ]
+    },
+    {
+      "name": "wing_feather_1_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_1_1_L",
+        "wing_feather_1_2_L"
+      ]
+    },
+    {
+      "name": "wing_feather_2_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_2_1_L",
+        "wing_feather_2_2_L"
+      ]
+    },
+    {
+      "name": "wing_feather_3_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_3_1_L",
+        "wing_feather_3_2_L"
+      ]
+    },
+    {
+      "name": "wing_feather_4_l",
+      "kind": "digit",
+      "side": "left",
+      "bones": [
+        "wing_feather_4_1_L",
+        "wing_feather_4_2_L"
+      ]
+    },
+    {
+      "name": "leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "UpperLeg_R",
+        "LowerLeg_R",
+        "AnkleLeg_R",
+        "Foot_R",
+        "Toes_R",
+        "Toes_tip_R"
+      ]
+    },
+    {
+      "name": "wing_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "wing",
+      "bones": [
+        "wing_1_R",
+        "wing_2_R",
+        "wing_3_R",
+        "wing_4_R",
+        "wing_5_R",
+        "wing_tip_R"
+      ]
+    },
+    {
+      "name": "wing_feather_1_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_1_1_R",
+        "wing_feather_1_2_R"
+      ]
+    },
+    {
+      "name": "wing_feather_2_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_2_1_R",
+        "wing_feather_2_2_R"
+      ]
+    },
+    {
+      "name": "wing_feather_3_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_3_1_R",
+        "wing_feather_3_2_R"
+      ]
+    },
+    {
+      "name": "wing_feather_4_r",
+      "kind": "digit",
+      "side": "right",
+      "bones": [
+        "wing_feather_4_1_R",
+        "wing_feather_4_2_R"
+      ]
+    }
+  ]
+}

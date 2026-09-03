@@ -1,0 +1,179 @@
+{
+  "name": "spider",
+  "skeleton": "rig-spider.glb",
+  "guidance": "Eight legs radiate from the cephalothorax — fit each leg out to its tip. There is no real spine: the body is the cephalothorax and the abdomen behind it.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "hips",
+        "spine_1",
+        "spine_2"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head",
+        "head_tip"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_tip"
+      ]
+    },
+    {
+      "name": "fang_l",
+      "kind": "jaw",
+      "side": "left",
+      "bones": [
+        "teeth_l",
+        "teeth_tip_l"
+      ]
+    },
+    {
+      "name": "legs_anchor_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "legs_anchor_l"
+      ]
+    },
+    {
+      "name": "leg_a_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_1_l",
+        "leg_a_1_l",
+        "leg_a_2_l",
+        "leg_a_3_l",
+        "leg_a_tip_l"
+      ]
+    },
+    {
+      "name": "leg_b_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_2_l",
+        "leg_b_1_l",
+        "leg_b_2_l",
+        "leg_b_3_l",
+        "leg_b_tip_l"
+      ]
+    },
+    {
+      "name": "leg_c_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_3_l",
+        "leg_c_1_l",
+        "leg_c_2_l",
+        "leg_c_3_l",
+        "leg_c_tip_l"
+      ]
+    },
+    {
+      "name": "leg_d_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_4_l",
+        "leg_d_1_l",
+        "leg_d_2_l",
+        "leg_d_3_l",
+        "leg_d_tip_l"
+      ]
+    },
+    {
+      "name": "fang_r",
+      "kind": "jaw",
+      "side": "right",
+      "bones": [
+        "teeth_r",
+        "teeth_tip_r"
+      ]
+    },
+    {
+      "name": "legs_anchor_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "legs_anchor_r"
+      ]
+    },
+    {
+      "name": "leg_a_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_1_r",
+        "leg_a_1_r",
+        "leg_a_2_r",
+        "leg_a_3_r",
+        "leg_a_tip_r"
+      ]
+    },
+    {
+      "name": "leg_b_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_2_r",
+        "leg_b_1_r",
+        "leg_b_2_r",
+        "leg_b_3_r",
+        "leg_b_tip_r"
+      ]
+    },
+    {
+      "name": "leg_c_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_3_r",
+        "leg_c_1_r",
+        "leg_c_2_r",
+        "leg_c_3_r",
+        "leg_c_tip_r"
+      ]
+    },
+    {
+      "name": "leg_d_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "bones": [
+        "legs_anchor_4_r",
+        "leg_d_1_r",
+        "leg_d_2_r",
+        "leg_d_3_r",
+        "leg_d_tip_r"
+      ]
+    }
+  ]
+}

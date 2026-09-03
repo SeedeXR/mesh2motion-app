@@ -1,0 +1,137 @@
+{
+  "name": "hyena",
+  "skeleton": "rig-hyena.glb",
+  "guidance": "Digitigrade canine \u2014 stands on its toes with the heel raised, so ground the toe, not the ankle. The back slopes down from high shoulders to low hindquarters; keep that fore-high line and the head level on a short neck.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "spine_1",
+        "spine_2",
+        "spine_3",
+        "spine_4"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "neck_1",
+        "neck_2",
+        "neck_3"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "jaw"
+      ]
+    },
+    {
+      "name": "ear_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "ear_l1",
+        "ear_l2",
+        "ear_l3"
+      ]
+    },
+    {
+      "name": "ear_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "ear_r1",
+        "ear_r2",
+        "ear_r3"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "front_collar_l",
+        "front_upper_l",
+        "front_lower_l",
+        "front_knee_l",
+        "front_ankle_l",
+        "front_foot_l"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "front_collar_r",
+        "front_upper_r",
+        "front_lower_r",
+        "front_knee_r",
+        "front_ankle_r",
+        "front_foot_r"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "back_upper_l",
+        "back_lower_l",
+        "back_knee_l",
+        "back_ankle_l",
+        "back_foot_l",
+        "back_toe_l"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "back_upper_r",
+        "back_lower_r",
+        "back_knee_r",
+        "back_ankle_r",
+        "back_foot_r",
+        "back_toe_r"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4"
+      ]
+    }
+  ]
+}

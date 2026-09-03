@@ -1,76 +1,132 @@
-<img src="./mesh2motion.svg" alt="Mesh2Motion Logo" width="400"/>
+<div align="center">
 
-<table>
-  <tr>
-    <td><h4>Discord<h4></td>
-    <td><a href="https://discord.gg/UChE936q7y">Join the Discord channel</a></td>
-    <td>
-      <img src="https://img.shields.io/discord/1408921718231273613?label=People&color=purple" alt="Discord">
-    </td>
-  </tr>
-</table>
+# Mesh2Motion
 
-Import a 3D Model and automatically assign and export animations with Mesh2Motion. This is kind of similar to a web application like Mixamo, but I would like it to be more flexible so it can support other model and skeleton types. Hopefully the open source nature means it can be expanded on and evolve more than than the closed tools have. 
+**Native rigging and animation for every creature.**
 
-The marketing site that explains features and release notes: https://mesh2motion.org/
+Rig humans, birds, fish, quadrupeds and anything else — locally, fast, no account.
 
-Try it live: https://app.mesh2motion.org/
+</div>
 
-![Screenshot](./readme.png)
+---
 
-## Usage
-There are instructions built into the web application, but this is the general flow of how to use it:
-1. Import a 3d model of your choosing (currently only supports GLB/GLTF format)
-2. Pick what type of skeleton that the 3d model will use
-3. Modify the skeleton to fit inside of the model (optionally test the results)
-4. Test out various animations to see the results.
-5. Select which animations you want to use, then export (currently only GLB/GLTF supported format)
+> **Status: the core rigging flow is complete.** All six steps — import, skeleton,
+> fit, bind, animate, export — work end-to-end for every one of the 9 creature
+> templates, verified against Blender ([`src-tauri/tests/visual_regression.rs`](src-tauri/tests/visual_regression.rs)).
+> Remaining work is polish and release (signing, docs, a perf pass); see
+> [`memory/todo.md`](./memory/todo.md). The original web app lives in
+> [`legacy/`](./legacy) and still runs — it is the A/B correctness baseline.
 
-## Building and running locally
-The main dependency you need is Node.js. I am using 24, but other versions probably work fine too. Open you command line tool to the directory this readme is in. Run ths following commands to start the web server.
+## Why
 
-    npm install
-    npm run dev
+[Mixamo](https://mixamo.com) rigs bipedal humanoids and stops there. Rigify is
+powerful and unintuitive. Mesh2Motion aims at the gap: drop in *any* creature and
+get a production-usable rig with clean weights in under a minute.
 
-## Creating a production build for the web
-We mostly just have typescript for this project, which web browsers cannot just read, so we need to do a build step to get everything ready for deploying. This project uses Vite for the web server and builder. See the vite.config.js for more info. This command will create a "dist" folder with all the files to serve to the web:
+The legacy web app's ceiling was its skinning solver — rigid nearest-bone
+assignment ([`WeightCalculator.ts:71`](legacy/src/lib/solvers/WeightCalculator.ts)),
+which needed a hand-written corrector per body part per creature. The native
+rewrite replaces it with geodesic voxel binding ([`crates/m2m-rig`](crates/m2m-rig)),
+which removes that whole class of patch: across all 9 templates every vertex binds
+with a full unit of weight and no unreachable islands.
 
-    npm run build
+## How it works — the six steps
 
-## Running in Docker
-If you don't want to modify your local file system, you can alternitvely build and run the project from Docker. Make sure you have Docker and Docker Compose installed. Navigate your command line tool to this directory where your Dockerfile is at. Make sure Docker is actually started and running before you run this command.
+The app is a straight-line pipeline; each step is one Tauri command over the Rust
+core ([`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)):
 
-Execute the following command.
+| Step | What you do | Behind it |
+|---|---|---|
+| **1. Import** | Drop in a mesh (`.glb`, `.fbx`) — existing bones are kept, not stripped | `import_model` |
+| **2. Skeleton** | Pick one of 9 creature templates (human, bird, fish, quadruped, …) | `skeleton_templates` |
+| **3. Fit** | The template snaps to your mesh's proportions | `fit_skeleton` |
+| **4. Bind** | Geodesic voxel binding computes skin weights; a weight-paint overlay shows them | `bind_weights`, `weight_overlay` |
+| **5. Animate** | Pick a clip, preview it live, retargeted onto your rig | `animation_clips`, `preview_animation` |
+| **6. Export** | Write `.glb` (glTF binary) or `.fbx` — mesh + skeleton + weights + clip | `export_model` |
 
-    docker-compose up -d
+## Requirements
 
-To try it out, visit http://localhost:3000
+| | Version | Check with |
+|---|---|---|
+| Rust | 1.85+ | `rustc --version` |
+| Node | 22+ | `node --version` |
+| Xcode CLT | any recent | `xcrun --version` |
+| Blender | 4.x *(optional, for the DCC bridge)* | `/Applications/Blender.app` |
 
-## Running and creating video previews
-There is separate tool in the web app where you can generate video previews for each animation. It isn't too hard to run, but it has a separate README file that explains how that works. It is more of an internal tool, so I didn't want to muddy up this page too much.
+macOS 12+ on Apple Silicon. Other platforms are not a current goal.
 
-[Preview Generator Documentation](src/preview-generator/README.md)
+## Quick start
 
-## Blender 3D Source files
-Many of the 3d files are originally created using Blender. This includes 3d models, rigs, and animations. To prevent this repository from becoming too large with big animation files, these source files are separated into a different repository. The final compressed GLB files are saved to this repository. These source files aren't needed to buil and run the application, so you can ignore this unless you want to contribute more animations. This repository is located here: https://github.com/Mesh2Motion/mesh2motion-assets
+```bash
+git clone https://github.com/SeedeXR/mesh2motion-app
+cd mesh2motion-app
+npm install
+npm run app:dev        # launches the desktop app with hot reload
+```
 
-## Licenses
+Build a release bundle:
 
-The code and platform are all licensed under the very permissive MIT license. The art assets (3d models, rigs, animations) are all licensed under CC0. I tried making everything as open as possible to remix, change, and build upon for the future.
+```bash
+npm run app:build      # → target/release/bundle/macos/Mesh2Motion.app
+```
 
+Run the checks:
 
-## ❤️ Help the Project Grow
-I don't expect to be receiving money for working on this, but I am also not the best animator. If people want to see better, and more, animations made, add to the fund. I can pay for an animator to help build out the animation library better. Or, if you know an animator that wants to help with this, send them my way! I am just a dude working on this during nights and weekends.
+```bash
+cargo test --workspace                                  # Rust unit + integration
+cargo clippy --workspace --all-targets -- -D warnings   # lint, warnings = errors
+npx tsc --noEmit && npx vitest run                       # frontend typecheck + tests
+```
 
-Tip page to help out: https://support.mesh2motion.org/
+`#[ignore]`d tests need a local Blender (they read exports back through it) and are
+skipped by default. Run the full visual-regression sweep with:
 
+```bash
+cargo test -p mesh2motion --release -- --ignored
+```
 
+## The Blender bridge
 
+[`crates/m2m-bridge`](crates/m2m-bridge) inspects a model by importing it into a
+headless Blender — the one reader in the project that shares none of our design, so
+it is the independent check that an export is correct. It resolves Blender from
+`$M2M_BLENDER` or the macOS default, and is optional: nothing in the core flow
+depends on it.
 
+## Running the legacy web app
 
+Kept runnable — it is the A/B correctness baseline for the new solver, not dead code.
 
+```bash
+cd legacy
+npm install
+npm run dev
+```
 
+## Layout
 
+```
+crates/
+  m2m-core      pure geometry + skinning solver — no I/O, no Tauri
+  m2m-io        FBX, glTF, GLB read/write
+  m2m-rig       creature templates, fitting, retargeting, bone auto-mapping
+  m2m-bridge    Blender DCC bridge
+src-tauri/      thin Tauri command layer — no algorithms
+app/            frontend: TypeScript + Three.js viewport
+legacy/         original web app (reference implementation + test baseline)
+memory/         project documentation and agent working memory
+references/     Mixamo FBX corpus used for round-trip testing
+```
 
+## Where to start reading
 
+1. [`memory/project_context.md`](memory/project_context.md) — what this is and why
+2. [`memory/architecture.md`](memory/architecture.md) — system design + decision record
+3. [`memory/porting.md`](memory/porting.md) — how the legacy app works
+4. [`memory/todo.md`](memory/todo.md) — the roadmap
 
+## Licences
+
+Code under [MIT](LICENSE-MIT.MD). Art assets (models, rigs, animations) under
+[CC0](LICENSE-CC0.MD). Any newly added asset must record its provenance and
+licence.

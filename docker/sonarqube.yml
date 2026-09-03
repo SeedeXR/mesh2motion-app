@@ -1,0 +1,25 @@
+# Local SonarQube server for the quality gate (memory/test.md §7).
+#
+#   docker compose -f docker/sonarqube.yml up -d
+#   open http://localhost:9000     # first login admin/admin
+#   sonar-scanner -Dsonar.token=<token>
+#
+# Requires Docker Desktop to be running. Verified 2026-08-29: docker CLI is
+# installed at /usr/local/bin/docker but the daemon was not running.
+services:
+  sonarqube:
+    image: sonarqube:community
+    container_name: m2m-sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+
+volumes:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:

@@ -1,0 +1,51 @@
+# Fuzz targets for the FBX read path (memory/test.md §5).
+#
+# Excluded from the workspace: it needs nightly for the sanitizer, and pulling
+# it into `cargo build --workspace` would make stable builds fail.
+# Its own workspace on purpose. The fuzz targets need nightly for the
+# sanitizer, so joining the root workspace would break `cargo build` on stable
+# for everyone else.
+[workspace]
+
+[package]
+name = "m2m-io-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.m2m-io]
+path = ".."
+
+[[bin]]
+name = "fbx_binary"
+path = "fuzz_targets/fbx_binary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fbx_text"
+path = "fuzz_targets/fbx_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fbx_pipeline"
+path = "fuzz_targets/fbx_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glb"
+path = "fuzz_targets/glb.rs"
+test = false
+doc = false
+bench = false

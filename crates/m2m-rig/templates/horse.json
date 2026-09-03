@@ -1,0 +1,155 @@
+{
+  "name": "horse",
+  "skeleton": "rig-horse.glb",
+  "guidance": "Unguligrade — the legs stand on hoof tips at the very end of each limb, so ground the hoof, not the foot. Keep the back level from withers to croup; the hocks bend backwards.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "hips",
+        "spine_1",
+        "spine_2",
+        "spine_3",
+        "spine_4",
+        "spine_5",
+        "spine_6"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head",
+        "nose",
+        "head_leaf"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "mouth",
+        "mouth_tip"
+      ]
+    },
+    {
+      "name": "ribcage_front",
+      "kind": "accessory",
+      "bones": [
+        "ribcage_front",
+        "ribcage_front_leaf"
+      ]
+    },
+    {
+      "name": "ribcage_middle",
+      "kind": "accessory",
+      "bones": [
+        "ribcage_middle",
+        "ribcage_leaf"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4",
+        "tail_leaf"
+      ]
+    },
+    {
+      "name": "ear_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "ear_1_l",
+        "ear_2_l",
+        "ear_leaf_l"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "unguligrade",
+      "bones": [
+        "front_scapula_l",
+        "front_humerus_l",
+        "front_leg_upper_l",
+        "front_leg_lower_l",
+        "front_leg_ankle_l",
+        "front_leg_foot_l",
+        "front_leg_leaf_l"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "unguligrade",
+      "bones": [
+        "back_leg_pelvis_l",
+        "back_leg_upper_l",
+        "back_leg_lower_l",
+        "back_leg_ankle_l",
+        "back_leg_foot_l",
+        "back_leg_toe_l",
+        "back_leg_leaf_l"
+      ]
+    },
+    {
+      "name": "ear_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "ear_1_r",
+        "ear_2_r",
+        "ear_leaf_r"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "unguligrade",
+      "bones": [
+        "front_scapula_r",
+        "front_humerus_r",
+        "front_leg_upper_r",
+        "front_leg_lower_r",
+        "front_leg_ankle_r",
+        "front_leg_foot_r",
+        "front_leg_leaf_r"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "unguligrade",
+      "bones": [
+        "back_leg_pelvis_r",
+        "back_leg_upper_r",
+        "back_leg_lower_r",
+        "back_leg_ankle_r",
+        "back_leg_foot_r",
+        "back_leg_toe_r",
+        "back_leg_leaf_r"
+      ]
+    }
+  ]
+}

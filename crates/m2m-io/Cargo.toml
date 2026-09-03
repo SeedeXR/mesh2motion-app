@@ -1,0 +1,24 @@
+[package]
+name = "m2m-io"
+description = "FBX, glTF and GLB reading and writing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+m2m-core = { path = "../m2m-core" }
+thiserror.workspace = true
+glam.workspace = true
+# Pure-Rust inflate for FBX's zlib-compressed property arrays. Chosen over
+# flate2, which wraps this same crate by default and adds a layer plus an
+# optional C backend we do not want.
+miniz_oxide = "0.8"
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+# Compressing test fixtures: the same crate the reader inflates with, so a
+# round trip cannot pass by using a different deflate implementation.
+miniz_oxide = "0.8"

@@ -1,0 +1,25 @@
+FBXVersion: 7400
+Objects:  {
+	Model: 10, "Model::bone", "LimbNode" {
+	}
+	AnimationStack: 100, "AnimStack::clip", "" {
+	}
+	AnimationLayer: 200, "AnimLayer::Base", "" {
+	}
+	AnimationCurveNode: 300, "AnimCurveNode::R", "" {
+	}
+	AnimationCurve: 400, "AnimCurve::", "" {
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,90
+		}
+	}
+}
+Connections:  {
+	C: "OO",200,100
+	C: "OO",300,200
+	C: "OP",300,10,"Lcl Rotation"
+	C: "OP",400,300,"d|X"
+}

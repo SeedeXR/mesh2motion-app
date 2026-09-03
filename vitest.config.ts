@@ -1,18 +1,11 @@
 import { defineConfig } from 'vitest/config'
-import { resolve } from 'path'
 
+// Only the app's own tests. `legacy/` has its own vitest project and is run
+// from that directory in CI, so including it here would run it twice under
+// different config.
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'jsdom',
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html']
-    }
-  },
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, './src')
-    }
+    include: ['app/tests/**/*.test.ts'],
+    setupFiles: ['app/tests/setup.ts']
   }
 })

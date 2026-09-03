@@ -1,0 +1,102 @@
+{
+  "name": "shark",
+  "skeleton": "rig-shark.glb",
+  "guidance": "The spine follows the body from snout to tail. The fins — dorsal, pectorals, and the tail — are short chains; the tail needs a few segments to swim convincingly.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "pelvis",
+        "tail_1",
+        "tail_2",
+        "tail_3",
+        "tail_4",
+        "tail_5",
+        "tail_6",
+        "tail_7",
+        "tail_8",
+        "tail_tip"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "neck"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "head",
+        "head_tip"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "mouth_base",
+        "mouth_1",
+        "mouth_tip"
+      ]
+    },
+    {
+      "name": "front_fin_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "fin",
+      "bones": [
+        "front_fin_0_l",
+        "front_fin_1_l",
+        "front_fin_2_l",
+        "front_fin_tip_l"
+      ]
+    },
+    {
+      "name": "back_fin_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "fin",
+      "bones": [
+        "back_fin_0_l",
+        "back_fin_1_l",
+        "back_fin_2_l",
+        "back_fin_tip_l"
+      ]
+    },
+    {
+      "name": "front_fin_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "fin",
+      "bones": [
+        "front_fin_0_r",
+        "front_fin_1_r",
+        "front_fin_2_r",
+        "front_fin_tip_r"
+      ]
+    },
+    {
+      "name": "back_fin_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "fin",
+      "bones": [
+        "back_fin_0_r",
+        "back_fin_1_r",
+        "back_fin_2_r",
+        "back_fin_tip_r"
+      ]
+    }
+  ]
+}
