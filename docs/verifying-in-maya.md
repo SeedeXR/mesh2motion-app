@@ -6,6 +6,35 @@ procedure below is what was run; the results are recorded at the end. `mayapy`
 `FBXImport` and the raw SDK (`tools/fbx-sdk-check.sh`) are the reproducible gate;
 assimp (`tools/assimp-check.sh`) and Blender remain the CI-side proxies.
 
+## Automated cross-engine validation (2026-09-03)
+
+The manual `mayapy` and Blender runs below are now wired into the crate, so any
+machine with the DCCs installed can re-validate with one command each. All are
+`#[ignore]`d (CI has no DCC) and all PASS here on Blender 5.2 + Maya 2027:
+
+```bash
+# Blender headless (glb) — 66 bones, 1 armature, 1 mesh
+cargo test -p m2m-bridge --test report blender_reads_a_real_rig_end_to_end -- --ignored
+
+# Maya headless (fbx), reference rig — 65 joints, 2 meshes, weight_total 24746
+cargo test -p m2m-bridge --test maya maya_reads_a_real_rig_end_to_end -- --ignored
+
+# Maya headless (fbx), OUR encoder's output — catches the footer-CRC /
+# DefaultAttributeIndex regressions only Maya rejects (2 joints, 1 mesh, 1 skin)
+cargo test -p m2m-bridge --test maya maya_reads_our_own_encoder_output -- --ignored
+```
+
+Bridges: `crates/m2m-bridge/src/{lib.rs (Blender), maya.rs}`; scripts:
+`tools/{blender,maya}-fbx-import-check.py`. `M2M_BLENDER` / `M2M_MAYAPY` override
+the resolved executables.
+
+**Blender MCP (live, interactive Blender) round trip** — run `bpy` through the
+`mcp__blender__execute_blender_code` server: record existing objects, import the
+rig, read the armature/bones/meshes, then delete the imported objects so the
+artist's scene is untouched. Recorded 2026-09-03 on the live Blender 5.2.0 LTS
+importing `assets/rigs/rig-human.glb`: `imported: true, armatures: 1, bones: 66,
+meshes: 1, root_bones: ["root"]` — matches the headless bridge.
+
 **Date:** 2026-09-01 · **Verified with:** Autodesk FBX SDK 2020.3.9 and Maya
 2027 (`mayapy` + `fbxmaya`), cross-checked against Blender 5.2.
 
