@@ -50,7 +50,10 @@ fn our_rigged_cube_fbx() -> Vec<u8> {
         transform: IDENTITY,
         transform_link: IDENTITY,
     }];
-    let skins = [build::Skin { mesh: 0, clusters: &clusters }];
+    let skins = [build::Skin {
+        mesh: 0,
+        clusters: &clusters,
+    }];
     let mesh = build::Mesh {
         name: "Cube",
         positions: &POSITIONS,
