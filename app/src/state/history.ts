@@ -11,7 +11,9 @@
  * already does.
  */
 export class History<T> {
-  private states: T[] = []
+  // The reference never changes — the array is mutated in place (push, length) —
+  // so it is readonly even though its contents are not.
+  private readonly states: T[] = []
   /** Index of the current state in `states`, or -1 when empty. */
   private index = -1
 
