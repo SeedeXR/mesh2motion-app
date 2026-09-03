@@ -22,7 +22,7 @@ import {
   BufferGeometry,
   Color,
   DirectionalLight,
-  GridHelper,
+  DoubleSide,
   LineBasicMaterial,
   LineSegments,
   type Material,
@@ -31,9 +31,12 @@ import {
   MOUSE,
   type Object3D,
   PerspectiveCamera,
+  PlaneGeometry,
   Raycaster,
   Scene,
+  ShaderMaterial,
   SkeletonHelper,
+  Spherical,
   SphereGeometry,
   TOUCH,
   Vector2,
@@ -83,6 +86,91 @@ function installBlenderNavigation(controls: OrbitControls, dom: HTMLElement): vo
     },
     true
   )
+}
+
+/** A ground grid that reads as infinite, the way Blender's does. */
+interface InfiniteGrid {
+  readonly mesh: Mesh
+  /** Sizes the cells and the fade to the subject's span (metres). */
+  setScale(span: number): void
+  /** Re-centres the grid under the camera and updates the distance fade. */
+  update(camera: PerspectiveCamera): void
+  dispose(): void
+}
+
+/**
+ * An infinite ground grid: a large plane kept under the camera whose shader
+ * draws world-anchored lines and fades them out with distance, so there is no
+ * visible edge and the grid appears to go on forever. Minor lines every cell,
+ * brighter lines every ten. `fwidth` keeps every line one pixel wide at any
+ * zoom (WebGL2, which three uses, has derivatives built in).
+ */
+function makeInfiniteGrid(): InfiniteGrid {
+  const geometry = new PlaneGeometry(1, 1)
+  geometry.rotateX(-Math.PI / 2)
+  const uniforms = {
+    uCell: { value: 0.5 },
+    uMinor: { value: new Color(0x2a2f37) },
+    uMajor: { value: new Color(0x3b4351) },
+    uCamPos: { value: new Vector3() },
+    uFade: { value: 40 }
+  }
+  const material = new ShaderMaterial({
+    uniforms,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    vertexShader: `
+      varying vec3 vWorld;
+      void main() {
+        vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      precision highp float;
+      varying vec3 vWorld;
+      uniform float uCell;
+      uniform vec3 uMinor;
+      uniform vec3 uMajor;
+      uniform vec3 uCamPos;
+      uniform float uFade;
+      float grid(vec2 coord, float cell) {
+        vec2 g = abs(fract(coord / cell - 0.5) - 0.5) / fwidth(coord / cell);
+        return 1.0 - min(min(g.x, g.y), 1.0);
+      }
+      void main() {
+        vec2 c = vWorld.xz;
+        float minor = grid(c, uCell);
+        float major = grid(c, uCell * 10.0);
+        float fade = 1.0 - clamp(distance(c, uCamPos.xz) / uFade, 0.0, 1.0);
+        float a = max(minor * 0.5, major) * fade;
+        if (a < 0.002) discard;
+        gl_FragColor = vec4(mix(uMinor, uMajor, clamp(major, 0.0, 1.0)), a);
+      }`
+  })
+  const mesh = new Mesh(geometry, material)
+  mesh.frustumCulled = false
+  mesh.renderOrder = -1
+  return {
+    mesh,
+    setScale(span) {
+      // A power-of-ten cell near a tenth of the subject, so the grid reads the
+      // same under a 20 cm bird and a 30 m whale. The fade and the plane are
+      // sized to it, the plane always wider than the fade so its edge never shows.
+      const cell = Math.pow(10, Math.round(Math.log10(Math.max(span, 0.01) / 10)))
+      uniforms.uCell.value = cell
+      uniforms.uFade.value = Math.max(span * 20, cell * 40)
+      mesh.scale.setScalar(uniforms.uFade.value * 2.2)
+    },
+    update(camera) {
+      mesh.position.set(camera.position.x, 0, camera.position.z)
+      uniforms.uCamPos.value.copy(camera.position)
+    },
+    dispose() {
+      geometry.dispose()
+      material.dispose()
+    }
+  }
 }
 
 /** A mounted viewport. */
@@ -176,8 +264,8 @@ export function createViewport(): Viewport {
   key.position.set(2, 4, 3)
   scene.add(key)
 
-  const grid = new GridHelper(4, 16, 0x2a2f37, 0x1e2228)
-  scene.add(grid)
+  const grid = makeInfiniteGrid()
+  scene.add(grid.mesh)
 
   let model: Object3D | null = null
   let skeleton: SkeletonHelper | null = null
@@ -230,6 +318,7 @@ export function createViewport(): Viewport {
     if (playing && mixer !== null) mixer.update((now - lastFrame) / 1000)
     lastFrame = now
     controls.update()
+    grid.update(camera)
     renderer.render(scene, camera)
     renders++
   })
@@ -460,6 +549,64 @@ export function createViewport(): Viewport {
     requestRender()
   }
 
+  /** Orbits the camera around the target by a screen-space delta — the trackpad
+   *  two-finger swipe, which the browser delivers as a wheel event. */
+  function trackpadOrbit(dx: number, dy: number): void {
+    const offset = camera.position.clone().sub(controls.target)
+    const spherical = new Spherical().setFromVector3(offset)
+    spherical.theta -= dx * 0.005
+    spherical.phi = Math.max(0.001, Math.min(Math.PI - 0.001, spherical.phi - dy * 0.005))
+    // Turntable orbit keeps the world up, like Blender's default.
+    camera.up.set(0, 1, 0)
+    camera.position.copy(controls.target).add(offset.setFromSpherical(spherical))
+    controls.update()
+    requestRender()
+  }
+
+  /** Pans the camera and target together by a screen-space delta — Shift with
+   *  the trackpad two-finger swipe. */
+  function trackpadPan(dx: number, dy: number): void {
+    const scale = camera.position.distanceTo(controls.target) * 0.002
+    const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
+    const up = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
+    const move = right.multiplyScalar(-dx * scale).add(up.multiplyScalar(dy * scale))
+    camera.position.add(move)
+    controls.target.add(move)
+    controls.update()
+    requestRender()
+  }
+
+  /**
+   * All wheel gestures, mapped Blender-style. A Mac trackpad delivers a
+   * two-finger swipe as a plain wheel event and a pinch as a wheel event with
+   * `ctrlKey`; a mouse wheel is told apart by the WebKit/Blink signature
+   * `wheelDeltaY === -3 * deltaY`, which only a trackpad produces. So: pinch and
+   * mouse wheel zoom, a two-finger swipe orbits (Shift pans) — the swipe that
+   * used to zoom now rotates the view, model and grid together, as in Blender.
+   * Runs in the capture phase and stops the event so OrbitControls' own wheel
+   * zoom never also fires.
+   */
+  function onWheel(e: WheelEvent): void {
+    if (e.target !== renderer.domElement) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.ctrlKey) {
+      zoom(1 + e.deltaY * 0.01)
+      return
+    }
+    const legacy = e as unknown as { wheelDeltaY?: number }
+    const trackpad =
+      legacy.wheelDeltaY !== undefined ? legacy.wheelDeltaY === -3 * e.deltaY : e.deltaMode === 0
+    if (!trackpad) {
+      zoom(e.deltaY > 0 ? 1.1 : 0.9)
+    } else if (e.shiftKey) {
+      trackpadPan(e.deltaX, e.deltaY)
+    } else {
+      trackpadOrbit(e.deltaX, e.deltaY)
+    }
+  }
+  window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+
   // Blender numpad view shortcuts: 1 front, 3 right, 7 top; Ctrl flips each to
   // its opposite (back / left / bottom). Ignored while typing in a field.
   const NUMPAD_VIEWS: Readonly<Record<string, readonly [ViewPreset, ViewPreset]>> = {
@@ -521,10 +668,10 @@ export function createViewport(): Viewport {
       resize()
 
       bounds = contents.bounds
-      // The grid is sized to the subject: a 4 m grid under a 30 m creature
-      // reads as a postage stamp, and under a 20 cm one as a runway.
+      // The grid's cell size follows the subject: metre cells under a 30 m
+      // creature read as a postage stamp, and under a 20 cm one as a runway.
       const span = Math.max(bounds.getSize(new Vector3()).length(), 0.1)
-      grid.scale.setScalar(span / 2)
+      grid.setScale(span)
 
       reframe()
       return contents
@@ -647,10 +794,12 @@ export function createViewport(): Viewport {
         disposeMaterial(fittedSkeleton.material)
       }
       skeleton?.dispose()
+      grid.dispose()
       handleRest.dispose()
       handleHover.dispose()
       handleSelected.dispose()
       window.removeEventListener('keydown', onNumpadView)
+      window.removeEventListener('wheel', onWheel, { capture: true })
       controls.dispose()
       renderer.dispose()
     }

@@ -156,3 +156,29 @@ test('Blender navigation: middle-drag and Alt+left orbit, plain left does not', 
   const base3 = await reframe()
   expect(Buffer.compare(base3, await drag('left', true))).not.toBe(0)
 })
+
+// A wheel gesture (the trackpad two-finger swipe, or a mouse wheel) moves the
+// camera. The handler intercepts every wheel itself so a trackpad swipe orbits
+// Blender-style instead of zooming; either way the rendered image must change.
+test('wheel gestures move the camera', async ({ page }) => {
+  await page.route('**/model.glb', (route) =>
+    route.fulfill({ path: 'assets/models/model-human.glb', contentType: 'model/gltf-binary' })
+  )
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/e2e/viewport-layout-harness.html')
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__ready === true, {
+    timeout: 30_000
+  })
+  const canvas = page.locator('.viewport canvas')
+  const box = await canvas.boundingBox()
+  if (box === null) throw new Error('no canvas box')
+  await page.evaluate(() => (window as unknown as { __viewport: { reframe: () => void } }).__viewport.reframe())
+  await page.waitForTimeout(400)
+  const before = await canvas.screenshot()
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, 80)
+  await page.waitForTimeout(400)
+  const after = await canvas.screenshot()
+  expect(Buffer.compare(before, after)).not.toBe(0)
+})
