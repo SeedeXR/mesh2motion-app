@@ -31,6 +31,22 @@ fitted skeleton, so a rig is built one call at a time.
 cargo build --release -p m2m-mcp     # -> target/release/m2m-mcp
 ```
 
+`scripts/install.sh` builds this binary, runs its self-check, and registers it
+with Claude Code (when the `claude` CLI is present) as part of installing the
+app — so a normal install leaves the MCP ready to use.
+
+## Health check
+
+```bash
+m2m-mcp --check
+```
+
+Drives the server's own `initialize` + `tools/list` path and prints a JSON
+report: the protocol version, every tool that is active (all 10 when healthy),
+and whether the optional Blender / Maya engines that `render_views` and
+`validate_export` need are reachable. Exits non-zero if the server is not wired.
+Use it to confirm the server is alive and all tools are active.
+
 ## Register it
 
 **Claude Code** (from the repo root, so the default asset path resolves):

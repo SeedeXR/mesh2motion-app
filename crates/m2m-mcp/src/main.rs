@@ -8,6 +8,22 @@ use m2m_mcp::Server;
 use std::io::{BufRead, Write};
 
 fn main() {
+    // `--check`: confirm the server answers and every tool is wired (and report
+    // Blender/Maya availability), then exit — no stdio loop. For operators and
+    // install scripts to verify a healthy server.
+    if std::env::args().any(|a| a == "--check") {
+        match m2m_mcp::self_check() {
+            Ok(report) => {
+                println!("{report}");
+            }
+            Err(e) => {
+                eprintln!("m2m-mcp self-check FAILED: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     let mut server = Server::new();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

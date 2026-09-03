@@ -36,3 +36,27 @@ echo "==> Installing $name into ${DEST}…"
 rm -rf "${DEST:?}/$name"
 cp -R "$APP" "$DEST/"
 echo "Installed $DEST/$name"
+
+# --- The rigging MCP server -------------------------------------------------
+# Build the MCP binary (agents drive the whole pipeline through it), verify it
+# with its own self-check, and register it with Claude Code if the CLI is here.
+echo
+echo "==> Building the rigging MCP server (m2m-mcp)…"
+cargo build --release -p m2m-mcp
+MCP="$PWD/target/release/m2m-mcp"
+
+echo "==> Verifying the MCP server (m2m-mcp --check)…"
+"$MCP" --check || { echo "error: MCP self-check failed" >&2; exit 1; }
+
+if command -v claude >/dev/null 2>&1; then
+  # add is idempotent-ish: it errors if the name exists, which is fine.
+  if claude mcp add mesh2motion -- "$MCP" >/dev/null 2>&1; then
+    echo "Registered the 'mesh2motion' MCP server with Claude Code."
+  else
+    echo "MCP 'mesh2motion' already registered (or add skipped)."
+  fi
+else
+  echo "Claude Code CLI not found — register the MCP manually with:"
+  echo "  claude mcp add mesh2motion -- $MCP"
+fi
+echo "Check the server any time with:  $MCP --check"

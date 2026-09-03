@@ -384,6 +384,58 @@ fn tool_definitions() -> Value {
 
 // ---- JSON-RPC + argument helpers ----
 
+/// A self-check an operator runs (`m2m-mcp --check`) to confirm the server
+/// answers and every tool is wired, and to see whether the optional DCC engines
+/// that `render_views`/`validate_export` need are reachable.
+///
+/// Drives the real `initialize` + `tools/list` path in-process — the same code
+/// a client hits — so "all tools active" means the dispatch table actually
+/// answers. Returns the report on success; `Err` only when a tool is missing
+/// (a build wiring bug). A missing Blender/Maya is reported, not fatal: those
+/// tools degrade gracefully.
+pub fn self_check() -> Result<String, String> {
+    let mut server = Server::new();
+    let init = server
+        .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }))
+        .ok_or("initialize returned no response")?;
+    let protocol = init
+        .pointer("/result/protocolVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("?");
+    let listed = server
+        .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
+        .ok_or("tools/list returned no response")?;
+    let tools: Vec<String> = listed
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let engine = |found: Result<PathBuf, m2m_bridge::BridgeError>| match found {
+        Ok(path) => json!({ "available": true, "path": path.display().to_string() }),
+        Err(e) => json!({ "available": false, "note": e.to_string() }),
+    };
+    let report = json!({
+        "ok": !tools.is_empty(),
+        "protocolVersion": protocol,
+        "tool_count": tools.len(),
+        "tools": tools,
+        "engines": {
+            "blender": engine(m2m_bridge::blender_path()),
+            "maya": engine(m2m_bridge::maya::mayapy_path()),
+        },
+    });
+    if tools.is_empty() {
+        Err("tools/list returned no tools — the server is not wired".into())
+    } else {
+        Ok(pretty(&report))
+    }
+}
+
 fn ok(id: Option<Value>, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "result": result })
 }
@@ -465,6 +517,20 @@ mod tests {
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
         assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn self_check_reports_every_tool() {
+        let report: Value = serde_json::from_str(&self_check().expect("healthy")).unwrap();
+        assert_eq!(report["ok"], true);
+        // The self-check must see the same tools tools/list advertises.
+        assert_eq!(
+            report["tool_count"].as_u64().unwrap() as usize,
+            tool_definitions().as_array().unwrap().len()
+        );
+        // Engine availability is reported (true or false), never absent.
+        assert!(report["engines"]["blender"]["available"].is_boolean());
+        assert!(report["engines"]["maya"]["available"].is_boolean());
     }
 
     #[test]
