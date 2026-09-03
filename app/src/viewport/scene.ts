@@ -24,11 +24,10 @@ import {
   Color,
   DirectionalLight,
   DoubleSide,
-  LineBasicMaterial,
-  LineSegments,
   type Material,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   MOUSE,
   type Object3D,
   PerspectiveCamera,
@@ -55,7 +54,7 @@ import {
   parseAnimated,
   parseModel,
   presetCameraPosition,
-  skeletonSegments,
+  skeletonOctahedra,
   withJointMoved,
   type ModelContents,
   type ViewPreset
@@ -288,7 +287,22 @@ export function createViewport(): Viewport {
 
   let model: Object3D | null = null
   let skeleton: SkeletonHelper | null = null
-  let fittedSkeleton: LineSegments | null = null
+  let fittedSkeleton: Mesh | null = null
+  // The octahedral bones' material: solid, flat-shaded so each facet catches the
+  // light and the bone reads as 3D, drawn over the mesh (depthTest off) so a
+  // buried bone stays visible. DoubleSide sidesteps any face-winding surprise.
+  const boneMaterial = new MeshStandardMaterial({
+    // Blender's neutral bone grey — the octahedra read by their shape and
+    // shading, not by a colour that competes with the orange joint handles.
+    color: 0xb4b8be,
+    flatShading: true,
+    roughness: 0.6,
+    metalness: 0.0,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.92,
+    side: DoubleSide
+  })
 
   // Bone-placement editing (Fit step). When `showFittedSkeleton` is given an
   // edit callback, a draggable handle sits on each joint and a translate gizmo
@@ -296,13 +310,15 @@ export function createViewport(): Viewport {
   // back to binding — the callback is how they get there.
   let jointHandles: Mesh[] = []
   let handleGeometry: SphereGeometry | null = null
-  // Three shared handle materials so a joint can signal its state by colour:
-  // amber at rest, brighter on hover (the cursor is over it, click to grab),
-  // blue when selected (the gizmo is on it and arrow-keys nudge it). Drawn over
-  // the mesh (depthTest off) so a buried joint stays visible and grabbable.
-  const handleRest = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
-  const handleHover = new MeshBasicMaterial({ color: 0xffd18a, depthTest: false, transparent: true })
-  const handleSelected = new MeshBasicMaterial({ color: 0x5cc8ff, depthTest: false, transparent: true })
+  // Three shared handle materials so a joint can signal its state by colour, in
+  // Blender's grey key: light grey at rest (a distinct grabbable knob against
+  // the grey bones), white on hover (the cursor is over it, click to grab),
+  // amber when selected (the gizmo is on it and arrow-keys nudge it — one warm
+  // highlight so the active joint is unmistakable). Drawn over the mesh
+  // (depthTest off) so a buried joint stays visible and grabbable.
+  const handleRest = new MeshBasicMaterial({ color: 0xd0d4da, depthTest: false, transparent: true })
+  const handleHover = new MeshBasicMaterial({ color: 0xf2f4f6, depthTest: false, transparent: true })
+  const handleSelected = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
   let hoveredHandle: Mesh | null = null
   let selectedHandle: Mesh | null = null
   // Arrow-key nudge distance (one press), sized to the skeleton so it is a fine
@@ -365,13 +381,47 @@ export function createViewport(): Viewport {
   }
 
 
-  /** Rewrites the skeleton line from the current edited joint positions. */
+  /** The octahedral bones are ~40% as wide as a joint handle, so the grabbable
+   * spheres still read as the pick targets, not the bones. */
+  function boneWidth(positions: readonly (readonly [number, number, number])[]): number {
+    return handleRadius(positions) * 0.4
+  }
+
+  /** Fills `geometry` with octahedral bones for the given joints, with normals
+   * for the flat shading. Shared by the initial draw and every edit refresh. */
+  function fillBoneGeometry(
+    geometry: BufferGeometry,
+    positions: readonly (readonly [number, number, number])[],
+    parents: readonly (number | null)[]
+  ): void {
+    const { positions: verts, indices } = skeletonOctahedra(positions, parents, boneWidth(positions))
+    geometry.setIndex(new BufferAttribute(indices, 1))
+    geometry.setAttribute('position', new BufferAttribute(verts, 3))
+    geometry.computeVertexNormals()
+    geometry.computeBoundingSphere()
+  }
+
+  /** Rebuilds the octahedral bones from the current edited joint positions. */
   function refreshFittedGeometry(): void {
     if (fittedSkeleton === null) return
-    const points = skeletonSegments(editPositions, editParents)
-    fittedSkeleton.geometry.setAttribute('position', new BufferAttribute(points, 3))
-    fittedSkeleton.geometry.getAttribute('position').needsUpdate = true
-    fittedSkeleton.geometry.computeBoundingSphere()
+    fillBoneGeometry(fittedSkeleton.geometry, editPositions, editParents)
+  }
+
+  /** Paints a handle for a state and sizes it to match: rest is its base size,
+   * hover and select grow from it so the active joint is an obviously bigger,
+   * easier grab target — the Blender-like precise-fit feel, a touch friendlier. */
+  function paintHandle(handle: Mesh, state: 'rest' | 'hover' | 'selected'): void {
+    const base = handle.userData.baseScale as number
+    if (state === 'selected') {
+      handle.material = handleSelected
+      handle.scale.setScalar(base * 1.4)
+    } else if (state === 'hover') {
+      handle.material = handleHover
+      handle.scale.setScalar(base * 1.25)
+    } else {
+      handle.material = handleRest
+      handle.scale.setScalar(base)
+    }
   }
 
   /** The joint handle under the pointer, or null. Shared by hover and picking. */
@@ -390,9 +440,9 @@ export function createViewport(): Viewport {
     if (gizmo === null || gizmo.dragging) return
     const handle = handleUnderPointer(event)
     if (handle !== null) {
-      if (selectedHandle !== null && selectedHandle !== handle) selectedHandle.material = handleRest
+      if (selectedHandle !== null && selectedHandle !== handle) paintHandle(selectedHandle, 'rest')
       selectedHandle = handle
-      handle.material = handleSelected
+      paintHandle(handle, 'selected')
       gizmo.attach(handle)
     }
   }
@@ -403,9 +453,9 @@ export function createViewport(): Viewport {
     if (gizmo?.dragging === true) return
     const handle = handleUnderPointer(event)
     if (handle === hoveredHandle) return
-    if (hoveredHandle !== null && hoveredHandle !== selectedHandle) hoveredHandle.material = handleRest
+    if (hoveredHandle !== null && hoveredHandle !== selectedHandle) paintHandle(hoveredHandle, 'rest')
     hoveredHandle = handle
-    if (handle !== null && handle !== selectedHandle) handle.material = handleHover
+    if (handle !== null && handle !== selectedHandle) paintHandle(handle, 'hover')
     renderer.domElement.style.cursor = handle !== null ? 'pointer' : ''
   }
 
@@ -484,15 +534,20 @@ export function createViewport(): Viewport {
     const maxRadius = handleRadius(positions)
     // A unit sphere scaled per joint, so each handle is sized to its local joint
     // spacing (see localHandleRadius) — the finger handles no longer merge into
-    // one unpickable clump.
-    handleGeometry = new SphereGeometry(1, 8, 8)
+    // one unpickable clump. 16×12 segments so a handle reads as a smooth ball,
+    // not a facetted lump — the designer-friendly touch.
+    handleGeometry = new SphereGeometry(1, 16, 12)
     // A nudge of ~15% of the full handle radius is a fine touch that still moves
     // visibly; Shift makes it finer still for the dense joints.
     nudgeStep = maxRadius * 0.15
     positions.forEach((p, index) => {
       const handle = new Mesh(handleGeometry as SphereGeometry, handleRest)
       handle.position.set(p[0], p[1], p[2])
-      handle.scale.setScalar(localHandleRadius(positions, index, maxRadius))
+      const base = localHandleRadius(positions, index, maxRadius)
+      // The resting size; hover and select grow from it (see paintHandle) so the
+      // joint under the cursor is a bigger, easier target as you reach for it.
+      handle.userData.baseScale = base
+      handle.scale.setScalar(base)
       handle.renderOrder = 2
       handle.userData.jointIndex = index
       jointHandles.push(handle)
@@ -849,23 +904,18 @@ export function createViewport(): Viewport {
       if (fittedSkeleton !== null) {
         scene.remove(fittedSkeleton)
         fittedSkeleton.geometry.dispose()
-        disposeMaterial(fittedSkeleton.material)
         fittedSkeleton = null
       }
 
-      const points = skeletonSegments(positions, parents)
-      if (points.length === 0) {
+      const geometry = new BufferGeometry()
+      fillBoneGeometry(geometry, positions, parents)
+      if (geometry.getIndex()?.count === 0) {
+        geometry.dispose()
         return
       }
-
-      const geometry = new BufferGeometry()
-      geometry.setAttribute('position', new BufferAttribute(points, 3))
-      fittedSkeleton = new LineSegments(
-        geometry,
-        // Drawn over the mesh rather than through it: a skeleton the body hides
-        // is a skeleton nobody can check.
-        new LineBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
-      )
+      // Solid octahedral bones (see boneMaterial), drawn over the mesh rather
+      // than through it: a skeleton the body hides is one nobody can check.
+      fittedSkeleton = new Mesh(geometry, boneMaterial)
       fittedSkeleton.renderOrder = 1
       scene.add(fittedSkeleton)
       if (onEdit !== undefined) startFittedEditing(positions, parents, onEdit)
@@ -889,10 +939,8 @@ export function createViewport(): Viewport {
       if (overlay !== null) release(overlay)
       if (animated !== null) release(animated)
       if (model !== null) release(model)
-      if (fittedSkeleton !== null) {
-        fittedSkeleton.geometry.dispose()
-        disposeMaterial(fittedSkeleton.material)
-      }
+      fittedSkeleton?.geometry.dispose()
+      boneMaterial.dispose()
       skeleton?.dispose()
       grid.dispose()
       handleRest.dispose()

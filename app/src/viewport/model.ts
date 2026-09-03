@@ -186,32 +186,83 @@ export function presetCameraPosition(
 }
 
 /**
- * Line-segment endpoints for a fitted skeleton, two points per bone-to-parent
- * link.
+ * Blender-style octahedral "bone" geometry for a fitted skeleton — one
+ * octahedron per bone-to-parent link, merged into a single indexed mesh.
  *
  * A template skeleton is not a glTF skeleton: it arrives as bone positions and
  * parent indices, with no scene graph and no `Bone` objects, so three's
- * `SkeletonHelper` has nothing to attach to. This builds the same picture from
- * the plain data.
+ * `SkeletonHelper` has nothing to attach to. This builds the picture from the
+ * plain data — but as solid octahedra, not lines, so the eye reads each bone's
+ * direction and length (which a line throws away) the way Blender's default
+ * armature display does.
  *
- * Root bones contribute no segment — a bone with no parent has nothing to draw
- * a line to. A parent index outside the list is skipped rather than read: it
- * would otherwise put `undefined` into a `Float32Array` as `NaN` and take the
- * whole overlay off screen.
+ * Each bone runs from its PARENT joint — the head, where the octahedron is
+ * widest — to the joint itself — the tail, the far tip — so the taper points
+ * down the chain. The ring sits at 10% of the bone length from the head with a
+ * radius of `max(10% of length, minWidth)`, matching Blender while `minWidth`
+ * keeps short bones from collapsing to a sliver.
+ *
+ * Root bones (no parent) contribute nothing — a bone with no parent has no head
+ * to draw from — and a parent index outside the list, or a zero-length bone, is
+ * skipped rather than read, so no `NaN` reaches the buffer and takes the overlay
+ * off screen. The caller builds a `BufferGeometry` from `positions` + `indices`
+ * and computes normals for the shading.
  */
-export function skeletonSegments(
+export function skeletonOctahedra(
   positions: readonly (readonly [number, number, number])[],
-  parents: readonly (number | null)[]
-): Float32Array {
-  const points: number[] = []
+  parents: readonly (number | null)[],
+  minWidth: number
+): { positions: Float32Array; indices: Uint32Array } {
+  const verts: number[] = []
+  const indices: number[] = []
   parents.forEach((parent, bone) => {
     if (parent === null) return
-    const from = positions[bone]
-    const to = positions[parent]
-    if (from === undefined || to === undefined) return
-    points.push(from[0], from[1], from[2], to[0], to[1], to[2])
+    const tail = positions[bone]
+    const head = positions[parent]
+    if (head === undefined || tail === undefined) return
+    const ax = tail[0] - head[0]
+    const ay = tail[1] - head[1]
+    const az = tail[2] - head[2]
+    const length = Math.hypot(ax, ay, az)
+    if (length < 1e-6) return
+    const dx = ax / length
+    const dy = ay / length
+    const dz = az / length
+    // A reference axis not parallel to the bone, so the cross product below is
+    // well-conditioned; swap to X only when the bone is almost vertical.
+    const [rx, ry] = Math.abs(dy) < 0.99 ? [0, 1] : [1, 0]
+    // u ⟂ bone (unit), v = bone × u (unit): the ring plane's two axes.
+    let ux = dy * 0 - dz * ry
+    let uy = dz * rx - dx * 0
+    let uz = dx * ry - dy * rx
+    const ul = Math.hypot(ux, uy, uz) || 1
+    ux /= ul
+    uy /= ul
+    uz /= ul
+    const vx = dy * uz - dz * uy
+    const vy = dz * ux - dx * uz
+    const vz = dx * uy - dy * ux
+
+    const radius = Math.max(length * 0.1, minWidth)
+    const cx = head[0] + dx * length * 0.1
+    const cy = head[1] + dy * length * 0.1
+    const cz = head[2] + dz * length * 0.1
+    const base = verts.length / 3
+    verts.push(
+      head[0], head[1], head[2], // 0 head tip
+      tail[0], tail[1], tail[2], // 1 tail tip
+      cx + ux * radius, cy + uy * radius, cz + uz * radius, // 2 +u
+      cx + vx * radius, cy + vy * radius, cz + vz * radius, // 3 +v
+      cx - ux * radius, cy - uy * radius, cz - uz * radius, // 4 -u
+      cx - vx * radius, cy - vy * radius, cz - vz * radius // 5 -v
+    )
+    const [h, t, r0, r1, r2, r3] = [base, base + 1, base + 2, base + 3, base + 4, base + 5]
+    indices.push(
+      h, r0, r1, h, r1, r2, h, r2, r3, h, r3, r0, // head fan
+      t, r1, r0, t, r2, r1, t, r3, r2, t, r0, r3 // tail fan
+    )
   })
-  return new Float32Array(points)
+  return { positions: new Float32Array(verts), indices: new Uint32Array(indices) }
 }
 
 /**
