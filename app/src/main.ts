@@ -24,6 +24,7 @@ import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
   animationClips,
+  animationLibrary,
   bindWeights,
   buildInfo,
   devAutoload,
@@ -45,6 +46,7 @@ import {
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
+import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
 
 // Mirror all webview console output to the Rust terminal for debugging.
@@ -113,6 +115,32 @@ let viewport: Viewport | null = null
 
 /** Which model-transform tool is active (rotate/move the model), or none. */
 let transformMode: 'none' | 'rotate' | 'translate' = 'none'
+
+/** The clip chooser's moving preview, created on first use, and which creature's
+ *  library it has loaded. */
+let clipPreview: ClipPreview | null = null
+let libraryFor: string | null = null
+
+function ensureClipPreview(): ClipPreview {
+  clipPreview ??= createClipPreview()
+  return clipPreview
+}
+
+/** Loads a creature's animation library into the preview once, then shows the
+ *  selected clip (or the first). */
+async function ensureLibrary(template: string): Promise<void> {
+  if (libraryFor === template || !isDesktop()) return
+  libraryFor = template
+  try {
+    await ensureClipPreview().load(await animationLibrary(template))
+    const first = clips?.[0]?.name
+    const show = clip ?? first
+    if (show !== undefined) ensureClipPreview().play(show)
+  } catch (err) {
+    libraryFor = null
+    console.error('clip preview library failed to load', err)
+  }
+}
 
 function ensureViewport(): Viewport {
   viewport ??= createViewport()
@@ -400,6 +428,9 @@ function renderAnimateStep(): string {
     return `<p style="color:var(--fg-2)">No animation library ships for ${escape(chosen)} yet.</p>`
   }
 
+  // A moving preview of the clip under the cursor (or the selected one), played
+  // on the library character — see what a motion looks like before committing.
+  const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
   const list = clips
     .map(
       (c) => `
@@ -412,15 +443,15 @@ function renderAnimateStep(): string {
     .join('')
 
   if (clip === null) {
-    return `${list}<p style="color:var(--fg-2)">Pick a clip. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
+    return `${preview}${list}<p style="color:var(--fg-2)">Hover a clip to preview it, then pick one. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
   }
 
   if (!playing) {
-    return `${list}
+    return `${preview}${list}
       <button id="preview" class="action">Preview ${escape(clip)}</button>
       <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
   }
-  return `${list}${renderTransport()}
+  return `${preview}${list}${renderTransport()}
     <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
 }
 
@@ -821,11 +852,15 @@ function render(): void {
     const name = button.dataset['template']
     const clipName = button.dataset['clip']
     if (clipName !== undefined) {
+      // Hovering plays the clip in the chooser preview; clicking selects it.
+      button.addEventListener('mouseenter', () => clipPreview?.play(clipName))
+      button.addEventListener('focus', () => clipPreview?.play(clipName))
       button.addEventListener('click', () => {
         // Switching clips stops any playback of the old one.
         stopPreview()
         clip = clipName
         exported = null
+        clipPreview?.play(clipName)
         record()
         render()
       })
@@ -835,7 +870,15 @@ function render(): void {
     button.addEventListener('click', () => void runFit(name))
   })
 
-  if (step.id === StepId.Animate) void ensureClips()
+  if (step.id === StepId.Animate) {
+    void ensureClips()
+    // Mount the persistent preview canvas and load the creature's library once.
+    const slot = app.querySelector<HTMLElement>('#clip-preview')
+    if (slot !== null && chosen !== null) {
+      slot.appendChild(ensureClipPreview().canvas)
+      void ensureLibrary(chosen)
+    }
+  }
 
   if (step.id === StepId.LoadSkeleton && loaded !== null) void ensureTemplates()
 

@@ -231,6 +231,15 @@ export async function animationClips(template: string): Promise<ClipSummary[]> {
 }
 
 /**
+ * The creature's animation-library `.glb` — the library character with every
+ * clip on it — over the **bulk channel**. Loaded once so the chooser can play a
+ * moving preview of any clip without a round-trip or retarget per clip.
+ */
+export async function animationLibrary(template: string): Promise<ArrayBuffer> {
+  return bulk(await invoke<BulkResponse>('animation_library', { template }))
+}
+
+/**
  * Returns the rigged model with a clip retargeted onto it, as a `.glb`.
  *
  * The **bulk channel**: a whole animated model as raw bytes, the same the

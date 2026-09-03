@@ -194,6 +194,24 @@ async fn animation_clips(
     .map_err(|e| e.to_string())?
 }
 
+/// Returns a creature's animation-library `.glb` — the library character with
+/// every clip on it.
+///
+/// Bulk channel: the whole library, so the clip chooser can play a moving
+/// preview of any clip on the library character without a round-trip per clip
+/// or retargeting onto the user's rig.
+#[tauri::command]
+async fn animation_library(
+    app: tauri::AppHandle,
+    template: String,
+) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(tauri::ipc::Response::new(library_bytes(&app, &template)?))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Returns the bound model with a weight-paint overlay baked into vertex colours.
 ///
 /// Bulk channel: a whole model whose vertices carry a `COLOR_0` the viewer draws
@@ -380,6 +398,7 @@ pub fn run() {
             bind_weights,
             export_model,
             animation_clips,
+            animation_library,
             preview_animation,
             weight_overlay
         ])
