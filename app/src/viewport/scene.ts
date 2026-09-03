@@ -51,6 +51,7 @@ import {
   findClip,
   frameBounds,
   hasVertexColors,
+  localHandleRadius,
   parseAnimated,
   parseModel,
   presetCameraPosition,
@@ -363,6 +364,7 @@ export function createViewport(): Viewport {
     return Math.max(box.getSize(new Vector3()).length() * 0.015, 0.005)
   }
 
+
   /** Rewrites the skeleton line from the current edited joint positions. */
   function refreshFittedGeometry(): void {
     if (fittedSkeleton === null) return
@@ -482,13 +484,18 @@ export function createViewport(): Viewport {
     editParents = parents
     onJointEdit = onEdit
 
-    const radius = handleRadius(positions)
-    handleGeometry = new SphereGeometry(radius, 8, 8)
-    // A nudge of ~15% of a handle radius is a fine touch that still visibly moves.
-    nudgeStep = radius * 0.15
+    const maxRadius = handleRadius(positions)
+    // A unit sphere scaled per joint, so each handle is sized to its local joint
+    // spacing (see localHandleRadius) — the finger handles no longer merge into
+    // one unpickable clump.
+    handleGeometry = new SphereGeometry(1, 8, 8)
+    // A nudge of ~15% of the full handle radius is a fine touch that still moves
+    // visibly; Shift makes it finer still for the dense joints.
+    nudgeStep = maxRadius * 0.15
     positions.forEach((p, index) => {
       const handle = new Mesh(handleGeometry as SphereGeometry, handleRest)
       handle.position.set(p[0], p[1], p[2])
+      handle.scale.setScalar(localHandleRadius(positions, index, maxRadius))
       handle.renderOrder = 2
       handle.userData.jointIndex = index
       jointHandles.push(handle)

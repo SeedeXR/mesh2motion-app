@@ -28,6 +28,7 @@ import {
   bindWeights,
   buildInfo,
   devAutoload,
+  devAutofit,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
@@ -946,5 +947,17 @@ async function maybeAutoload(): Promise<void> {
   if (path === null) return
   const button = document.querySelector<HTMLButtonElement>('#import')
   if (button !== null) await runImport(button)
+  // Optionally auto-fit a template so the Fit step (and its auto-placement) can
+  // be screenshotted without clicking through the workflow.
+  let template: string | null = null
+  try {
+    template = await devAutofit()
+  } catch {
+    return
+  }
+  if (template === null) return
+  await runFit(template)
+  activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  render()
 }
 void maybeAutoload()

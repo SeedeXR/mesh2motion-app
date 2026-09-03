@@ -133,6 +133,31 @@ export function totalFrames(duration: number, fps: number): number {
   return Math.max(1, Math.round(duration * fps))
 }
 
+/**
+ * A joint's edit-handle radius, sized to how close its nearest neighbour joint
+ * is: capped at `max`, floored at `max * 0.12` so it stays grabbable.
+ *
+ * Dense joints — a hand's fingers — get small, separable handles instead of
+ * merging into one unpickable clump; limb joints, whose neighbours are far,
+ * keep the full size. A joint with no neighbour (a lone skeleton) gets `max`.
+ */
+export function localHandleRadius(
+  positions: readonly (readonly [number, number, number])[],
+  index: number,
+  max: number
+): number {
+  const p = positions[index]
+  if (p === undefined) return max
+  let nearest = Infinity
+  positions.forEach((q, j) => {
+    if (j === index) return
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+    if (d < nearest) nearest = d
+  })
+  if (!Number.isFinite(nearest)) return max
+  return Math.min(Math.max(nearest * 0.4, max * 0.12), max)
+}
+
 /** A canonical camera direction: the six orthographic-style views. */
 export type ViewPreset = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom'
 

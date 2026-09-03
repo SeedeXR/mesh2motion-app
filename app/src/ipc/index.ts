@@ -51,6 +51,11 @@ export async function devAutoload(): Promise<string | null> {
   return await invoke<string | null>('dev_autoload')
 }
 
+/** Dev/screenshot harness: a creature template to auto-fit after autoload, or null. */
+export async function devAutofit(): Promise<string | null> {
+  return await invoke<string | null>('dev_autofit')
+}
+
 /** Mirrors a log line to the Rust stdout (fire-and-forget). */
 export function logLine(level: string, message: string): void {
   void invoke('log_line', { level, message }).catch(() => {})

@@ -16,6 +16,7 @@ import {
   frameBounds,
   frameOfTime,
   hasVertexColors,
+  localHandleRadius,
   parseAnimated,
   parseModel,
   presetCameraPosition,
@@ -158,6 +159,41 @@ describe('timeline fps helpers', () => {
     expect(totalFrames(2, 30)).toBe(60)
     expect(totalFrames(2, 24)).toBe(48)
     expect(totalFrames(0, 30)).toBe(1) // an empty clip still has a frame to sit on
+  })
+})
+
+describe('localHandleRadius', () => {
+  // Two limb joints 1 apart, then three finger joints 0.05 apart.
+  const joints: [number, number, number][] = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [2, 0, 0],
+    [2.05, 0, 0],
+    [2.1, 0, 0]
+  ]
+  const MAX = 0.1
+
+  test('a far-spaced joint keeps the full radius (capped at max)', () => {
+    // Nearest neighbour is 1 away; 0.4*1 = 0.4 > max, so capped at max.
+    expect(localHandleRadius(joints, 0, MAX)).toBeCloseTo(MAX)
+  })
+
+  test('a dense joint shrinks toward its neighbour spacing', () => {
+    // Finger joints 0.05 apart: 0.4*0.05 = 0.02, above the 0.012 floor.
+    expect(localHandleRadius(joints, 3, MAX)).toBeCloseTo(0.02)
+    expect(localHandleRadius(joints, 3, MAX)).toBeLessThan(MAX)
+  })
+
+  test('never smaller than the grabbable floor of 12% of max', () => {
+    const tight: [number, number, number][] = [
+      [0, 0, 0],
+      [0.001, 0, 0]
+    ]
+    expect(localHandleRadius(tight, 0, MAX)).toBeCloseTo(MAX * 0.12)
+  })
+
+  test('a lone joint with no neighbour gets the full radius', () => {
+    expect(localHandleRadius([[0, 0, 0]], 0, MAX)).toBe(MAX)
   })
 })
 

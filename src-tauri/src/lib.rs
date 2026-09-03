@@ -50,6 +50,14 @@ fn dev_autoload() -> Option<String> {
     std::env::var("M2M_AUTOLOAD").ok()
 }
 
+/// Dev/screenshot harness: a creature template to auto-fit after the autoload,
+/// from `M2M_AUTOFIT`, so the Fit step can be exercised (and its auto-placement
+/// screenshotted) without clicking through the workflow.
+#[tauri::command]
+fn dev_autofit() -> Option<String> {
+    std::env::var("M2M_AUTOFIT").ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -390,6 +398,7 @@ pub fn run() {
             build_info,
             report_startup,
             dev_autoload,
+            dev_autofit,
             log_line,
             import_model,
             load_model,
