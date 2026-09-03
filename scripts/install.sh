@@ -49,14 +49,15 @@ echo "==> Verifying the MCP server (m2m-mcp --check)…"
 "$MCP" --check || { echo "error: MCP self-check failed" >&2; exit 1; }
 
 if command -v claude >/dev/null 2>&1; then
+  # -s user: available across all projects, not just this directory.
   # add is idempotent-ish: it errors if the name exists, which is fine.
-  if claude mcp add mesh2motion -- "$MCP" >/dev/null 2>&1; then
-    echo "Registered the 'mesh2motion' MCP server with Claude Code."
+  if claude mcp add -s user mesh2motion -- "$MCP" >/dev/null 2>&1; then
+    echo "Registered the 'mesh2motion' MCP server with Claude Code (user scope)."
   else
     echo "MCP 'mesh2motion' already registered (or add skipped)."
   fi
 else
   echo "Claude Code CLI not found — register the MCP manually with:"
-  echo "  claude mcp add mesh2motion -- $MCP"
+  echo "  claude mcp add -s user mesh2motion -- $MCP"
 fi
 echo "Check the server any time with:  $MCP --check"

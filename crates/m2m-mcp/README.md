@@ -52,8 +52,11 @@ Use it to confirm the server is alive and all tools are active.
 **Claude Code** (from the repo root, so the default asset path resolves):
 
 ```bash
-claude mcp add mesh2motion -- /absolute/path/to/target/release/m2m-mcp
+claude mcp add -s user mesh2motion -- /absolute/path/to/target/release/m2m-mcp
 ```
+
+`-s user` makes it available across all projects (drop it for this directory
+only). `scripts/install.sh` registers it at user scope for you.
 
 or in a project `.mcp.json`:
 
