@@ -213,3 +213,42 @@ test('the model transform gizmo appears and clears', async ({ page }) => {
   await page.waitForTimeout(300)
   expect(Buffer.compare(base, await canvas.screenshot())).toBe(0) // removed, camera unmoved
 })
+
+// Playback transport: a clip plays (time advances), pause freezes it, and seek
+// jumps to a time. Drives the viewport's public playback API directly.
+test('playback transport plays, pauses, and seeks', async ({ page }) => {
+  await page.route('**/anim.glb', (route) =>
+    route.fulfill({
+      path: 'assets/animations/human-base-animations.glb',
+      contentType: 'model/gltf-binary'
+    })
+  )
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/e2e/viewport-layout-harness.html')
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__ready === true, {
+    timeout: 30_000
+  })
+
+  const time = (): Promise<number> =>
+    page.evaluate(() => (window as unknown as { __viewport: { playbackTime: () => number } }).__viewport.playbackTime())
+
+  const duration = (await page.evaluate(() =>
+    (window as unknown as { __playFirstClip: (u: string) => Promise<number | null> }).__playFirstClip('/anim.glb')
+  )) as number | null
+  expect(duration).not.toBeNull()
+  expect(duration as number).toBeGreaterThan(0)
+
+  // Playing: time advances.
+  await page.waitForTimeout(350)
+  expect(await time()).toBeGreaterThan(0)
+
+  // Paused: time holds.
+  await page.evaluate(() => (window as unknown as { __viewport: { setPaused: (p: boolean) => void } }).__viewport.setPaused(true))
+  const t2 = await time()
+  await page.waitForTimeout(350)
+  expect(Math.abs((await time()) - t2)).toBeLessThan(0.02)
+
+  // Seek: jumps to the requested time.
+  await page.evaluate(() => (window as unknown as { __viewport: { seek: (t: number) => void } }).__viewport.seek(0.5))
+  expect(Math.abs((await time()) - 0.5)).toBeLessThan(0.01)
+})

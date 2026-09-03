@@ -9,6 +9,7 @@
 // cell, which grew the measured size, which grew the buffer on the next resize —
 // a runaway that pushed the model off-screen while only the clear colour showed.
 import { createViewport } from '../app/src/viewport/scene'
+import { parseAnimated } from '../app/src/viewport/model'
 
 const win = window as unknown as Record<string, unknown>
 
@@ -16,9 +17,19 @@ const viewport = createViewport()
 const stage = document.querySelector<HTMLElement>('.viewport')!
 stage.prepend(viewport.canvas)
 
-// Exposed so a test can drive the camera controls (setView/zoom/reframe) and
-// assert the rendered image changes.
+// Exposed so a test can drive the camera controls (setView/zoom/reframe), the
+// model gizmo, and playback, then assert the render or the playback state.
 win.__viewport = viewport
+
+// Fetches an animated glb and plays its first clip, resolving the duration —
+// the test doesn't know the clip names, so the harness resolves one.
+win.__playFirstClip = async (url: string): Promise<number | null> => {
+  const bytes = await (await fetch(url)).arrayBuffer()
+  const contents = await parseAnimated(bytes.slice(0))
+  const name = contents.clips[0]?.name
+  if (name === undefined) return null
+  return await viewport.playAnimated(bytes, name)
+}
 
 // Backing-store size of the one canvas, plus its on-screen rect. A canvas
 // readback is deliberately NOT used to check visibility here: WebGLRenderer

@@ -14,11 +14,14 @@ import {
   applyFraming,
   findClip,
   frameBounds,
+  frameOfTime,
   hasVertexColors,
   parseAnimated,
   parseModel,
   presetCameraPosition,
   skeletonSegments,
+  timeOfFrame,
+  totalFrames,
   withJointMoved
 } from '../src/viewport/model'
 
@@ -130,6 +133,31 @@ describe('applyFraming', () => {
     expect(camera.near).toBeGreaterThan(0)
     expect(camera.near).toBeLessThan(distance - bounds.getSize(new Vector3()).length() / 2)
     expect(camera.far).toBeGreaterThan(distance)
+  })
+})
+
+describe('timeline fps helpers', () => {
+  test('frameOfTime rounds seconds to the nearest frame at the given fps', () => {
+    expect(frameOfTime(0, 30)).toBe(0)
+    expect(frameOfTime(1, 30)).toBe(30)
+    expect(frameOfTime(1, 24)).toBe(24)
+    expect(frameOfTime(0.5, 30)).toBe(15)
+    // Nearest, not floor.
+    expect(frameOfTime(0.49, 30)).toBe(15)
+  })
+
+  test('timeOfFrame inverts frameOfTime on frame boundaries', () => {
+    for (const fps of [24, 30]) {
+      for (const frame of [0, 1, 7, 48]) {
+        expect(frameOfTime(timeOfFrame(frame, fps), fps)).toBe(frame)
+      }
+    }
+  })
+
+  test('totalFrames spans the clip and never falls below one', () => {
+    expect(totalFrames(2, 30)).toBe(60)
+    expect(totalFrames(2, 24)).toBe(48)
+    expect(totalFrames(0, 30)).toBe(1) // an empty clip still has a frame to sit on
   })
 })
 

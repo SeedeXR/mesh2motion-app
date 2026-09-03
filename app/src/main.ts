@@ -14,7 +14,11 @@ import {
   Maximize,
   ZoomIn,
   ZoomOut,
-  HelpCircle
+  HelpCircle,
+  Pause,
+  Rewind,
+  FastForward,
+  Square
 } from 'lucide'
 import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
@@ -41,7 +45,7 @@ import {
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
-import { type ViewPreset } from './viewport/model'
+import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -95,8 +99,15 @@ let exporting = false
 /** The chosen creature's clips, once fetched, and the one selected. */
 let clips: ClipSummary[] | null = null
 let clip: string | null = null
-/** True while a clip is playing in the viewport. */
+/** True while a clip preview is loaded in the viewport (playing or paused). */
 let playing = false
+/** Playback transport for the Animate timeline. */
+let paused = false
+let direction: 1 | -1 = 1
+let fps: 24 | 30 = 30
+let clipDuration = 0
+/** The rAF handle for the loop that walks the timeline slider during playback. */
+let playhead = 0
 
 let viewport: Viewport | null = null
 
@@ -404,18 +415,41 @@ function renderAnimateStep(): string {
     return `${list}<p style="color:var(--fg-2)">Pick a clip. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
   }
 
-  const label = playing ? 'Playing\u2026' : `Preview ${escape(clip)}`
-  const stopButton = playing ? '<button id="stop" class="action">Stop</button>' : ''
-  return `${list}
-    <button id="preview" class="action" ${playing ? 'disabled' : ''}>${label}</button>
-    ${stopButton}
+  if (!playing) {
+    return `${list}
+      <button id="preview" class="action">Preview ${escape(clip)}</button>
+      <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+  }
+  return `${list}${renderTransport()}
     <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+}
+
+/** The playback transport for the Animate step: fps, direction, pause, stop, and
+ *  a scrubbable frame timeline. */
+function renderTransport(): string {
+  const frames = totalFrames(clipDuration, fps)
+  const dirOn = (d: 1 | -1): string => (!paused && direction === d ? 'on' : '')
+  return `
+    <div class="transport" role="group" aria-label="Playback">
+      <button class="chip ${fps === 24 ? 'on' : ''}" data-fps="24" aria-pressed="${fps === 24}">24</button>
+      <button class="chip ${fps === 30 ? 'on' : ''}" data-fps="30" aria-pressed="${fps === 30}">30</button>
+      <span class="tp-fps">fps</span>
+      <span class="tp-sp"></span>
+      <button class="tp-btn ${dirOn(-1)}" id="play-back" title="Play backward" aria-label="Play backward"><i data-lucide="rewind" width="16" height="16" aria-hidden="true"></i></button>
+      <button class="tp-btn" id="play-pause" title="${paused ? 'Resume' : 'Pause'}" aria-label="${paused ? 'Resume' : 'Pause'}"><i data-lucide="${paused ? 'play' : 'pause'}" width="16" height="16" aria-hidden="true"></i></button>
+      <button class="tp-btn ${dirOn(1)}" id="play-fwd" title="Play forward" aria-label="Play forward"><i data-lucide="fast-forward" width="16" height="16" aria-hidden="true"></i></button>
+      <button class="tp-btn" id="stop" title="Stop" aria-label="Stop"><i data-lucide="square" width="16" height="16" aria-hidden="true"></i></button>
+    </div>
+    <input id="timeline" class="timeline" type="range" min="0" max="${frames}" step="1" value="0" aria-label="Timeline (frame)"/>
+    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>`
 }
 
 /** Plays the chosen clip in the viewport, or stops it. */
 async function runPreview(): Promise<void> {
   if (loaded === null || fitted === null || chosen === null || clip === null || playing) return
   playing = true
+  paused = false
+  direction = 1
   render()
   try {
     const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip)
@@ -423,7 +457,11 @@ async function runPreview(): Promise<void> {
     if (duration === null) {
       playing = false
       render()
+      return
     }
+    clipDuration = duration
+    render() // the timeline max needs the real duration
+    startPlayhead()
   } catch (err) {
     playing = false
     render()
@@ -434,9 +472,48 @@ async function runPreview(): Promise<void> {
 
 function stopPreview(): void {
   if (!playing) return
+  stopPlayhead()
   ensureViewport().stop()
   playing = false
   render()
+}
+
+/** Sets the play direction and resumes. */
+function setDirection(value: 1 | -1): void {
+  direction = value
+  paused = false
+  const vp = ensureViewport()
+  vp.setPlaybackDirection(value)
+  vp.setPaused(false)
+  render()
+}
+
+/** Toggles pause/resume of the running clip. */
+function togglePause(): void {
+  paused = !paused
+  ensureViewport().setPaused(paused)
+  render()
+}
+
+/** Walks the timeline slider and frame label along with playback, leaving them
+ *  alone while the user is scrubbing (the slider is focused). */
+function startPlayhead(): void {
+  cancelAnimationFrame(playhead)
+  const tick = (): void => {
+    const frames = totalFrames(clipDuration, fps)
+    const frame = Math.min(frameOfTime(ensureViewport().playbackTime(), fps), frames)
+    const slider = document.querySelector<HTMLInputElement>('#timeline')
+    if (slider !== null && document.activeElement !== slider) slider.value = String(frame)
+    const label = document.querySelector<HTMLSpanElement>('#frame')
+    if (label !== null) label.textContent = String(frame)
+    playhead = requestAnimationFrame(tick)
+  }
+  playhead = requestAnimationFrame(tick)
+}
+
+function stopPlayhead(): void {
+  cancelAnimationFrame(playhead)
+  playhead = 0
 }
 
 /** Fetches the chosen creature's clips once, then re-renders with them. */
@@ -671,7 +748,7 @@ function render(): void {
   }
 
   createIcons({
-    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle }
+    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle, Pause, Rewind, FastForward, Square }
   })
 
   // Viewport navigation toolbar: frame / zoom / preset views.
@@ -724,6 +801,21 @@ function render(): void {
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
+  app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
+  app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
+  app.querySelector<HTMLButtonElement>('#play-pause')?.addEventListener('click', () => togglePause())
+  app.querySelectorAll<HTMLButtonElement>('[data-fps]').forEach((button) => {
+    const value = Number(button.dataset['fps'])
+    if (value !== 24 && value !== 30) return
+    button.addEventListener('click', () => {
+      fps = value
+      render()
+    })
+  })
+  const timeline = app.querySelector<HTMLInputElement>('#timeline')
+  timeline?.addEventListener('input', () => {
+    ensureViewport().seek(timeOfFrame(Number(timeline.value), fps))
+  })
 
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']

@@ -118,6 +118,21 @@ export function applyFraming(camera: Camera, framing: Framing): void {
   }
 }
 
+/** The frame a playback time falls on, at a given frame rate. */
+export function frameOfTime(seconds: number, fps: number): number {
+  return Math.round(seconds * fps)
+}
+
+/** The time at the start of a frame, at a given frame rate. */
+export function timeOfFrame(frame: number, fps: number): number {
+  return frame / fps
+}
+
+/** How many frames a clip of `duration` seconds spans at `fps` (at least one). */
+export function totalFrames(duration: number, fps: number): number {
+  return Math.max(1, Math.round(duration * fps))
+}
+
 /** A canonical camera direction: the six orthographic-style views. */
 export type ViewPreset = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom'
 

@@ -15,6 +15,7 @@
  */
 
 import {
+  type AnimationAction,
   AmbientLight,
   AnimationMixer,
   Box3,
@@ -199,6 +200,14 @@ export interface Viewport {
    * playing (see `dispose`/`stop`), so an idle viewport still costs nothing.
    */
   playAnimated(data: ArrayBuffer, clipName: string): Promise<number | null>
+  /** Pauses or resumes the running clip without tearing it down. */
+  setPaused(paused: boolean): void
+  /** Plays the clip forward (`1`) or in reverse (`-1`). */
+  setPlaybackDirection(direction: 1 | -1): void
+  /** Jumps the clip to `seconds` and shows that pose. */
+  seek(seconds: number): void
+  /** The clip's current playback time in seconds (0 when nothing plays). */
+  playbackTime(): number
   /** Stops playback and returns to the event-driven, zero-idle-cost renderer. */
   stop(): void
   /**
@@ -316,6 +325,11 @@ export function createViewport(): Viewport {
   let animated: Object3D | null = null
   let overlay: Object3D | null = null
   let mixer: AnimationMixer | null = null
+  // The clip's action, kept so the transport (pause, direction, scrub) can drive
+  // it. `paused` freezes the mixer at its current time without tearing playback
+  // down, so a scrub still shows the right pose.
+  let action: AnimationAction | null = null
+  let paused = false
   // Elapsed-time tracked with performance.now() rather than three's Clock,
   // which is deprecated. `lastFrame` is the timestamp the mixer last advanced
   // from; the delta between frames is what it needs.
@@ -324,9 +338,9 @@ export function createViewport(): Viewport {
   let bounds = new Box3()
 
   // A standing render loop drives every frame and advances the animation mixer
-  // while a clip plays.
+  // while a clip plays (unless the transport has paused it).
   renderer.setAnimationLoop((now: number) => {
-    if (playing && mixer !== null) mixer.update((now - lastFrame) / 1000)
+    if (playing && !paused && mixer !== null) mixer.update((now - lastFrame) / 1000)
     lastFrame = now
     controls.update()
     grid.update(camera)
@@ -757,7 +771,9 @@ export function createViewport(): Viewport {
       scene.add(animated)
 
       mixer = new AnimationMixer(animated)
-      mixer.clipAction(clip).play()
+      action = mixer.clipAction(clip)
+      action.play()
+      paused = false
       playing = true
       lastFrame = performance.now()
       return clip.duration
@@ -789,6 +805,28 @@ export function createViewport(): Viewport {
       requestRender()
     },
 
+    setPaused(value: boolean): void {
+      paused = value
+      // Re-anchor the delta clock so resuming does not jump by the paused span.
+      lastFrame = performance.now()
+    },
+
+    setPlaybackDirection(direction): void {
+      if (action !== null) action.timeScale = direction
+    },
+
+    seek(seconds): void {
+      if (action === null || mixer === null) return
+      action.time = Math.max(0, seconds)
+      // Apply the new time to the pose without advancing (delta 0).
+      mixer.update(0)
+      requestRender()
+    },
+
+    playbackTime(): number {
+      return action?.time ?? 0
+    },
+
     stop(): void {
       if (overlay !== null) {
         scene.remove(overlay)
@@ -797,6 +835,8 @@ export function createViewport(): Viewport {
         if (model !== null) model.visible = true
       }
       playing = false
+      paused = false
+      action = null
       if (mixer !== null) {
         mixer.stopAllAction()
         mixer = null

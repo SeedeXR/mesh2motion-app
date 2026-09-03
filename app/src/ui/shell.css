@@ -231,6 +231,56 @@ body {
 .nav-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg-0); }
 .nav-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--border); }
 
+/* Animate step: playback transport + frame timeline. */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin: var(--s-3) 0 var(--s-2);
+}
+.transport .tp-sp { flex: 1; }
+.transport .tp-fps { color: var(--fg-2); font-size: var(--fs-xs); margin-right: var(--s-1); }
+
+.chip {
+  min-width: 30px;
+  height: var(--s-6);
+  padding: 0 var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.chip.on { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+.chip:focus-visible,
+.tp-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.tp-btn {
+  display: grid;
+  place-items: center;
+  width: var(--s-6);
+  height: var(--s-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.tp-btn:hover { background: var(--accent-dim); color: var(--fg-0); }
+.tp-btn.on { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+
+.timeline { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.timecode {
+  margin-top: var(--s-1);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 /* A creature template in the Choose Skeleton step. */
 .template {
   display: flex;
