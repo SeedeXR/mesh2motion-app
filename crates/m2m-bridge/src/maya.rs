@@ -107,44 +107,13 @@ pub fn mayapy_path() -> Result<PathBuf, BridgeError> {
 /// [`BridgeError`] when `mayapy` cannot be found, the subprocess fails, or the
 /// report does not parse.
 pub fn inspect(fbx: &[u8], mayapy: &Path) -> Result<MayaReport, BridgeError> {
-    let dir = std::env::temp_dir();
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let model = dir.join(format!("m2m-maya-{stamp}.fbx"));
-    let script = dir.join(format!("m2m-maya-{stamp}.py"));
-    let report = dir.join(format!("m2m-maya-{stamp}.json"));
-
-    struct Cleanup(Vec<PathBuf>);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            for path in &self.0 {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-    }
-    let _cleanup = Cleanup(vec![model.clone(), script.clone(), report.clone()]);
-
-    std::fs::write(&model, fbx).map_err(|e| BridgeError::Spawn(e.to_string()))?;
-    std::fs::write(&script, MAYA_SCRIPT).map_err(|e| BridgeError::Spawn(e.to_string()))?;
-
-    let output = std::process::Command::new(mayapy)
-        .arg(&script)
-        .arg(&model)
-        .arg(&report)
-        .output()
-        .map_err(|e| BridgeError::Spawn(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BridgeError::Failed {
-            code: output.status.code().unwrap_or(-1),
-            stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
-        });
-    }
-
-    let json = std::fs::read_to_string(&report)
-        .map_err(|e| BridgeError::Spawn(format!("Maya wrote no report file: {e}")))?;
+    // mayapy takes the script path then the script's own args; no separator.
+    let json = crate::run_report(mayapy, "fbx", fbx, MAYA_SCRIPT, |script, model, report| {
+        vec![
+            script.as_os_str().to_owned(),
+            model.as_os_str().to_owned(),
+            report.as_os_str().to_owned(),
+        ]
+    })?;
     parse_report(&json)
 }

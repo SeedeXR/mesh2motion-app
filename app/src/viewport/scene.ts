@@ -73,8 +73,11 @@ const FOV_DEGREES = 45
  * capture phase runs this before OrbitControls reads `mouseButtons`.
  */
 function installBlenderNavigation(controls: OrbitControls, dom: HTMLElement): void {
-  const action = (e: PointerEvent): MOUSE =>
-    e.shiftKey ? MOUSE.PAN : e.ctrlKey || e.metaKey ? MOUSE.DOLLY : MOUSE.ROTATE
+  const action = (e: PointerEvent): MOUSE => {
+    if (e.shiftKey) return MOUSE.PAN
+    if (e.ctrlKey || e.metaKey) return MOUSE.DOLLY
+    return MOUSE.ROTATE
+  }
   dom.addEventListener(
     'pointerdown',
     (e) => {
@@ -349,9 +352,6 @@ export function createViewport(): Viewport {
     renders++
   })
 
-  /** A no-op now the loop draws every frame; kept so the many call sites that
-   *  ask for a redraw after a change still type-check. */
-  function requestRender(): void {}
 
   /** A grabbable handle size: ~1.5% of the skeleton's diagonal, so it works at
    * any creature scale rather than being a speck on a whale or a boulder on a
@@ -394,7 +394,6 @@ export function createViewport(): Viewport {
       selectedHandle = handle
       handle.material = handleSelected
       gizmo.attach(handle)
-      requestRender()
     }
   }
 
@@ -408,7 +407,6 @@ export function createViewport(): Viewport {
     hoveredHandle = handle
     if (handle !== null && handle !== selectedHandle) handle.material = handleHover
     renderer.domElement.style.cursor = handle !== null ? 'pointer' : ''
-    requestRender()
   }
 
   /** Arrow keys nudge the selected joint in the screen plane for a precise final
@@ -440,7 +438,6 @@ export function createViewport(): Viewport {
     ])
     refreshFittedGeometry()
     nudgeDirty = true
-    requestRender()
   }
 
   /** Commits a nudge burst once the keys are released, as a single edit. */
@@ -522,9 +519,7 @@ export function createViewport(): Viewport {
         object.position.z
       ])
       refreshFittedGeometry()
-      requestRender()
     })
-    gizmo.addEventListener('change', requestRender)
     scene.add(gizmo.getHelper())
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     renderer.domElement.addEventListener('pointermove', onPointerMove)
@@ -548,7 +543,6 @@ export function createViewport(): Viewport {
     renderer.setSize(width, height, false)
     camera.aspect = width / height
     camera.updateProjectionMatrix()
-    requestRender()
   }
   new ResizeObserver(resize).observe(renderer.domElement)
 
@@ -557,18 +551,20 @@ export function createViewport(): Viewport {
     applyFraming(camera, framing)
     controls.target.copy(framing.target)
     controls.update()
-    requestRender()
   }
 
   function setView(preset: ViewPreset): void {
     const distance = camera.position.distanceTo(controls.target)
     camera.position.copy(presetCameraPosition(preset, controls.target, distance))
     // A top/bottom view looks straight down the up-axis, where azimuth is
-    // undefined; nudge `up` off it so the framing has a defined roll.
-    camera.up.set(0, preset === 'top' || preset === 'bottom' ? 0 : 1, preset === 'top' ? -1 : preset === 'bottom' ? 1 : 0)
+    // undefined; roll `up` onto Z for those so the framing has a defined roll,
+    // and keep the world up (+Y) for the side views.
+    let upZ = 0
+    if (preset === 'top') upZ = -1
+    else if (preset === 'bottom') upZ = 1
+    camera.up.set(0, upZ === 0 ? 1 : 0, upZ)
     camera.lookAt(controls.target)
     controls.update()
-    requestRender()
   }
 
   function zoom(factor: number): void {
@@ -578,7 +574,6 @@ export function createViewport(): Viewport {
     const distance = Math.min(Math.max(toCamera.length() * factor, 0.01), 1000)
     camera.position.copy(controls.target).add(toCamera.setLength(distance))
     controls.update()
-    requestRender()
   }
 
   function setTransformMode(mode: 'none' | 'rotate' | 'translate'): void {
@@ -589,7 +584,6 @@ export function createViewport(): Viewport {
         modelGizmo.dispose()
         modelGizmo = null
       }
-      requestRender()
       return
     }
     if (modelGizmo === null) {
@@ -597,12 +591,10 @@ export function createViewport(): Viewport {
       modelGizmo.addEventListener('dragging-changed', (event) => {
         controls.enabled = !(event as unknown as { value: boolean }).value
       })
-      modelGizmo.addEventListener('change', requestRender)
       scene.add(modelGizmo.getHelper())
     }
     modelGizmo.setMode(mode)
     modelGizmo.attach(model)
-    requestRender()
   }
 
   /** Orbits the camera around the target by a screen-space delta — the trackpad
@@ -616,7 +608,6 @@ export function createViewport(): Viewport {
     camera.up.set(0, 1, 0)
     camera.position.copy(controls.target).add(offset.setFromSpherical(spherical))
     controls.update()
-    requestRender()
   }
 
   /** Pans the camera and target together by a screen-space delta — Shift with
@@ -629,7 +620,6 @@ export function createViewport(): Viewport {
     camera.position.add(move)
     controls.target.add(move)
     controls.update()
-    requestRender()
   }
 
   /**
@@ -809,7 +799,6 @@ export function createViewport(): Viewport {
         model.visible = false
       }
       scene.add(overlay)
-      requestRender()
     },
 
     setPaused(value: boolean): void {
@@ -827,7 +816,6 @@ export function createViewport(): Viewport {
       action.time = Math.max(0, seconds)
       // Apply the new time to the pose without advancing (delta 0).
       mixer.update(0)
-      requestRender()
     },
 
     playbackTime(): number {
@@ -854,7 +842,6 @@ export function createViewport(): Viewport {
         animated = null
       }
       if (model !== null) model.visible = true
-      requestRender()
     },
 
     showFittedSkeleton(positions, parents, onEdit): void {
@@ -868,7 +855,6 @@ export function createViewport(): Viewport {
 
       const points = skeletonSegments(positions, parents)
       if (points.length === 0) {
-        requestRender()
         return
       }
 
@@ -883,7 +869,6 @@ export function createViewport(): Viewport {
       fittedSkeleton.renderOrder = 1
       scene.add(fittedSkeleton)
       if (onEdit !== undefined) startFittedEditing(positions, parents, onEdit)
-      requestRender()
     },
 
     reframe,

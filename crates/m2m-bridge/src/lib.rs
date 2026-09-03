@@ -130,26 +130,32 @@ pub fn parse_report(json: &str) -> Result<BlenderReport, BridgeError> {
     serde_json::from_str(json).map_err(|e| BridgeError::BadReport(e.to_string()))
 }
 
-/// Imports `bytes` in headless Blender and returns what it found.
+/// Runs a DCC on an embedded inspection script and returns the JSON report it
+/// wrote to a file — the mechanism the Blender and Maya bridges share.
 ///
-/// `extension` is `"glb"` or `"fbx"` — Blender chooses its importer from the
-/// file name, so the temp file is named accordingly.
+/// Writes `model_bytes` and `script_source` to temp files, spawns `exe` with the
+/// arguments `build_args` derives from the (script, model, report) temp paths,
+/// checks the exit status, and reads the report FILE — never stdout, since a
+/// DCC's own progress/licensing chatter would otherwise corrupt the JSON. Temp
+/// files are cleaned however this returns.
 ///
 /// # Errors
 ///
-/// [`BridgeError`] when Blender cannot be found, the subprocess fails, or the
-/// report does not parse.
-pub fn inspect(
-    bytes: &[u8],
-    extension: &str,
-    blender: &Path,
-) -> Result<BlenderReport, BridgeError> {
+/// [`BridgeError`] when the subprocess fails to spawn, exits non-zero, or writes
+/// no report file.
+pub(crate) fn run_report(
+    exe: &Path,
+    model_extension: &str,
+    model_bytes: &[u8],
+    script_source: &str,
+    build_args: impl Fn(&Path, &Path, &Path) -> Vec<std::ffi::OsString>,
+) -> Result<String, BridgeError> {
     let dir = std::env::temp_dir();
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let model = dir.join(format!("m2m-bridge-{stamp}.{extension}"));
+    let model = dir.join(format!("m2m-bridge-{stamp}.{model_extension}"));
     let script = dir.join(format!("m2m-bridge-{stamp}.py"));
     let report = dir.join(format!("m2m-bridge-{stamp}.json"));
 
@@ -164,15 +170,11 @@ pub fn inspect(
     }
     let _cleanup = Cleanup(vec![model.clone(), script.clone(), report.clone()]);
 
-    std::fs::write(&model, bytes).map_err(|e| BridgeError::Spawn(e.to_string()))?;
-    std::fs::write(&script, INSPECT_SCRIPT).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&model, model_bytes).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&script, script_source).map_err(|e| BridgeError::Spawn(e.to_string()))?;
 
-    let output = std::process::Command::new(blender)
-        .args(["--background", "--factory-startup", "--python"])
-        .arg(&script)
-        .arg("--")
-        .arg(&model)
-        .arg(&report)
+    let output = std::process::Command::new(exe)
+        .args(build_args(&script, &model, &report))
         .output()
         .map_err(|e| BridgeError::Spawn(e.to_string()))?;
 
@@ -180,13 +182,45 @@ pub fn inspect(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(BridgeError::Failed {
             code: output.status.code().unwrap_or(-1),
-            // The last few lines carry the reason; the rest is Blender's banner.
+            // The last few lines carry the reason; the rest is the DCC's banner.
             stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
         });
     }
 
-    // The report is read from the FILE, never stdout — see the module docs.
-    let json = std::fs::read_to_string(&report)
-        .map_err(|e| BridgeError::Spawn(format!("Blender wrote no report file: {e}")))?;
+    std::fs::read_to_string(&report)
+        .map_err(|e| BridgeError::Spawn(format!("the DCC wrote no report file: {e}")))
+}
+
+/// Imports `bytes` in headless Blender and returns what it found.
+///
+/// `extension` is `"glb"` or `"fbx"` — Blender chooses its importer from the
+/// file name, so the temp file is named accordingly.
+///
+/// # Errors
+///
+/// [`BridgeError`] when Blender cannot be found, the subprocess fails, or the
+/// report does not parse.
+pub fn inspect(
+    bytes: &[u8],
+    extension: &str,
+    blender: &Path,
+) -> Result<BlenderReport, BridgeError> {
+    let json = run_report(
+        blender,
+        extension,
+        bytes,
+        INSPECT_SCRIPT,
+        |script, model, report| {
+            vec![
+                std::ffi::OsString::from("--background"),
+                std::ffi::OsString::from("--factory-startup"),
+                std::ffi::OsString::from("--python"),
+                script.as_os_str().to_owned(),
+                std::ffi::OsString::from("--"),
+                model.as_os_str().to_owned(),
+                report.as_os_str().to_owned(),
+            ]
+        },
+    )?;
     parse_report(&json)
 }

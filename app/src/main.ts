@@ -969,4 +969,5 @@ async function maybeAutoload(): Promise<void> {
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
   render()
 }
-void maybeAutoload()
+// Fire-and-forget at the entry module's end; nothing runs after it.
+await maybeAutoload()

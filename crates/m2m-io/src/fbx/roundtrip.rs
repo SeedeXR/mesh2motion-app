@@ -22,6 +22,205 @@ fn malformed(what: &'static str) -> FbxError {
     }
 }
 
+/// Bones flattened parents-before-children, plus each bone's index in that order
+/// — the ordering `build::Scene` requires so one forward pass emits connections.
+fn order_bones(models: &model::ModelTree) -> (Vec<i64>, HashMap<i64, usize>) {
+    let mut order: Vec<i64> = Vec::new();
+    let mut queue: Vec<i64> = models.roots.clone();
+    while let Some(id) = queue.pop() {
+        let Some(node) = models.get(id) else { continue };
+        if node.is_bone() {
+            order.push(id);
+        }
+        queue.extend(node.children.iter().rev().copied());
+    }
+    let index = order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    (order, index)
+}
+
+/// Owned mesh data taken RAW from the DOM (not through `geometry::parse`, which
+/// triangulates and expands per corner — right for a solver, wrong for a writer:
+/// O9 says a quad mesh comes back a quad mesh). Owned so the `build::Mesh`
+/// borrows in [`reencode`] can point into it.
+struct RawMeshes {
+    names: Vec<String>,
+    positions: Vec<Vec<f32>>,
+    polygons: Vec<Vec<i32>>,
+    /// Geometry object id -> index into the vectors above.
+    index: HashMap<i64, usize>,
+}
+
+fn collect_meshes(scene: &Scene) -> Result<RawMeshes, FbxError> {
+    let mut out = RawMeshes {
+        names: Vec::new(),
+        positions: Vec::new(),
+        polygons: Vec::new(),
+        index: HashMap::new(),
+    };
+    for object in scene.objects_of_kind("Geometry") {
+        let vertices = object
+            .node
+            .child("Vertices")
+            .and_then(|n| n.properties.first())
+            .and_then(FbxProperty::as_f64_vec)
+            .ok_or_else(|| malformed("geometry Vertices"))?;
+        let polygons = object
+            .node
+            .child("PolygonVertexIndex")
+            .and_then(|n| n.properties.first())
+            .and_then(FbxProperty::as_i64_vec)
+            .ok_or_else(|| malformed("geometry PolygonVertexIndex"))?;
+        out.index.insert(object.id, out.names.len());
+        out.names.push(object.name.clone());
+        out.positions
+            .push(vertices.iter().map(|&v| v as f32).collect());
+        out.polygons
+            .push(polygons.iter().map(|&v| v as i32).collect());
+    }
+    Ok(out)
+}
+
+/// Animation carried through RAW — the reader's quaternion tracks are lossy to
+/// convert back, so the original Euler curves are carried through exactly as the
+/// polygons are. Owned so [`reencode`] can borrow into it for `build::Clip`.
+struct RawCurve {
+    axis: String,
+    times: Vec<i64>,
+    values: Vec<f32>,
+    default: f64,
+}
+struct RawChannel {
+    bone: usize,
+    property: String,
+    kind: String,
+    curves: Vec<RawCurve>,
+}
+struct RawClip {
+    name: String,
+    duration: i64,
+    layer: String,
+    channels: Vec<RawChannel>,
+}
+
+fn collect_curves(scene: &Scene, node_id: i64) -> (Vec<RawCurve>, i64) {
+    let mut curves: Vec<RawCurve> = Vec::new();
+    let mut duration = 0i64;
+    for curve_id in scene.children_of(node_id, Some("AnimationCurve")) {
+        let Some(curve) = scene.object(curve_id) else {
+            continue;
+        };
+        let Some(axis) = scene
+            .links
+            .get(&curve_id)
+            .and_then(|l| l.parents.first())
+            .and_then(|p| p.property.clone())
+        else {
+            continue;
+        };
+        let times = curve
+            .node
+            .child("KeyTime")
+            .and_then(|n| n.properties.first())
+            .and_then(FbxProperty::as_i64_vec)
+            .unwrap_or_default();
+        let values: Vec<f32> = curve
+            .node
+            .child("KeyValueFloat")
+            .and_then(|n| n.properties.first())
+            .and_then(FbxProperty::as_f64_vec)
+            .unwrap_or_default()
+            .iter()
+            .map(|&v| v as f32)
+            .collect();
+        let default = curve
+            .node
+            .child("Default")
+            .and_then(|n| n.properties.first())
+            .and_then(FbxProperty::as_f64)
+            .unwrap_or(0.0);
+        duration = duration.max(times.last().copied().unwrap_or(0));
+        curves.push(RawCurve {
+            axis,
+            times,
+            values,
+            default,
+        });
+    }
+    (curves, duration)
+}
+
+fn collect_channels(
+    scene: &Scene,
+    layer: i64,
+    bone_index: &HashMap<i64, usize>,
+) -> (Vec<RawChannel>, i64) {
+    let mut channels: Vec<RawChannel> = Vec::new();
+    let mut duration = 0i64;
+    for node_id in scene.children_of(layer, Some("AnimationCurveNode")) {
+        let Some(curve_node) = scene.object(node_id) else {
+            continue;
+        };
+        let Some(target) = scene
+            .links
+            .get(&node_id)
+            .and_then(|l| l.parents.iter().find(|p| p.property.is_some()).cloned())
+        else {
+            continue;
+        };
+        let Some(&bone) = bone_index.get(&target.id) else {
+            continue;
+        };
+        // Written back with a space, as FBX stores it; the DOM normalises
+        // `Lcl Rotation` to `Lcl_Rotation` for lookup.
+        let property = target
+            .property
+            .clone()
+            .unwrap_or_default()
+            .replace('_', " ");
+        let (curves, node_duration) = collect_curves(scene, node_id);
+        if curves.is_empty() {
+            continue;
+        }
+        duration = duration.max(node_duration);
+        channels.push(RawChannel {
+            bone,
+            property,
+            kind: curve_node.name.clone(),
+            curves,
+        });
+    }
+    (channels, duration)
+}
+
+fn collect_clips(scene: &Scene, bone_index: &HashMap<i64, usize>) -> Vec<RawClip> {
+    let mut clips: Vec<RawClip> = Vec::new();
+    for stack in scene.objects_of_kind("AnimationStack") {
+        let mut channels: Vec<RawChannel> = Vec::new();
+        let mut duration = 0i64;
+        // One layer per stack, which is what Mixamo exports and what the builder
+        // writes; a multi-layer stack is flattened, keeping the last name.
+        let mut layer_name = String::from("Layer0");
+        for layer in scene.children_of(stack.id, Some("AnimationLayer")) {
+            if let Some(object) = scene.object(layer) {
+                layer_name = object.name.clone();
+            }
+            let (layer_channels, layer_duration) = collect_channels(scene, layer, bone_index);
+            channels.extend(layer_channels);
+            duration = duration.max(layer_duration);
+        }
+        if channels.is_empty() {
+            continue;
+        }
+        clips.push(RawClip {
+            name: stack.name.clone(),
+            duration,
+            layer: layer_name,
+            channels,
+        });
+    }
+    clips
+}
+
 /// Reads `bytes` as an FBX rig and re-encodes it through our own types.
 ///
 /// # Errors
@@ -32,20 +231,7 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
     let models = model::parse_all(&scene);
     let (skins, _skins_without_geometry) = skin::parse_all(&scene);
 
-    // Bones, parents before children — `build::Scene` requires that ordering so
-    // a single forward pass emits connections and a cycle cannot be expressed.
-    let mut order: Vec<i64> = Vec::new();
-    let mut queue: Vec<i64> = models.roots.clone();
-    while let Some(id) = queue.pop() {
-        let Some(node) = models.get(id) else { continue };
-        if node.is_bone() {
-            order.push(id);
-        }
-        queue.extend(node.children.iter().rev().copied());
-    }
-    let bone_index: HashMap<i64, usize> =
-        order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
-
+    let (order, bone_index) = order_bones(&models);
     let bones: Vec<build::Bone> = order
         .iter()
         .map(|&id| {
@@ -61,38 +247,12 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
         })
         .collect();
 
-    // Meshes, taken RAW rather than through `geometry::parse` (which triangulates
-    // and expands per corner — right for a solver, wrong for a writer: O9 says a
-    // quad mesh comes back a quad mesh).
-    let mut mesh_positions: Vec<Vec<f32>> = Vec::new();
-    let mut mesh_polygons: Vec<Vec<i32>> = Vec::new();
-    let mut mesh_names: Vec<String> = Vec::new();
-    let mut geometry_index: HashMap<i64, usize> = HashMap::new();
-
-    for object in scene.objects_of_kind("Geometry") {
-        let raw_vertices = object
-            .node
-            .child("Vertices")
-            .and_then(|n| n.properties.first())
-            .and_then(FbxProperty::as_f64_vec)
-            .ok_or_else(|| malformed("geometry Vertices"))?;
-        let raw_polygons = object
-            .node
-            .child("PolygonVertexIndex")
-            .and_then(|n| n.properties.first())
-            .and_then(FbxProperty::as_i64_vec)
-            .ok_or_else(|| malformed("geometry PolygonVertexIndex"))?;
-        geometry_index.insert(object.id, mesh_names.len());
-        mesh_names.push(object.name.clone());
-        mesh_positions.push(raw_vertices.iter().map(|&v| v as f32).collect());
-        mesh_polygons.push(raw_polygons.iter().map(|&v| v as i32).collect());
-    }
-
-    let meshes: Vec<build::Mesh> = (0..mesh_names.len())
+    let raw_meshes = collect_meshes(&scene)?;
+    let meshes: Vec<build::Mesh> = (0..raw_meshes.names.len())
         .map(|i| build::Mesh {
-            name: &mesh_names[i],
-            positions: &mesh_positions[i],
-            faces: build::Faces::Polygons(&mesh_polygons[i]),
+            name: &raw_meshes.names[i],
+            positions: &raw_meshes.positions[i],
+            faces: build::Faces::Polygons(&raw_meshes.polygons[i]),
         })
         .collect();
 
@@ -100,7 +260,7 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
     let mut cluster_store: Vec<Vec<build::Cluster>> = Vec::new();
     let mut skin_meshes: Vec<usize> = Vec::new();
     for s in &skins {
-        let Some(&mesh) = geometry_index.get(&s.geometry_id) else {
+        let Some(&mesh) = raw_meshes.index.get(&s.geometry_id) else {
             continue;
         };
         let clusters: Vec<build::Cluster> = s
@@ -126,121 +286,7 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
         .map(|(&mesh, clusters)| build::Skin { mesh, clusters })
         .collect();
 
-    // Animation, passed through RAW — the reader's quaternion tracks are lossy to
-    // convert back, so the original Euler curves are carried through exactly as
-    // the polygons are.
-    struct RawCurve {
-        axis: String,
-        times: Vec<i64>,
-        values: Vec<f32>,
-        default: f64,
-    }
-    struct RawChannel {
-        bone: usize,
-        property: String,
-        kind: String,
-        curves: Vec<RawCurve>,
-    }
-    struct RawClip {
-        name: String,
-        duration: i64,
-        layer: String,
-        channels: Vec<RawChannel>,
-    }
-
-    let mut raw_clips: Vec<RawClip> = Vec::new();
-    for stack in scene.objects_of_kind("AnimationStack") {
-        let mut channels: Vec<RawChannel> = Vec::new();
-        let mut duration = 0i64;
-        let mut layer_name = String::from("Layer0");
-        for layer in scene.children_of(stack.id, Some("AnimationLayer")) {
-            if let Some(object) = scene.object(layer) {
-                layer_name = object.name.clone();
-            }
-            for node_id in scene.children_of(layer, Some("AnimationCurveNode")) {
-                let Some(curve_node) = scene.object(node_id) else {
-                    continue;
-                };
-                let Some(target) = scene
-                    .links
-                    .get(&node_id)
-                    .and_then(|l| l.parents.iter().find(|p| p.property.is_some()).cloned())
-                else {
-                    continue;
-                };
-                let Some(&bone) = bone_index.get(&target.id) else {
-                    continue;
-                };
-                let property = target
-                    .property
-                    .clone()
-                    .unwrap_or_default()
-                    .replace('_', " ");
-
-                let mut curves: Vec<RawCurve> = Vec::new();
-                for curve_id in scene.children_of(node_id, Some("AnimationCurve")) {
-                    let Some(curve) = scene.object(curve_id) else {
-                        continue;
-                    };
-                    let Some(axis) = scene
-                        .links
-                        .get(&curve_id)
-                        .and_then(|l| l.parents.first())
-                        .and_then(|p| p.property.clone())
-                    else {
-                        continue;
-                    };
-                    let times = curve
-                        .node
-                        .child("KeyTime")
-                        .and_then(|n| n.properties.first())
-                        .and_then(FbxProperty::as_i64_vec)
-                        .unwrap_or_default();
-                    let values: Vec<f32> = curve
-                        .node
-                        .child("KeyValueFloat")
-                        .and_then(|n| n.properties.first())
-                        .and_then(FbxProperty::as_f64_vec)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|&v| v as f32)
-                        .collect();
-                    let default = curve
-                        .node
-                        .child("Default")
-                        .and_then(|n| n.properties.first())
-                        .and_then(FbxProperty::as_f64)
-                        .unwrap_or(0.0);
-                    duration = duration.max(times.last().copied().unwrap_or(0));
-                    curves.push(RawCurve {
-                        axis,
-                        times,
-                        values,
-                        default,
-                    });
-                }
-                if curves.is_empty() {
-                    continue;
-                }
-                channels.push(RawChannel {
-                    bone,
-                    property,
-                    kind: curve_node.name.clone(),
-                    curves,
-                });
-            }
-        }
-        if channels.is_empty() {
-            continue;
-        }
-        raw_clips.push(RawClip {
-            name: stack.name.clone(),
-            duration,
-            layer: layer_name,
-            channels,
-        });
-    }
-
+    let raw_clips = collect_clips(&scene, &bone_index);
     let curve_views: Vec<Vec<Vec<build::Curve>>> = raw_clips
         .iter()
         .map(|clip| {
@@ -288,8 +334,8 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
         })
         .collect();
 
-    // The source's own frame rate (6 = 30fps); without it Blender reads the
-    // tick times at the wrong rate.
+    // The source's own frame rate (6 = 30fps); without it Blender reads the tick
+    // times at the wrong rate.
     let time_mode = scene.time_mode.unwrap_or(6);
 
     let document = build::build(&build::Scene {
