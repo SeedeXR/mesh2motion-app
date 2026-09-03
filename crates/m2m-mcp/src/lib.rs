@@ -6,6 +6,7 @@
 //! (newline-delimited JSON-RPC 2.0 over stdio) lives in `main.rs`; everything
 //! that decides what a tool does is here and unit-tested.
 
+use base64::Engine;
 use m2m_pipeline as pipeline;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -88,31 +89,87 @@ impl Server {
             .cloned()
             .unwrap_or_else(|| json!({}));
         match self.run_tool(&name, &args) {
-            Ok(text) => ok(id, json!({ "content": [{ "type": "text", "text": text }] })),
+            Ok(content) => ok(id, json!({ "content": content })),
             // A tool failure is a normal result with isError, not a protocol error:
             // the agent reads the message and adjusts.
             Err(message) => ok(
                 id,
-                json!({ "content": [{ "type": "text", "text": message }], "isError": true }),
+                json!({ "content": text_content(&message), "isError": true }),
             ),
         }
     }
 
-    /// Runs a tool by name, returning its text result. Every arm reports what it
-    /// needs in plain words so an agent can recover.
-    fn run_tool(&mut self, name: &str, args: &Value) -> Result<String, String> {
+    /// Runs a tool by name, returning its content items (text, and — for
+    /// `render_views` — images). Every arm reports what it needs in plain words
+    /// so an agent can recover.
+    fn run_tool(&mut self, name: &str, args: &Value) -> Result<Vec<Value>, String> {
+        let text = |s: String| text_content(&s);
         match name {
-            "session_status" => Ok(self.session_status()),
-            "list_templates" => list_templates(),
-            "load_asset" => self.load_asset(args),
-            "fit_skeleton" => self.fit_skeleton(args),
-            "adjust_joint" => self.adjust_joint(args),
-            "bind_weights" => self.bind_weights(args),
-            "list_clips" => self.list_clips(args),
-            "export" => self.export(args),
-            "validate_export" => validate_export(args),
+            "session_status" => Ok(text(self.session_status())),
+            "list_templates" => list_templates().map(text),
+            "load_asset" => self.load_asset(args).map(text),
+            "fit_skeleton" => self.fit_skeleton(args).map(text),
+            "adjust_joint" => self.adjust_joint(args).map(text),
+            "bind_weights" => self.bind_weights(args).map(text),
+            "list_clips" => self.list_clips(args).map(text),
+            "export" => self.export(args).map(text),
+            "validate_export" => validate_export(args).map(text),
+            "render_views" => self.render_views(args),
             other => Err(format!("unknown tool: {other}")),
         }
+    }
+
+    /// Renders the current rig from several angles (a turntable) in Blender
+    /// headless and returns the images, so an agent can SEE the pose and
+    /// deformation, rotate around it, and refine — with an optional clip + frame
+    /// to inspect a pose mid-animation.
+    fn render_views(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let num_views = args
+            .get("num_views")
+            .and_then(Value::as_u64)
+            .unwrap_or(4)
+            .clamp(1, 12) as u32;
+        let clip = args.get("clip").and_then(Value::as_str);
+        let frame = args.get("frame").and_then(Value::as_i64).map(|f| f as i32);
+        let library = match clip {
+            Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
+            None => None,
+        };
+        let animation = library.as_deref().zip(clip);
+        let glb = pipeline::export_glb(model, fitted, self.session.falloff, animation)
+            .map_err(|e| e.to_string())?;
+        let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
+        let paths = m2m_bridge::render_views(&glb, num_views, frame, &blender)
+            .map_err(|e| e.to_string())?;
+
+        let mut content = vec![json!({
+            "type": "text",
+            "text": format!(
+                "{} turntable view(s) of the rig{}",
+                paths.len(),
+                clip.map(|c| format!(" playing {c}")).unwrap_or_default()
+            )
+        })];
+        for path in &paths {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            content.push(json!({ "type": "image", "data": data, "mimeType": "image/png" }));
+            let _ = std::fs::remove_file(path);
+        }
+        if let Some(dir) = paths.first().and_then(|p| p.parent()) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        Ok(content)
     }
 
     fn session_status(&self) -> String {
@@ -320,6 +377,8 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({ "path": { "type": "string" }, "format": { "type": "string", "enum": ["glb", "fbx"] }, "clip": { "type": "string" } }), json!(["path", "format"])) },
         { "name": "validate_export", "description": "Import an exported file into Blender and/or Maya headless and report what each read back.",
           "inputSchema": obj(json!({ "path": { "type": "string" }, "engines": { "type": "array", "items": { "type": "string", "enum": ["blender", "maya"] } } }), json!(["path"])) },
+        { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. Optional clip + frame to inspect a pose mid-animation.",
+          "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
     ])
 }
 
@@ -335,6 +394,11 @@ fn rpc_error(id: Option<Value>, code: i64, message: &str) -> Value {
 
 fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+/// Wraps a string as a one-item MCP text content array.
+fn text_content(text: &str) -> Vec<Value> {
+    vec![json!({ "type": "text", "text": text })]
 }
 
 fn arg_str(args: &Value, key: &str) -> Result<String, String> {
@@ -400,7 +464,7 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 10);
     }
 
     #[test]

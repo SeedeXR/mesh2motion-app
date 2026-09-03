@@ -23,6 +23,7 @@ fitted skeleton, so a rig is built one call at a time.
 | `list_clips` | The animation clips a creature's library offers. |
 | `export` | Export the rigged model (glb/fbx), optionally with a clip retargeted on. |
 | `validate_export` | Import an export into Blender and/or Maya **headless** and report what each read back. |
+| `render_views` | Render the rig from several angles (a turntable) in Blender headless and return the PNGs, so the agent can **see** the pose and deformation and refine it; optional clip + frame to inspect a pose mid-animation. |
 
 ## Build
 
@@ -67,6 +68,13 @@ tools/call load_asset      { "path": "…/model-human.glb" }
 tools/call fit_skeleton    { "template": "human" }
 tools/call adjust_joint    { "index": 12, "position": [0.0, 1.4, 0.0] }
 tools/call bind_weights    { }
+tools/call render_views    { "num_views": 4 }                     # see it, refine it
 tools/call export          { "path": "/tmp/rig.glb", "format": "glb" }
 tools/call validate_export { "path": "/tmp/rig.glb", "engines": ["blender", "maya"] }
 ```
+
+`render_views` returns image content, so an agent that supports images sees the
+turntable directly — rotate around the rig, spot a bad joint, `adjust_joint`,
+render again. With a `clip` + `frame` it renders a pose mid-animation, to judge
+whether the motion looks natural before exporting. It needs Blender (as
+`validate_export` does).

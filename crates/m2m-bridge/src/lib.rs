@@ -32,6 +32,9 @@ use std::path::{Path, PathBuf};
 /// drift from a copy: it is the same file the dev tooling runs.
 const INSPECT_SCRIPT: &str = include_str!("../../../tools/blender-fbx-import-check.py");
 
+/// The turntable-render script, embedded for the same reason.
+const RENDER_SCRIPT: &str = include_str!("../../../tools/blender-render-views.py");
+
 /// What Blender found when it imported a file.
 ///
 /// Every field past `imported` is optional because a failed import emits only
@@ -189,6 +192,74 @@ pub(crate) fn run_report(
 
     std::fs::read_to_string(&report)
         .map_err(|e| BridgeError::Spawn(format!("the DCC wrote no report file: {e}")))
+}
+
+/// Renders a `.glb` from `num_views` angles (a turntable) in headless Blender,
+/// returning the written PNG paths. An optional `frame` renders that frame of an
+/// imported clip, for inspecting a pose mid-animation.
+///
+/// The PNGs are left in a temp directory for the caller to read and then remove
+/// (unlike a report, they are the result). The model and script temp files are
+/// cleaned here.
+///
+/// # Errors
+///
+/// [`BridgeError`] when the subprocess fails or writes no images.
+pub fn render_views(
+    glb: &[u8],
+    num_views: u32,
+    frame: Option<i32>,
+    blender: &Path,
+) -> Result<Vec<PathBuf>, BridgeError> {
+    let dir = std::env::temp_dir();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let model = dir.join(format!("m2m-render-{stamp}.glb"));
+    let script = dir.join(format!("m2m-render-{stamp}.py"));
+    let out_dir = dir.join(format!("m2m-render-{stamp}"));
+    std::fs::create_dir_all(&out_dir).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&model, glb).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&script, RENDER_SCRIPT).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+
+    let mut command = std::process::Command::new(blender);
+    command
+        .args(["-b", "--factory-startup", "--python"])
+        .arg(&script)
+        .arg("--")
+        .arg(&model)
+        .arg(&out_dir)
+        .arg(num_views.max(1).to_string());
+    if let Some(frame) = frame {
+        command.arg(frame.to_string());
+    }
+    let output = command
+        .output()
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    // The model and script are ours to clean; the PNGs belong to the caller.
+    let _ = std::fs::remove_file(&model);
+    let _ = std::fs::remove_file(&script);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(BridgeError::Failed {
+            code: output.status.code().unwrap_or(-1),
+            stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
+        });
+    }
+
+    let mut pngs: Vec<PathBuf> = std::fs::read_dir(&out_dir)
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+        .collect();
+    pngs.sort();
+    if pngs.is_empty() {
+        return Err(BridgeError::Spawn("Blender rendered no images".to_string()));
+    }
+    Ok(pngs)
 }
 
 /// Imports `bytes` in headless Blender and returns what it found.

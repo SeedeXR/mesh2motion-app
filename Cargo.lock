@@ -1889,6 +1889,7 @@ dependencies = [
 name = "m2m-mcp"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "m2m-bridge",
  "m2m-io",
  "m2m-pipeline",
