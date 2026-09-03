@@ -215,6 +215,12 @@ export interface Viewport {
   /** Dollies the camera toward (`factor` < 1) or away from (`factor` > 1) the
    *  target — the on-screen zoom buttons. */
   zoom(factor: number): void
+  /**
+   * Puts a rotate or translate gizmo on the model so the user can reorient or
+   * reposition it independent of the grid — for a mesh that imported lying down
+   * or off-centre. `'none'` removes the gizmo.
+   */
+  setTransformMode(mode: 'none' | 'rotate' | 'translate'): void
   /** A one-line diagnostic string: canvas size, buffer size, frames drawn, and
    *  the active render backend. For "the viewport is blank" reports. */
   info(): string
@@ -298,6 +304,11 @@ export function createViewport(): Viewport {
     null
   const raycaster = new Raycaster()
   const pointer = new Vector2()
+
+  // Model-placement gizmo (rotate / move the whole model, not a joint). Attaches
+  // to `model` so the mesh and its skeleton reorient together, independent of
+  // the grid. Separate from the joint gizmo above, which edits one bone.
+  let modelGizmo: TransformControls | null = null
 
   // Playback state. The animated model is a separate object from `model` — the
   // imported mesh — so playing a clip does not disturb what the earlier steps
@@ -549,6 +560,30 @@ export function createViewport(): Viewport {
     requestRender()
   }
 
+  function setTransformMode(mode: 'none' | 'rotate' | 'translate'): void {
+    if (mode === 'none' || model === null) {
+      if (modelGizmo !== null) {
+        modelGizmo.detach()
+        scene.remove(modelGizmo.getHelper())
+        modelGizmo.dispose()
+        modelGizmo = null
+      }
+      requestRender()
+      return
+    }
+    if (modelGizmo === null) {
+      modelGizmo = new TransformControls(camera, renderer.domElement)
+      modelGizmo.addEventListener('dragging-changed', (event) => {
+        controls.enabled = !(event as unknown as { value: boolean }).value
+      })
+      modelGizmo.addEventListener('change', requestRender)
+      scene.add(modelGizmo.getHelper())
+    }
+    modelGizmo.setMode(mode)
+    modelGizmo.attach(model)
+    requestRender()
+  }
+
   /** Orbits the camera around the target by a screen-space delta — the trackpad
    *  two-finger swipe, which the browser delivers as a wheel event. */
   function trackpadOrbit(dx: number, dy: number): void {
@@ -590,7 +625,9 @@ export function createViewport(): Viewport {
     if (e.target !== renderer.domElement) return
     e.preventDefault()
     e.stopPropagation()
-    if (e.ctrlKey) {
+    // A pinch arrives as a wheel with ctrlKey (the browser's convention); Blender
+    // also zooms on Ctrl+two-finger, which on a Mac is Ctrl or ⌘. All zoom.
+    if (e.ctrlKey || e.metaKey) {
       zoom(1 + e.deltaY * 0.01)
       return
     }
@@ -607,20 +644,37 @@ export function createViewport(): Viewport {
   }
   window.addEventListener('wheel', onWheel, { capture: true, passive: false })
 
-  // Blender numpad view shortcuts: 1 front, 3 right, 7 top; Ctrl flips each to
-  // its opposite (back / left / bottom). Ignored while typing in a field.
+  // Blender numpad shortcuts: 1/3/7 snap to front/right/top (Ctrl for the
+  // opposite), 4/6/8/2 orbit the view in 15° steps, and Decimal frames the
+  // model. Ignored while typing in a field.
   const NUMPAD_VIEWS: Readonly<Record<string, readonly [ViewPreset, ViewPreset]>> = {
     Numpad1: ['front', 'back'],
     Numpad3: ['right', 'left'],
     Numpad7: ['top', 'bottom']
   }
+  // 15° expressed in `trackpadOrbit`'s screen-delta units (which scale by 0.005).
+  const STEP = Math.PI / 12 / 0.005
+  const NUMPAD_ORBITS: Readonly<Record<string, readonly [number, number]>> = {
+    Numpad4: [STEP, 0],
+    Numpad6: [-STEP, 0],
+    Numpad8: [0, STEP],
+    Numpad2: [0, -STEP]
+  }
   function onNumpadView(event: KeyboardEvent): void {
     const target = event.target
     if (target instanceof HTMLElement && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return
     const pair = NUMPAD_VIEWS[event.code]
-    if (pair === undefined) return
-    event.preventDefault()
-    setView(pair[event.ctrlKey || event.metaKey ? 1 : 0])
+    const orbit = NUMPAD_ORBITS[event.code]
+    if (pair !== undefined) {
+      event.preventDefault()
+      setView(pair[event.ctrlKey || event.metaKey ? 1 : 0])
+    } else if (orbit !== undefined) {
+      event.preventDefault()
+      trackpadOrbit(orbit[0], orbit[1])
+    } else if (event.code === 'NumpadDecimal') {
+      event.preventDefault()
+      reframe()
+    }
   }
   window.addEventListener('keydown', onNumpadView)
 
@@ -645,6 +699,7 @@ export function createViewport(): Viewport {
       const contents = await parseModel(data)
 
       clearFittedEditing()
+      setTransformMode('none')
       if (model !== null) {
         scene.remove(model)
         release(model)
@@ -691,8 +746,14 @@ export function createViewport(): Viewport {
       }
       animated = contents.root
       // The imported mesh and the animated one occupy the same space; show one
-      // at a time so they do not z-fight.
-      if (model !== null) model.visible = false
+      // at a time so they do not z-fight. Carry any model reorientation across
+      // so the preview stands the same way the posed mesh does.
+      if (model !== null) {
+        animated.position.copy(model.position)
+        animated.quaternion.copy(model.quaternion)
+        animated.scale.copy(model.scale)
+        model.visible = false
+      }
       scene.add(animated)
 
       mixer = new AnimationMixer(animated)
@@ -718,7 +779,12 @@ export function createViewport(): Viewport {
           object.material = new MeshBasicMaterial({ vertexColors: true })
         }
       })
-      if (model !== null) model.visible = false
+      if (model !== null) {
+        overlay.position.copy(model.position)
+        overlay.quaternion.copy(model.quaternion)
+        overlay.scale.copy(model.scale)
+        model.visible = false
+      }
       scene.add(overlay)
       requestRender()
     },
@@ -776,6 +842,7 @@ export function createViewport(): Viewport {
     reframe,
     setView,
     zoom,
+    setTransformMode,
 
     info(): string {
       const el = renderer.domElement
@@ -785,6 +852,7 @@ export function createViewport(): Viewport {
 
     dispose(): void {
       playing = false
+      setTransformMode('none')
       clearFittedEditing()
       if (overlay !== null) release(overlay)
       if (animated !== null) release(animated)

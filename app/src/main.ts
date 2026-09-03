@@ -10,6 +10,7 @@ import {
   Play,
   Download,
   Move3d,
+  Rotate3d,
   Maximize,
   ZoomIn,
   ZoomOut,
@@ -98,6 +99,9 @@ let clip: string | null = null
 let playing = false
 
 let viewport: Viewport | null = null
+
+/** Which model-transform tool is active (rotate/move the model), or none. */
+let transformMode: 'none' | 'rotate' | 'translate' = 'none'
 
 function ensureViewport(): Viewport {
   viewport ??= createViewport()
@@ -539,6 +543,8 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       // frame the model against.
       render()
       const viewport = ensureViewport()
+      // A new model arrives untransformed; the gizmo is cleared inside show().
+      transformMode = 'none'
       await viewport.show(geometry)
       // Surface the render diagnostics for "the viewport is blank" reports.
       const diag = viewport.info()
@@ -598,12 +604,19 @@ function renderViewportNav(): string {
         <i data-lucide="zoom-out" width="16" height="16" aria-hidden="true"></i>
       </button>
       <span class="nav-sep"></span>
+      <button class="nav-btn" data-transform="translate" aria-pressed="false" title="Move the model (independent of the grid)" aria-label="Move the model">
+        <i data-lucide="move-3d" width="16" height="16" aria-hidden="true"></i>
+      </button>
+      <button class="nav-btn" data-transform="rotate" aria-pressed="false" title="Rotate the model (independent of the grid)" aria-label="Rotate the model">
+        <i data-lucide="rotate-3d" width="16" height="16" aria-hidden="true"></i>
+      </button>
+      <span class="nav-sep"></span>
       <button class="nav-btn nav-txt" data-view-preset="front" title="Front view (numpad 1)" aria-label="Front view">Front</button>
       <button class="nav-btn nav-txt" data-view-preset="right" title="Side view (numpad 3)" aria-label="Side view">Side</button>
       <button class="nav-btn nav-txt" data-view-preset="top" title="Top view (numpad 7)" aria-label="Top view">Top</button>
       <span class="nav-sep"></span>
       <button class="nav-btn" aria-label="Navigation help"
-        title="Blender-style navigation&#10;Orbit: middle-drag or ⌥+drag&#10;Pan: ⇧+middle-drag&#10;Zoom: scroll / pinch or ⌃+middle-drag&#10;Views: numpad 1 front, 3 side, 7 top (⌃ for the opposite)&#10;Fit step: click a joint, drag or arrow-keys to nudge (⇧ finer)">
+        title="Blender-style navigation&#10;Orbit: middle-drag, ⌥+drag, or two-finger swipe&#10;Pan: ⇧+middle-drag, right-drag, or ⇧+two-finger&#10;Zoom: scroll, pinch, or ⌃/⌘+two-finger&#10;Views: numpad 1/3/7 front/side/top (⌃ opposite), 4/6/8/2 orbit, . frame&#10;Model: the move / rotate tools reorient the mesh on the grid&#10;Fit step: click a joint, drag or arrow-keys to nudge (⇧ finer)">
         <i data-lucide="help-circle" width="16" height="16" aria-hidden="true"></i>
       </button>
     </div>`
@@ -658,7 +671,7 @@ function render(): void {
   }
 
   createIcons({
-    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Maximize, ZoomIn, ZoomOut, HelpCircle }
+    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle }
   })
 
   // Viewport navigation toolbar: frame / zoom / preset views.
@@ -675,6 +688,22 @@ function render(): void {
     const preset = button.dataset['viewPreset'] as ViewPreset | undefined
     if (preset === undefined) return
     button.addEventListener('click', () => ensureViewport().setView(preset))
+  })
+
+  // Rotate / move the model. Clicking a tool toggles it; the two are mutually
+  // exclusive, and clicking the active one returns to plain navigation.
+  const transformButtons = app.querySelectorAll<HTMLButtonElement>('[data-transform]')
+  transformButtons.forEach((button) => {
+    const mode = button.dataset['transform']
+    if (mode !== 'rotate' && mode !== 'translate') return
+    button.setAttribute('aria-pressed', String(transformMode === mode))
+    button.addEventListener('click', () => {
+      transformMode = transformMode === mode ? 'none' : mode
+      ensureViewport().setTransformMode(transformMode)
+      transformButtons.forEach((b) =>
+        b.setAttribute('aria-pressed', String(b.dataset['transform'] === transformMode))
+      )
+    })
   })
 
   const importButton = app.querySelector<HTMLButtonElement>('#import')

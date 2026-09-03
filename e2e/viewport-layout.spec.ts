@@ -182,3 +182,34 @@ test('wheel gestures move the camera', async ({ page }) => {
   const after = await canvas.screenshot()
   expect(Buffer.compare(before, after)).not.toBe(0)
 })
+
+// The model transform tool draws a gizmo on the model and removes it again,
+// without moving the camera.
+test('the model transform gizmo appears and clears', async ({ page }) => {
+  await page.route('**/model.glb', (route) =>
+    route.fulfill({ path: 'assets/models/model-human.glb', contentType: 'model/gltf-binary' })
+  )
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/e2e/viewport-layout-harness.html')
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__ready === true, {
+    timeout: 30_000
+  })
+  const canvas = page.locator('.viewport canvas')
+  const mode = (m: string): Promise<void> =>
+    page.evaluate(
+      (x) => (window as unknown as { __viewport: { setTransformMode: (m: string) => void } }).__viewport.setTransformMode(x),
+      m
+    )
+
+  await page.evaluate(() => (window as unknown as { __viewport: { reframe: () => void } }).__viewport.reframe())
+  await page.waitForTimeout(400)
+  const base = await canvas.screenshot()
+
+  await mode('rotate')
+  await page.waitForTimeout(300)
+  expect(Buffer.compare(base, await canvas.screenshot())).not.toBe(0) // gizmo drawn
+
+  await mode('none')
+  await page.waitForTimeout(300)
+  expect(Buffer.compare(base, await canvas.screenshot())).toBe(0) // removed, camera unmoved
+})

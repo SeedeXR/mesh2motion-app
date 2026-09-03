@@ -228,6 +228,7 @@ body {
 .nav-btn.nav-txt { letter-spacing: 0.02em; }
 .nav-btn:hover { background: var(--bg-3); color: var(--fg-0); }
 .nav-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.nav-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg-0); }
 .nav-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--border); }
 
 /* A creature template in the Choose Skeleton step. */
