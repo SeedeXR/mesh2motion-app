@@ -154,3 +154,46 @@ fn maya_reads_our_own_encoder_output() {
     assert_eq!(report.weight_total, Some(8.0));
     assert_eq!(report.root_joints, vec!["Root"]);
 }
+
+/// The full check: a real human rig re-encoded through OUR fbx writer
+/// (`fbx::roundtrip::reencode`, the same path the rebuild_rig example uses) must
+/// still open in Maya with its skeleton, meshes and skinning intact — the O9
+/// acceptance test carried all the way to the strict reader. Ignored; needs Maya.
+#[test]
+#[ignore = "needs a local Maya install (mayapy)"]
+fn maya_reads_our_reencoded_human_rig() {
+    let mayapy = match maya::mayapy_path() {
+        Ok(path) => path,
+        Err(_) => return,
+    };
+    let source = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/test-files/retarget testing/mixamo-original-rig.fbx"
+    ))
+    .expect("the reference fbx");
+    let ours = m2m_io::fbx::roundtrip::reencode(&source).expect("our encoder re-encodes the rig");
+
+    let report = maya::inspect(&ours, &mayapy).expect("inspects");
+    assert!(
+        report.imported,
+        "Maya rejected our re-encoded rig: {:?}",
+        report.error
+    );
+    assert_eq!(
+        report.joints,
+        Some(65),
+        "skeleton did not survive our re-encode"
+    );
+    assert_eq!(
+        report.meshes,
+        Some(2),
+        "meshes did not survive our re-encode"
+    );
+    assert_eq!(
+        report.skin_clusters,
+        Some(2),
+        "skinning did not survive our re-encode"
+    );
+    assert_eq!(report.mesh_vertices, vec![10514, 14232]);
+    assert_eq!(report.root_joints, vec!["mixamorig:Hips"]);
+}

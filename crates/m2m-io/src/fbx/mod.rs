@@ -40,6 +40,7 @@ pub mod encode;
 pub mod geometry;
 pub mod model;
 pub mod reader;
+pub mod roundtrip;
 pub mod skin;
 pub mod text;
 pub mod transform;
