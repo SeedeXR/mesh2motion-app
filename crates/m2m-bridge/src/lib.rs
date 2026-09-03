@@ -24,6 +24,7 @@
 #![warn(missing_docs)]
 
 pub mod live;
+pub mod maya;
 
 use std::path::{Path, PathBuf};
 
@@ -79,19 +80,22 @@ pub enum BridgeError {
     /// Blender itself could not be located to run.
     #[error("Blender not found: set M2M_BLENDER, or install it at the default path")]
     BlenderNotFound,
+    /// Maya (`mayapy`) could not be located to run.
+    #[error("mayapy not found: set M2M_MAYAPY, or install Maya at the default path")]
+    MayaNotFound,
     /// The subprocess or a temp-file operation failed.
-    #[error("running Blender: {0}")]
+    #[error("running the DCC subprocess: {0}")]
     Spawn(String),
-    /// Blender ran but exited non-zero (an import that failed hard).
-    #[error("Blender exited with {code}: {stderr}")]
+    /// The DCC ran but exited non-zero (an import that failed hard).
+    #[error("the DCC exited with {code}: {stderr}")]
     Failed {
         /// Exit code, or -1 when killed by a signal.
         code: i32,
-        /// The tail of Blender's stderr, for the reason.
+        /// The tail of the DCC's stderr, for the reason.
         stderr: String,
     },
-    /// The report Blender wrote was not the JSON this expects.
-    #[error("Blender's report did not parse: {0}")]
+    /// The report the DCC wrote was not the JSON this expects.
+    #[error("the DCC report did not parse: {0}")]
     BadReport(String),
 }
 
