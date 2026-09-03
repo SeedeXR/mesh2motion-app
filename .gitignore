@@ -43,3 +43,7 @@ references/
 /e2e/*.png
 /test-results/
 /playwright-report/
+
+# Python bytecode from py_compile checks
+__pycache__/
+*.pyc
