@@ -1347,7 +1347,7 @@ mod tests {
     use super::{fit, templates};
 
     fn model(relative: &str) -> Vec<u8> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/").to_owned() + relative;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/").to_owned() + relative;
         std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
     }
 
@@ -1839,7 +1839,7 @@ mod tests {
         // bundle. A template whose library is missing would list no clips only
         // when a user picked that creature — the same failure mode `available`
         // exists to prevent for rigs.
-        let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/animations");
+        let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/animations");
         for template in templates().expect("manifests parse") {
             let found = super::library_names(&template.name)
                 .iter()
@@ -1848,44 +1848,17 @@ mod tests {
         }
     }
 
-    /// The bundle config actually ships the libraries the app looks for.
-    #[test]
-    fn the_bundle_config_carries_the_animation_libraries() {
-        // `library_bytes` prefers the bundled copy and falls back to the
-        // repository, so a wrong glob here would pass every test on this
-        // machine and ship an app with no clips at all.
-        let config: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
-                .expect("reads the config"),
-        )
-        .expect("parses");
-
-        let resources = config["bundle"]["resources"]
-            .as_object()
-            .expect("bundle.resources is a source-to-target map");
-        let (source, target) = resources
-            .iter()
-            .find(|(source, _)| source.contains("animations"))
-            .expect("no resource entry mentions the animation libraries");
-        assert_eq!(target.as_str(), Some("animations/"));
-
-        // The glob must match the files, not merely mention the word.
-        let pattern = source.rsplit('/').next().expect("a file pattern");
-        assert_eq!(pattern, "*.glb", "the glob is {source}");
-        let directory = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR")))
-            .join(source.trim_end_matches("/*.glb"));
-        assert!(
-            directory.join("human-base-animations.glb").is_file(),
-            "{} does not hold the libraries",
-            directory.display()
-        );
-    }
+    // `the_bundle_config_carries_the_animation_libraries` moved to `src-tauri`
+    // with the extraction: it validates the app's `tauri.conf.json`, which is not
+    // this crate's file.
 
     /// The human's library is the `-base-` one, which is why two names are tried.
     #[test]
     fn the_human_library_is_found_under_its_second_name() {
-        let directory =
-            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/animations"));
+        let directory = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/animations"
+        ));
         let [first, second] = super::library_names("human");
 
         assert!(

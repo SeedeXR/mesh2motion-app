@@ -9,7 +9,9 @@
 
 #![forbid(unsafe_code)]
 
-pub mod rig;
+// The rigging pipeline lives in its own library crate now, shared with the MCP
+// server; `rig::…` call sites keep working through this alias.
+pub use m2m_pipeline as rig;
 
 use m2m_io::import::Import;
 use serde::Serialize;
@@ -512,6 +514,37 @@ mod ipc_tests {
                 panic!("delivered as JSON ({} chars), not raw bytes", json.len())
             }
         }
+    }
+
+    /// The bundle config actually ships the animation libraries the app looks
+    /// for. Lives here because it validates THIS crate's `tauri.conf.json`; the
+    /// pipeline that reads the libraries moved to `m2m-pipeline`.
+    #[test]
+    fn the_bundle_config_carries_the_animation_libraries() {
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
+                .expect("reads the config"),
+        )
+        .expect("parses");
+
+        let resources = config["bundle"]["resources"]
+            .as_object()
+            .expect("bundle.resources is a source-to-target map");
+        let (source, target) = resources
+            .iter()
+            .find(|(source, _)| source.contains("animations"))
+            .expect("no resource entry mentions the animation libraries");
+        assert_eq!(target.as_str(), Some("animations/"));
+
+        let pattern = source.rsplit('/').next().expect("a file pattern");
+        assert_eq!(pattern, "*.glb", "the glob is {source}");
+        let directory = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR")))
+            .join(source.trim_end_matches("/*.glb"));
+        assert!(
+            directory.join("human-base-animations.glb").is_file(),
+            "{} does not hold the libraries",
+            directory.display()
+        );
     }
 
     /// The IPC logging wrapper is transparent: it times and logs, but returns the

@@ -1886,6 +1886,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "m2m-pipeline"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "m2m-core",
+ "m2m-io",
+ "m2m-rig",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "m2m-rig"
 version = "0.1.0"
 dependencies = [
@@ -1931,6 +1944,7 @@ dependencies = [
  "m2m-bridge",
  "m2m-core",
  "m2m-io",
+ "m2m-pipeline",
  "m2m-rig",
  "serde",
  "serde_json",

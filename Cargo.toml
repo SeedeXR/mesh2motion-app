@@ -5,6 +5,7 @@ members = [
     "crates/m2m-io",
     "crates/m2m-rig",
     "crates/m2m-bridge",
+    "crates/m2m-pipeline",
     "src-tauri",
 ]
 
