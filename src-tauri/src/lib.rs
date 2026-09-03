@@ -13,7 +13,50 @@ pub mod rig;
 
 use m2m_io::import::Import;
 use serde::Serialize;
+use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
+
+/// One progress step of a pipeline command, sent to the webview as a
+/// `rig-progress` event and mirrored to stdout. `fraction` is 0..1.
+#[derive(Clone, Serialize)]
+struct Progress {
+    /// The command this belongs to (`fit_skeleton`, `bind_weights`, …).
+    command: &'static str,
+    /// A short, human phase label (`reading`, `solving`, `encoding`, `done`).
+    phase: &'static str,
+    /// How far along, 0 at the start and 1 when done.
+    fraction: f32,
+}
+
+/// Emits a progress step and logs it. The emit is best-effort — a dropped event
+/// must never fail the command that reported it (todo P3-8b).
+fn progress(app: &tauri::AppHandle, command: &'static str, phase: &'static str, fraction: f32) {
+    println!("[ipc] {command}: {phase} ({:.0}%)", fraction * 100.0);
+    let _ = app.emit(
+        "rig-progress",
+        Progress {
+            command,
+            phase,
+            fraction,
+        },
+    );
+}
+
+/// Runs a command's blocking work, logging its start, its duration, and — this
+/// is the point — every error, so an IPC failure is visible in the terminal and
+/// in bug reports rather than only bubbling to the webview. The result is passed
+/// through unchanged.
+fn timed<T>(command: &'static str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let start = std::time::Instant::now();
+    println!("[ipc] {command}: start");
+    let result = work();
+    let ms = start.elapsed().as_millis();
+    match &result {
+        Ok(_) => println!("[ipc] {command}: ok in {ms} ms"),
+        Err(e) => eprintln!("[ipc] {command}: FAILED in {ms} ms: {e}"),
+    }
+    result
+}
 
 /// Build and environment information surfaced in the About panel and in bug
 /// reports, so a report always carries the versions it was produced against.
@@ -126,7 +169,7 @@ fn pick_and_inspect(app: &tauri::AppHandle) -> Result<Option<ImportedFile>, Stri
 /// carries and what it does not.
 #[tauri::command]
 async fn load_model(path: String) -> Result<tauri::ipc::Response, String> {
-    tauri::async_runtime::spawn_blocking(move || read_as_glb(&path))
+    tauri::async_runtime::spawn_blocking(move || timed("load_model", || read_as_glb(&path)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -231,9 +274,11 @@ async fn weight_overlay(
     falloff: f32,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
-        let glb = rig::overlay_glb(&source, &skeleton, falloff).map_err(|e| e.to_string())?;
-        Ok(tauri::ipc::Response::new(glb))
+        timed("weight_overlay", || {
+            let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+            let glb = rig::overlay_glb(&source, &skeleton, falloff).map_err(|e| e.to_string())?;
+            Ok(tauri::ipc::Response::new(glb))
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -255,11 +300,16 @@ async fn preview_animation(
     clip: String,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
-        let library = library_bytes(&app, &template)?;
-        let glb = rig::export_glb(&source, &skeleton, falloff, Some((&library, &clip)))
-            .map_err(|e| e.to_string())?;
-        Ok(tauri::ipc::Response::new(glb))
+        timed("preview_animation", || {
+            progress(&app, "preview_animation", "reading", 0.0);
+            let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+            let library = library_bytes(&app, &template)?;
+            progress(&app, "preview_animation", "retargeting", 0.4);
+            let glb = rig::export_glb(&source, &skeleton, falloff, Some((&library, &clip)))
+                .map_err(|e| e.to_string())?;
+            progress(&app, "preview_animation", "done", 1.0);
+            Ok(tauri::ipc::Response::new(glb))
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -280,10 +330,20 @@ fn skeleton_templates() -> Result<Vec<rig::SkeletonTemplate>, String> {
 /// a few hundred bones, not a vertex buffer, and `architecture.md` §4 draws the
 /// line at bulk geometry, not at everything numeric.
 #[tauri::command]
-async fn fit_skeleton(template: String, path: String) -> Result<rig::FittedSkeleton, String> {
+async fn fit_skeleton(
+    app: tauri::AppHandle,
+    template: String,
+    path: String,
+) -> Result<rig::FittedSkeleton, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
-        rig::fit(&template, &bytes).map_err(|e| e.to_string())
+        timed("fit_skeleton", || {
+            progress(&app, "fit_skeleton", "reading", 0.0);
+            let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+            progress(&app, "fit_skeleton", "fitting", 0.3);
+            let fitted = rig::fit(&template, &bytes).map_err(|e| e.to_string())?;
+            progress(&app, "fit_skeleton", "done", 1.0);
+            Ok(fitted)
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -294,17 +354,26 @@ async fn fit_skeleton(template: String, path: String) -> Result<rig::FittedSkele
 /// Off the main thread for the same reason as fitting, and more so: this
 /// voxelises, solves a geodesic field per bone and then assigns weights.
 /// Measured on the reference body — 7,399 vertices, 66 bones — the whole thing
-/// takes about 56 ms, which is why there is still no progress event to report
-/// (todo P3-8b). A model an order of magnitude larger will change that.
+/// takes about 56 ms. Coarse `rig-progress` phase events are emitted at the
+/// command boundary (P3-8b); a model an order of magnitude larger, where the
+/// solve dominates, is where finer per-bone progress from inside the solver
+/// would start to matter.
 #[tauri::command]
 async fn bind_weights(
+    app: tauri::AppHandle,
     path: String,
     skeleton: rig::FittedSkeleton,
     falloff: f32,
 ) -> Result<rig::BindReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
-        rig::bind(&bytes, &skeleton, falloff).map_err(|e| e.to_string())
+        timed("bind_weights", || {
+            progress(&app, "bind_weights", "reading", 0.0);
+            let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+            progress(&app, "bind_weights", "solving", 0.3);
+            let report = rig::bind(&bytes, &skeleton, falloff).map_err(|e| e.to_string())?;
+            progress(&app, "bind_weights", "done", 1.0);
+            Ok(report)
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -329,50 +398,57 @@ async fn export_model(
     clip: Option<String>,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // Unknown formats are refused rather than defaulted: silently writing
-        // a `.glb` for someone who asked for FBX is worse than an error.
-        let (label, extension) = match format.as_str() {
-            "glb" => ("glTF binary", "glb"),
-            "fbx" => ("FBX binary", "fbx"),
-            other => return Err(format!("unknown export format {other}")),
-        };
+        timed("export_model", || {
+            // Unknown formats are refused rather than defaulted: silently writing
+            // a `.glb` for someone who asked for FBX is worse than an error.
+            let (label, extension) = match format.as_str() {
+                "glb" => ("glTF binary", "glb"),
+                "fbx" => ("FBX binary", "fbx"),
+                other => return Err(format!("unknown export format {other}")),
+            };
 
-        let Some(chosen) = app
-            .dialog()
-            .file()
-            .add_filter(label, &[extension])
-            .set_file_name(format!("rigged.{extension}"))
-            .blocking_save_file()
-        else {
-            return Ok(None);
-        };
-        let target = chosen.into_path().map_err(|e| e.to_string())?;
+            let Some(chosen) = app
+                .dialog()
+                .file()
+                .add_filter(label, &[extension])
+                .set_file_name(format!("rigged.{extension}"))
+                .blocking_save_file()
+            else {
+                // A cancelled save is not an error and reports no progress.
+                return Ok(None);
+            };
+            let target = chosen.into_path().map_err(|e| e.to_string())?;
 
-        let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
-        let library = match &clip {
-            Some(_) => Some(library_bytes(&app, &template)?),
-            None => None,
-        };
-        let bytes = match extension {
-            "fbx" => rig::export_fbx(
-                &source,
-                &skeleton,
-                falloff,
-                library.as_deref().zip(clip.as_deref()),
-            ),
-            _ => rig::export_glb(
-                &source,
-                &skeleton,
-                falloff,
-                library.as_deref().zip(clip.as_deref()),
-            ),
-        }
-        .map_err(|e| e.to_string())?;
-        std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
+            progress(&app, "export_model", "reading", 0.1);
+            let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
+            let library = match &clip {
+                Some(_) => Some(library_bytes(&app, &template)?),
+                None => None,
+            };
+            progress(&app, "export_model", "solving", 0.4);
+            let bytes = match extension {
+                "fbx" => rig::export_fbx(
+                    &source,
+                    &skeleton,
+                    falloff,
+                    library.as_deref().zip(clip.as_deref()),
+                ),
+                _ => rig::export_glb(
+                    &source,
+                    &skeleton,
+                    falloff,
+                    library.as_deref().zip(clip.as_deref()),
+                ),
+            }
+            .map_err(|e| e.to_string())?;
+            progress(&app, "export_model", "writing", 0.8);
+            std::fs::write(&target, &bytes).map_err(|e| format!("cannot write the export: {e}"))?;
+            progress(&app, "export_model", "done", 1.0);
 
-        Ok(Some(target.file_name().map_or_else(String::new, |n| {
-            n.to_string_lossy().into_owned()
-        })))
+            Ok(Some(target.file_name().map_or_else(String::new, |n| {
+                n.to_string_lossy().into_owned()
+            })))
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -436,5 +512,16 @@ mod ipc_tests {
                 panic!("delivered as JSON ({} chars), not raw bytes", json.len())
             }
         }
+    }
+
+    /// The IPC logging wrapper is transparent: it times and logs, but returns the
+    /// closure's own result — success and failure alike — unchanged.
+    #[test]
+    fn timed_passes_the_result_through() {
+        assert_eq!(super::timed("t", || Ok::<_, String>(42)), Ok(42));
+        assert_eq!(
+            super::timed("t", || Err::<i32, _>("boom".to_string())),
+            Err("boom".to_string())
+        );
     }
 }

@@ -7,6 +7,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 /**
  * Normalises a bulk-channel (raw-bytes) response to an `ArrayBuffer`.
@@ -80,6 +81,26 @@ export function forwardConsoleToTerminal(): void {
 /** True when running inside the Tauri webview rather than a plain browser. */
 export function isDesktop(): boolean {
   return '__TAURI_INTERNALS__' in window
+}
+
+/** One progress step of a long-running command — mirrors the Rust `Progress`. */
+export interface RigProgress {
+  readonly command: string
+  readonly phase: string
+  /** 0 at the start, 1 when done. */
+  readonly fraction: number
+}
+
+/** Subscribes to `rig-progress` events (fit/bind/export/preview phases). No-op
+ *  in a plain browser. */
+export async function onRigProgress(handler: (p: RigProgress) => void): Promise<void> {
+  if (!isDesktop()) return
+  try {
+    await listen<RigProgress>('rig-progress', (event) => handler(event.payload))
+  } catch {
+    // The event bridge can be absent (a test mock, an odd webview); progress
+    // just won't show. Never let that break startup.
+  }
 }
 
 /** What reading a model file found. Mirrors `m2m_io::import::Import`. */

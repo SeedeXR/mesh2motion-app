@@ -29,6 +29,7 @@ import {
   buildInfo,
   devAutoload,
   devAutofit,
+  onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
@@ -52,6 +53,14 @@ import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewpo
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
+
+// Surface long-running-command progress (fit/bind/export/preview) in the status
+// bar; it clears when the command finishes.
+void onRigProgress((p) => {
+  const el = document.querySelector<HTMLSpanElement>('#diag')
+  if (el === null) return
+  el.textContent = p.fraction >= 1 ? '' : `${p.command}: ${p.phase} ${Math.round(p.fraction * 100)}%`
+})
 
 /** Index of the step the user is currently on. */
 // ponytail: nothing advances activeStep yet — each step gains its own completion
