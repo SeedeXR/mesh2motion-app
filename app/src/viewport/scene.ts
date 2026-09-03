@@ -28,12 +28,14 @@ import {
   type Material,
   Mesh,
   MeshBasicMaterial,
+  MOUSE,
   type Object3D,
   PerspectiveCamera,
   Raycaster,
   Scene,
   SkeletonHelper,
   SphereGeometry,
+  TOUCH,
   Vector2,
   Vector3,
   WebGLRenderer
@@ -47,12 +49,41 @@ import {
   hasVertexColors,
   parseAnimated,
   parseModel,
+  presetCameraPosition,
   skeletonSegments,
   withJointMoved,
-  type ModelContents
+  type ModelContents,
+  type ViewPreset
 } from './model'
 
 const FOV_DEGREES = 45
+
+/**
+ * Rewrites OrbitControls' button map on each pointer-down to mimic Blender.
+ *
+ * Blender navigates with the middle mouse button: MMB orbits, Shift+MMB pans,
+ * Ctrl+MMB zooms. A Magic Mouse or trackpad has no middle button, so — as
+ * Blender's own "emulate 3-button mouse" does — Option(Alt)+left stands in for
+ * it. Plain left is left unbound for selection (Blender's LMB-select). The
+ * capture phase runs this before OrbitControls reads `mouseButtons`.
+ */
+function installBlenderNavigation(controls: OrbitControls, dom: HTMLElement): void {
+  const action = (e: PointerEvent): MOUSE =>
+    e.shiftKey ? MOUSE.PAN : e.ctrlKey || e.metaKey ? MOUSE.DOLLY : MOUSE.ROTATE
+  dom.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.button === 1) {
+        controls.mouseButtons = { LEFT: undefined, MIDDLE: action(e), RIGHT: MOUSE.PAN }
+      } else if (e.button === 0 && e.altKey) {
+        controls.mouseButtons = { LEFT: action(e), MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
+      } else if (e.button === 0) {
+        controls.mouseButtons = { LEFT: undefined, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
+      }
+    },
+    true
+  )
+}
 
 /** A mounted viewport. */
 export interface Viewport {
@@ -90,6 +121,12 @@ export interface Viewport {
   showOverlay(data: ArrayBuffer): Promise<void>
   /** Frames the current model again, e.g. after the panel layout changed. */
   reframe(): void
+  /** Snaps the camera to a canonical view (front/back/left/right/top/bottom),
+   *  keeping the current distance and target. */
+  setView(preset: ViewPreset): void
+  /** Dollies the camera toward (`factor` < 1) or away from (`factor` > 1) the
+   *  target — the on-screen zoom buttons. */
+  zoom(factor: number): void
   /** A one-line diagnostic string: canvas size, buffer size, frames drawn, and
    *  the active render backend. For "the viewport is blank" reports. */
   info(): string
@@ -112,7 +149,27 @@ export function createViewport(): Viewport {
 
   const camera = new PerspectiveCamera(FOV_DEGREES, 1, 0.01, 100)
   const controls = new OrbitControls(camera, renderer.domElement)
-  controls.enableDamping = false
+  // Damping gives the gentle glide a trackpad flick expects (the standing loop
+  // draws every frame anyway, so its follow-up frames cost nothing). Zooming to
+  // the cursor, not the centre, is what makes a Magic Mouse's small scroll
+  // deltas feel precise. Screen-space panning keeps a pan parallel to the
+  // screen regardless of camera pitch — moving the view independent of the grid.
+  controls.enableDamping = true
+  controls.dampingFactor = 0.08
+  controls.zoomToCursor = true
+  controls.screenSpacePanning = true
+  controls.rotateSpeed = 0.85
+  controls.zoomSpeed = 1.1
+  controls.panSpeed = 0.85
+  // Blender-style navigation for familiarity: the MIDDLE mouse button orbits,
+  // Shift+MMB pans, Ctrl+MMB zooms. A Magic Mouse / trackpad has no middle
+  // button, so Option(Alt)+LEFT stands in for it — Blender's own "emulate
+  // 3-button mouse". Plain LEFT is left unbound so it can select joint handles,
+  // exactly as LMB selects in Blender. `blenderNavigation` rewrites these per
+  // pointer-down from the held modifiers just before OrbitControls reads them.
+  controls.mouseButtons = { LEFT: undefined, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
+  controls.touches = { ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }
+  installBlenderNavigation(controls, renderer.domElement)
 
   scene.add(new AmbientLight(0xffffff, 1.2))
   const key = new DirectionalLight(0xffffff, 1.8)
@@ -132,7 +189,20 @@ export function createViewport(): Viewport {
   // back to binding — the callback is how they get there.
   let jointHandles: Mesh[] = []
   let handleGeometry: SphereGeometry | null = null
-  let handleMaterial: MeshBasicMaterial | null = null
+  // Three shared handle materials so a joint can signal its state by colour:
+  // amber at rest, brighter on hover (the cursor is over it, click to grab),
+  // blue when selected (the gizmo is on it and arrow-keys nudge it). Drawn over
+  // the mesh (depthTest off) so a buried joint stays visible and grabbable.
+  const handleRest = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
+  const handleHover = new MeshBasicMaterial({ color: 0xffd18a, depthTest: false, transparent: true })
+  const handleSelected = new MeshBasicMaterial({ color: 0x5cc8ff, depthTest: false, transparent: true })
+  let hoveredHandle: Mesh | null = null
+  let selectedHandle: Mesh | null = null
+  // Arrow-key nudge distance (one press), sized to the skeleton so it is a fine
+  // touch at any creature scale; `nudgeDirty` batches a burst of presses into a
+  // single undo step, committed on key-up.
+  let nudgeStep = 0.01
+  let nudgeDirty = false
   let gizmo: TransformControls | null = null
   let editPositions: Array<[number, number, number]> = []
   let editParents: readonly (number | null)[] = []
@@ -188,19 +258,80 @@ export function createViewport(): Viewport {
     fittedSkeleton.geometry.computeBoundingSphere()
   }
 
-  /** Picks the joint handle under the pointer and attaches the gizmo to it. A
-   * miss leaves the current selection alone. */
-  function onPointerDown(event: PointerEvent): void {
-    if (gizmo === null || gizmo.dragging) return
+  /** The joint handle under the pointer, or null. Shared by hover and picking. */
+  function handleUnderPointer(event: PointerEvent): Mesh | null {
     const rect = renderer.domElement.getBoundingClientRect()
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(pointer, camera)
     const hit = raycaster.intersectObjects(jointHandles, false)[0]
-    if (hit !== undefined) {
-      gizmo.attach(hit.object)
+    return (hit?.object as Mesh | undefined) ?? null
+  }
+
+  /** Picks the joint handle under the pointer and attaches the gizmo to it. A
+   * miss leaves the current selection alone. */
+  function onPointerDown(event: PointerEvent): void {
+    if (gizmo === null || gizmo.dragging) return
+    const handle = handleUnderPointer(event)
+    if (handle !== null) {
+      if (selectedHandle !== null && selectedHandle !== handle) selectedHandle.material = handleRest
+      selectedHandle = handle
+      handle.material = handleSelected
+      gizmo.attach(handle)
       requestRender()
     }
+  }
+
+  /** Highlights the handle under the cursor and shows a grab cursor over it, so
+   * it is obvious what a click will pick before the click happens. */
+  function onPointerMove(event: PointerEvent): void {
+    if (gizmo?.dragging === true) return
+    const handle = handleUnderPointer(event)
+    if (handle === hoveredHandle) return
+    if (hoveredHandle !== null && hoveredHandle !== selectedHandle) hoveredHandle.material = handleRest
+    hoveredHandle = handle
+    if (handle !== null && handle !== selectedHandle) handle.material = handleHover
+    renderer.domElement.style.cursor = handle !== null ? 'pointer' : ''
+    requestRender()
+  }
+
+  /** Arrow keys nudge the selected joint in the screen plane for a precise final
+   * placement; Shift makes the step five times finer. The move is batched — one
+   * undo step per burst — and committed on key-up. */
+  function onEditKeyDown(event: KeyboardEvent): void {
+    if (selectedHandle === null) return
+    const axes: Readonly<Record<string, readonly [number, number]>> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, 1],
+      ArrowDown: [0, -1]
+    }
+    const axis = axes[event.key]
+    if (axis === undefined) return
+    event.preventDefault()
+    const step = event.shiftKey ? nudgeStep / 5 : nudgeStep
+    // Screen-space: move along the camera's right and up axes so a nudge tracks
+    // what the user sees, not world axes they'd have to reason about.
+    const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
+    const up = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
+    const delta = right.multiplyScalar(axis[0] * step).add(up.multiplyScalar(axis[1] * step))
+    selectedHandle.position.add(delta)
+    const index = selectedHandle.userData.jointIndex as number
+    editPositions = withJointMoved(editPositions, index, [
+      selectedHandle.position.x,
+      selectedHandle.position.y,
+      selectedHandle.position.z
+    ])
+    refreshFittedGeometry()
+    nudgeDirty = true
+    requestRender()
+  }
+
+  /** Commits a nudge burst once the keys are released, as a single edit. */
+  function onEditKeyUp(): void {
+    if (!nudgeDirty) return
+    nudgeDirty = false
+    onJointEdit?.(editPositions)
   }
 
   /** Tears down any joint handles and the gizmo, restoring the plain overlay. */
@@ -209,6 +340,9 @@ export function createViewport(): Viewport {
       gizmo.detach()
       scene.remove(gizmo.getHelper())
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('keydown', onEditKeyDown)
+      window.removeEventListener('keyup', onEditKeyUp)
       gizmo.dispose()
       gizmo = null
     }
@@ -216,8 +350,10 @@ export function createViewport(): Viewport {
     jointHandles = []
     handleGeometry?.dispose()
     handleGeometry = null
-    handleMaterial?.dispose()
-    handleMaterial = null
+    hoveredHandle = null
+    selectedHandle = null
+    nudgeDirty = false
+    renderer.domElement.style.cursor = ''
     onJointEdit = null
     controls.enabled = true
   }
@@ -232,12 +368,12 @@ export function createViewport(): Viewport {
     editParents = parents
     onJointEdit = onEdit
 
-    handleGeometry = new SphereGeometry(handleRadius(positions), 8, 8)
-    // Drawn over the mesh like the skeleton itself, so a handle inside the body
-    // is still grabbable.
-    handleMaterial = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
+    const radius = handleRadius(positions)
+    handleGeometry = new SphereGeometry(radius, 8, 8)
+    // A nudge of ~15% of a handle radius is a fine touch that still visibly moves.
+    nudgeStep = radius * 0.15
     positions.forEach((p, index) => {
-      const handle = new Mesh(handleGeometry as SphereGeometry, handleMaterial as MeshBasicMaterial)
+      const handle = new Mesh(handleGeometry as SphereGeometry, handleRest)
       handle.position.set(p[0], p[1], p[2])
       handle.renderOrder = 2
       handle.userData.jointIndex = index
@@ -270,6 +406,9 @@ export function createViewport(): Viewport {
     gizmo.addEventListener('change', requestRender)
     scene.add(gizmo.getHelper())
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    renderer.domElement.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('keydown', onEditKeyDown)
+    window.addEventListener('keyup', onEditKeyUp)
   }
 
   /** The canvas's own box, not its parent's — the stage also holds the
@@ -299,6 +438,44 @@ export function createViewport(): Viewport {
     controls.update()
     requestRender()
   }
+
+  function setView(preset: ViewPreset): void {
+    const distance = camera.position.distanceTo(controls.target)
+    camera.position.copy(presetCameraPosition(preset, controls.target, distance))
+    // A top/bottom view looks straight down the up-axis, where azimuth is
+    // undefined; nudge `up` off it so the framing has a defined roll.
+    camera.up.set(0, preset === 'top' || preset === 'bottom' ? 0 : 1, preset === 'top' ? -1 : preset === 'bottom' ? 1 : 0)
+    camera.lookAt(controls.target)
+    controls.update()
+    requestRender()
+  }
+
+  function zoom(factor: number): void {
+    // Move the camera along its line to the target; clamp so a runaway click
+    // can't cross the target or fly past the far plane.
+    const toCamera = camera.position.clone().sub(controls.target)
+    const distance = Math.min(Math.max(toCamera.length() * factor, 0.01), 1000)
+    camera.position.copy(controls.target).add(toCamera.setLength(distance))
+    controls.update()
+    requestRender()
+  }
+
+  // Blender numpad view shortcuts: 1 front, 3 right, 7 top; Ctrl flips each to
+  // its opposite (back / left / bottom). Ignored while typing in a field.
+  const NUMPAD_VIEWS: Readonly<Record<string, readonly [ViewPreset, ViewPreset]>> = {
+    Numpad1: ['front', 'back'],
+    Numpad3: ['right', 'left'],
+    Numpad7: ['top', 'bottom']
+  }
+  function onNumpadView(event: KeyboardEvent): void {
+    const target = event.target
+    if (target instanceof HTMLElement && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return
+    const pair = NUMPAD_VIEWS[event.code]
+    if (pair === undefined) return
+    event.preventDefault()
+    setView(pair[event.ctrlKey || event.metaKey ? 1 : 0])
+  }
+  window.addEventListener('keydown', onNumpadView)
 
   /** A material slot holds either one material or an array of them. */
   function disposeMaterial(material: Material | Material[]): void {
@@ -450,6 +627,8 @@ export function createViewport(): Viewport {
     },
 
     reframe,
+    setView,
+    zoom,
 
     info(): string {
       const el = renderer.domElement
@@ -468,6 +647,10 @@ export function createViewport(): Viewport {
         disposeMaterial(fittedSkeleton.material)
       }
       skeleton?.dispose()
+      handleRest.dispose()
+      handleHover.dispose()
+      handleSelected.dispose()
+      window.removeEventListener('keydown', onNumpadView)
       controls.dispose()
       renderer.dispose()
     }

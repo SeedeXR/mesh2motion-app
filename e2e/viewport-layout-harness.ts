@@ -16,6 +16,10 @@ const viewport = createViewport()
 const stage = document.querySelector<HTMLElement>('.viewport')!
 stage.prepend(viewport.canvas)
 
+// Exposed so a test can drive the camera controls (setView/zoom/reframe) and
+// assert the rendered image changes.
+win.__viewport = viewport
+
 // Backing-store size of the one canvas, plus its on-screen rect. A canvas
 // readback is deliberately NOT used to check visibility here: WebGLRenderer
 // defaults to preserveDrawingBuffer:false, so drawImage after present reads an

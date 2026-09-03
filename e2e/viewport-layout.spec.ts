@@ -69,3 +69,90 @@ test('the viewport canvas stays bounded to its cell and shows the model', async 
   console.log('LAYOUT screenshot bytes:', shot.length)
   expect(shot.length).toBeGreaterThan(12_000)
 })
+
+// Integration: the camera controls (preset views, zoom) actually change what is
+// drawn. Driven through the public viewport API and verified by the composited
+// image differing — no access to internal camera state.
+test('preset views and zoom change the rendered image', async ({ page }) => {
+  await page.route('**/model.glb', (route) =>
+    route.fulfill({ path: 'assets/models/model-human.glb', contentType: 'model/gltf-binary' })
+  )
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/e2e/viewport-layout-harness.html')
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__ready === true, {
+    timeout: 30_000
+  })
+  const canvas = page.locator('.viewport canvas')
+
+  const drive = async (fn: string, arg?: unknown): Promise<Buffer> => {
+    await page.evaluate(
+      ([f, a]) => {
+        const vp = (window as unknown as { __viewport: Record<string, (x?: unknown) => void> })
+          .__viewport
+        vp[f as string](a)
+      },
+      [fn, arg] as const
+    )
+    await page.waitForTimeout(250)
+    return await canvas.screenshot()
+  }
+
+  // A default (front-ish) framing, then straight down: a person seen from the
+  // top is a very different image, so the bytes must differ.
+  const front = await drive('reframe')
+  const top = await drive('setView', 'top')
+  expect(Buffer.compare(front, top)).not.toBe(0)
+
+  // Zooming in from the front also changes the image.
+  await drive('setView', 'front')
+  const before = await canvas.screenshot()
+  const zoomed = await drive('zoom', 0.5)
+  expect(Buffer.compare(before, zoomed)).not.toBe(0)
+})
+
+// Blender-style navigation: the middle button (and Option+left on a
+// middle-button-less Mac mouse) orbits; plain left is reserved for selection
+// and must NOT orbit.
+test('Blender navigation: middle-drag and Alt+left orbit, plain left does not', async ({ page }) => {
+  await page.route('**/model.glb', (route) =>
+    route.fulfill({ path: 'assets/models/model-human.glb', contentType: 'model/gltf-binary' })
+  )
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/e2e/viewport-layout-harness.html')
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__ready === true, {
+    timeout: 30_000
+  })
+  const canvas = page.locator('.viewport canvas')
+  const box = await canvas.boundingBox()
+  if (box === null) throw new Error('no canvas box')
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+
+  const reframe = async (): Promise<Buffer> => {
+    await page.evaluate(() => (window as unknown as { __viewport: { reframe: () => void } }).__viewport.reframe())
+    await page.waitForTimeout(400)
+    return await canvas.screenshot()
+  }
+  const drag = async (button: 'left' | 'middle', alt: boolean): Promise<Buffer> => {
+    if (alt) await page.keyboard.down('Alt')
+    await page.mouse.move(cx, cy)
+    await page.mouse.down({ button })
+    await page.mouse.move(cx + 140, cy + 30, { steps: 8 })
+    await page.mouse.up({ button })
+    if (alt) await page.keyboard.up('Alt')
+    await page.waitForTimeout(400)
+    return await canvas.screenshot()
+  }
+
+  // Plain left drag: reserved for selection, must leave the camera untouched.
+  const base1 = await reframe()
+  expect(Buffer.compare(base1, await drag('left', false))).toBe(0)
+
+  // Middle drag: orbits.
+  const base2 = await reframe()
+  expect(Buffer.compare(base2, await drag('middle', false))).not.toBe(0)
+
+  // Option+left drag: emulates the middle button, orbits.
+  const base3 = await reframe()
+  expect(Buffer.compare(base3, await drag('left', true))).not.toBe(0)
+})

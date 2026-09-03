@@ -17,6 +17,7 @@ import {
   hasVertexColors,
   parseAnimated,
   parseModel,
+  presetCameraPosition,
   skeletonSegments,
   withJointMoved
 } from '../src/viewport/model'
@@ -129,6 +130,29 @@ describe('applyFraming', () => {
     expect(camera.near).toBeGreaterThan(0)
     expect(camera.near).toBeLessThan(distance - bounds.getSize(new Vector3()).length() / 2)
     expect(camera.far).toBeGreaterThan(distance)
+  })
+})
+
+describe('presetCameraPosition', () => {
+  const target = new Vector3(1, 2, 3)
+
+  test('each preset sits the given distance from the target', () => {
+    for (const preset of ['front', 'back', 'left', 'right', 'top', 'bottom'] as const) {
+      const p = presetCameraPosition(preset, target, 5)
+      expect(p.distanceTo(target)).toBeCloseTo(5)
+    }
+  })
+
+  test('front looks down +Z, top looks down +Y, right looks down +X', () => {
+    expect(presetCameraPosition('front', target, 5).toArray()).toEqual([1, 2, 8])
+    expect(presetCameraPosition('top', target, 5).toArray()).toEqual([1, 7, 3])
+    expect(presetCameraPosition('right', target, 5).toArray()).toEqual([6, 2, 3])
+  })
+
+  test('opposite presets sit on opposite sides of the target', () => {
+    const front = presetCameraPosition('front', target, 4)
+    const back = presetCameraPosition('back', target, 4)
+    expect(front.clone().add(back).multiplyScalar(0.5).toArray()).toEqual(target.toArray())
   })
 })
 

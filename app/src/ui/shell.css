@@ -194,6 +194,42 @@ body {
   display: block;
 }
 
+/* Floating viewport controls: frame / zoom / preset views, over the canvas. */
+.viewport-nav {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-1) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.nav-btn {
+  display: grid;
+  place-items: center;
+  min-width: var(--s-6);
+  height: var(--s-6);
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.nav-btn.nav-txt { letter-spacing: 0.02em; }
+.nav-btn:hover { background: var(--bg-3); color: var(--fg-0); }
+.nav-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.nav-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--border); }
+
 /* A creature template in the Choose Skeleton step. */
 .template {
   display: flex;

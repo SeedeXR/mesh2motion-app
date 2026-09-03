@@ -118,6 +118,33 @@ export function applyFraming(camera: Camera, framing: Framing): void {
   }
 }
 
+/** A canonical camera direction: the six orthographic-style views. */
+export type ViewPreset = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom'
+
+/** The unit direction from the target toward the camera for each preset. */
+const PRESET_DIRECTIONS: Readonly<Record<ViewPreset, readonly [number, number, number]>> = {
+  front: [0, 0, 1],
+  back: [0, 0, -1],
+  right: [1, 0, 0],
+  left: [-1, 0, 0],
+  top: [0, 1, 0],
+  bottom: [0, -1, 0]
+}
+
+/**
+ * Where the camera sits for a preset view: `distance` from `target` along the
+ * preset's axis. Keeping the current distance means a preset snaps the angle
+ * without also zooming, which is what "look from the front" should do.
+ */
+export function presetCameraPosition(
+  preset: ViewPreset,
+  target: Vector3,
+  distance: number
+): Vector3 {
+  const [x, y, z] = PRESET_DIRECTIONS[preset]
+  return new Vector3(x, y, z).multiplyScalar(distance).add(target)
+}
+
 /**
  * Line-segment endpoints for a fitted skeleton, two points per bone-to-parent
  * link.

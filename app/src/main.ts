@@ -1,7 +1,20 @@
 import './ui/tokens.css'
 import './ui/shell.css'
 
-import { createIcons, AlertTriangle, Bone, Upload, Link, Play, Download, Move3d } from 'lucide'
+import {
+  createIcons,
+  AlertTriangle,
+  Bone,
+  Upload,
+  Link,
+  Play,
+  Download,
+  Move3d,
+  Maximize,
+  ZoomIn,
+  ZoomOut,
+  HelpCircle
+} from 'lucide'
 import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
 import {
@@ -27,6 +40,7 @@ import {
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
+import { type ViewPreset } from './viewport/model'
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -569,6 +583,32 @@ function renderGuidance(step: StepDef): string {
     </div>`
 }
 
+/** The floating viewport controls: frame, zoom, and the front/side/top presets.
+ *  A mouse-free way to do what orbit/scroll do, and a discoverable one. */
+function renderViewportNav(): string {
+  return `
+    <div class="viewport-nav" role="toolbar" aria-label="Viewport controls">
+      <button class="nav-btn" data-view-action="frame" title="Frame the model" aria-label="Frame the model">
+        <i data-lucide="maximize" width="16" height="16" aria-hidden="true"></i>
+      </button>
+      <button class="nav-btn" data-view-action="zoom-in" title="Zoom in" aria-label="Zoom in">
+        <i data-lucide="zoom-in" width="16" height="16" aria-hidden="true"></i>
+      </button>
+      <button class="nav-btn" data-view-action="zoom-out" title="Zoom out" aria-label="Zoom out">
+        <i data-lucide="zoom-out" width="16" height="16" aria-hidden="true"></i>
+      </button>
+      <span class="nav-sep"></span>
+      <button class="nav-btn nav-txt" data-view-preset="front" title="Front view (numpad 1)" aria-label="Front view">Front</button>
+      <button class="nav-btn nav-txt" data-view-preset="right" title="Side view (numpad 3)" aria-label="Side view">Side</button>
+      <button class="nav-btn nav-txt" data-view-preset="top" title="Top view (numpad 7)" aria-label="Top view">Top</button>
+      <span class="nav-sep"></span>
+      <button class="nav-btn" aria-label="Navigation help"
+        title="Blender-style navigation&#10;Orbit: middle-drag or ⌥+drag&#10;Pan: ⇧+middle-drag&#10;Zoom: scroll / pinch or ⌃+middle-drag&#10;Views: numpad 1 front, 3 side, 7 top (⌃ for the opposite)&#10;Fit step: click a joint, drag or arrow-keys to nudge (⇧ finer)">
+        <i data-lucide="help-circle" width="16" height="16" aria-hidden="true"></i>
+      </button>
+    </div>`
+}
+
 function render(): void {
   const step = STEPS[activeStep]
   if (step === undefined) throw new Error(`no step at index ${activeStep}`)
@@ -594,6 +634,7 @@ function render(): void {
             <div>${loaded === null ? 'Import a mesh to begin' : 'Viewport rendering arrives with the model preview step'}</div>
           </div>
         </div>
+        ${loaded === null ? '' : renderViewportNav()}
         <div class="guidance">${renderGuidance(step)}</div>
       </main>
 
@@ -616,7 +657,25 @@ function render(): void {
     stage?.prepend(ensureViewport().canvas)
   }
 
-  createIcons({ icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d } })
+  createIcons({
+    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Maximize, ZoomIn, ZoomOut, HelpCircle }
+  })
+
+  // Viewport navigation toolbar: frame / zoom / preset views.
+  app.querySelectorAll<HTMLButtonElement>('[data-view-action]').forEach((button) => {
+    const action = button.dataset['viewAction']
+    button.addEventListener('click', () => {
+      const vp = ensureViewport()
+      if (action === 'frame') vp.reframe()
+      else if (action === 'zoom-in') vp.zoom(0.8)
+      else if (action === 'zoom-out') vp.zoom(1.25)
+    })
+  })
+  app.querySelectorAll<HTMLButtonElement>('[data-view-preset]').forEach((button) => {
+    const preset = button.dataset['viewPreset'] as ViewPreset | undefined
+    if (preset === undefined) return
+    button.addEventListener('click', () => ensureViewport().setView(preset))
+  })
 
   const importButton = app.querySelector<HTMLButtonElement>('#import')
   if (importButton !== null) {
