@@ -74,7 +74,13 @@ export function createClipPreview(): ClipPreview {
     renderer.setSize(w, h, false)
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    if (root !== null) applyFraming(camera, frameBounds(bounds, FOV, camera.aspect))
+    if (root !== null) {
+      const framing = frameBounds(bounds, FOV, camera.aspect)
+      applyFraming(camera, framing)
+      // Fill the small preview: pull in from the padded framing so the
+      // character reads as more than a speck in empty space.
+      camera.position.lerp(framing.target, 0.28)
+    }
   }
   new ResizeObserver(resize).observe(renderer.domElement)
 
