@@ -1886,6 +1886,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "m2m-mcp"
+version = "0.1.0"
+dependencies = [
+ "m2m-bridge",
+ "m2m-io",
+ "m2m-pipeline",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "m2m-pipeline"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,22 @@
+# A Model Context Protocol server exposing the whole rigging pipeline as tools an
+# agent (Claude Code, the Claude app, or any MCP client) can drive: load an
+# asset, choose and fit a template, adjust bones, bind, export, and validate the
+# export through Blender/Maya headless.
+[package]
+name = "m2m-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "m2m-mcp"
+path = "src/main.rs"
+
+[dependencies]
+m2m-pipeline = { path = "../m2m-pipeline" }
+m2m-io = { path = "../m2m-io" }
+m2m-bridge = { path = "../m2m-bridge" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

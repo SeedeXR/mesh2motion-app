@@ -20,7 +20,7 @@ const MAYA_SCRIPT: &str = include_str!("../../../tools/maya-fbx-import-check.py"
 /// What Maya found when it imported an FBX. Mirrors the keys
 /// `tools/maya-fbx-import-check.py` writes; joints stand in for bones and
 /// skinClusters for vertex groups, so it lines up with [`crate::BlenderReport`].
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MayaReport {
     /// The file's base name, as Maya saw it.
     pub file: String,

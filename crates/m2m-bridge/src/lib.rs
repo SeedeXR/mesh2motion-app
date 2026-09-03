@@ -37,7 +37,7 @@ const INSPECT_SCRIPT: &str = include_str!("../../../tools/blender-fbx-import-che
 /// Every field past `imported` is optional because a failed import emits only
 /// `file`, `imported: false` and `error`. On success the counts are present.
 /// These mirror the keys `tools/blender-fbx-import-check.py` writes.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct BlenderReport {
     /// The file's base name, as Blender saw it.
     pub file: String,

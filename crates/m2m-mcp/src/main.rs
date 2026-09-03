@@ -1,0 +1,40 @@
+//! The rigging MCP server over stdio.
+//!
+//! MCP's stdio transport is newline-delimited JSON-RPC 2.0: one request per
+//! line in, one response per line out. All the decisions live in
+//! [`m2m_mcp::Server`]; this is just the loop that reads, dispatches and writes.
+
+use m2m_mcp::Server;
+use std::io::{BufRead, Write};
+
+fn main() {
+    let mut server = Server::new();
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request = match serde_json::from_str::<serde_json::Value>(&line) {
+            Ok(value) => value,
+            Err(e) => {
+                // A parse error is answered with a null-id JSON-RPC error, as the
+                // spec requires, rather than crashing the transport.
+                let error = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": serde_json::Value::Null,
+                    "error": { "code": -32700, "message": format!("parse error: {e}") }
+                });
+                let _ = writeln!(stdout, "{error}");
+                let _ = stdout.flush();
+                continue;
+            }
+        };
+        if let Some(response) = server.handle(&request) {
+            let _ = writeln!(stdout, "{response}");
+            let _ = stdout.flush();
+        }
+    }
+}
