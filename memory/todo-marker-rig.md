@@ -64,8 +64,27 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
       the model match the reference; guide + legend + instructions render clean.
       Note: full separate Orient step folded into the panel tip (move/rotate tools
       exist); animated clip preview already lives in the Animate step.
+- [x] S5a (user feedback 2026-09-04): markers are now DRAGGABLE to realign after
+      placing (beginMarkerPlacement takes {onPlace,onMove}; grab a ring + drag along
+      the surface, mirrored on symmetry). Verified logic + CI green (8d7797c).
+- [x] S5b (user feedback): imported model's own rig draws as OCTAHEDRAL BONES
+      (model-local child, non-raycastable, follows orient gizmo, hidden once
+      markers/fit take over) instead of thin SkeletonHelper lines. VERIFIED in-app
+      with hyena.glb (122-bone rig, textured). CI green (8d7797c).
+- [ ] S5c BLOCKED ON USER FILE: a specific uploaded GLB renders untextured (white
+      body, flat dress) though Blender shows skin+textures. DIAGNOSIS: the texture
+      pipeline works for standard PNG glbs (hyena, model-human render textured), so
+      the model uses a feature our plain `new GLTFLoader()` (app/src/viewport/model.ts:50)
+      does NOT handle — almost certainly KHR_texture_basisu (KTX2/Basis compressed
+      textures), possibly external texture URIs. FIX (once confirmed from the file):
+      configure KTX2Loader (+ MeshoptDecoder, DRACOLoader) — needs transcoder/decoder
+      files in public/ and CSP `script-src 'self' 'wasm-unsafe-eval'` (wasm in
+      WKWebView). Could NOT self-verify: no `ktx` CLI to synthesize a KTX2 sample,
+      and building unverifiable wasm-loader support under a strict CSP would violate
+      verify-before-report. Need the user's .glb to inspect extensionsUsed / image
+      mimeTypes and verify the fix.
 - [ ] S5 (optional): dedicated Orient step; medial-Z projection of clicks; marker
-      sets for non-human creatures (guide SVG is human-shaped today).
+      sets for non-human creatures (guide image is human today).
 
 ## Notes
 - rest.bones order == parents index space (both from pipeline `rest_pose`).
