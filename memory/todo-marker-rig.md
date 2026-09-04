@@ -71,18 +71,18 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
       (model-local child, non-raycastable, follows orient gizmo, hidden once
       markers/fit take over) instead of thin SkeletonHelper lines. VERIFIED in-app
       with hyena.glb (122-bone rig, textured). CI green (8d7797c).
-- [ ] S5c BLOCKED ON USER FILE: a specific uploaded GLB renders untextured (white
-      body, flat dress) though Blender shows skin+textures. DIAGNOSIS: the texture
-      pipeline works for standard PNG glbs (hyena, model-human render textured), so
-      the model uses a feature our plain `new GLTFLoader()` (app/src/viewport/model.ts:50)
-      does NOT handle — almost certainly KHR_texture_basisu (KTX2/Basis compressed
-      textures), possibly external texture URIs. FIX (once confirmed from the file):
-      configure KTX2Loader (+ MeshoptDecoder, DRACOLoader) — needs transcoder/decoder
-      files in public/ and CSP `script-src 'self' 'wasm-unsafe-eval'` (wasm in
-      WKWebView). Could NOT self-verify: no `ktx` CLI to synthesize a KTX2 sample,
-      and building unverifiable wasm-loader support under a strict CSP would violate
-      verify-before-report. Need the user's .glb to inspect extensionsUsed / image
-      mimeTypes and verify the fix.
+- [x] S5c RESOLVED / NOT-REPRODUCIBLE IN CURRENT BUILD: user shared the failing file
+      (backless_a.glb, 13.6 MB). Inspection: NOT KTX2 — standard embedded PNG/JPEG
+      textures + `KHR_texture_transform` (required, dress UV scale 0.0045) +
+      `KHR_materials_specular`, all supported by three's default GLTFLoader. Loaded it
+      in the CURRENT build: renders FULLY TEXTURED (brown skin, black halter top, gold
+      leaf-pattern skirt) — verified at the earliest frame (no decode race), no console
+      errors. The user's "stripped" screenshot showed thin-line SkeletonHelper bones =
+      a build BEFORE the octahedra commit (8d7797c), i.e. their local build predates
+      the branch's texture/rendering fixes. ACTION for user: rebuild from latest
+      `port/tauri-rust-foundation`. If it still strips on their machine with the latest
+      build, it's environment-specific → add texture-load diagnostics + a non-ImageBitmap
+      decode fallback (do NOT ship that speculatively).
 - [ ] S5 (optional): dedicated Orient step; medial-Z projection of clicks; marker
       sets for non-human creatures (guide image is human today).
 
