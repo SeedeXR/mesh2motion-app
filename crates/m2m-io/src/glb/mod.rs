@@ -488,7 +488,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
     let nodes = read_nodes(&gltf, &mut report);
     let mesh_owner = mesh_owners(&gltf);
     let primitives = read_primitives(&gltf, &mesh_owner, get_buffer_data, &mut report)?;
-    let materials = read_materials(&gltf, blob);
+    let materials = read_materials(bytes, blob);
     let skins = read_skins(&gltf, get_buffer_data, &mut report);
     let clips = read_clips(&gltf, get_buffer_data, &mut report);
 
@@ -506,24 +506,63 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
 /// the BIN chunk, its image bytes. A texture stored by URI (external file or
 /// data URI) is not resolved — the reader never fetches, matching how it refuses
 /// external buffers — so such a material keeps its factor but no image.
-fn read_materials(gltf: &gltf::Gltf, blob: &[u8]) -> Vec<Material> {
-    gltf.materials()
+fn read_materials(bytes: &[u8], blob: &[u8]) -> Vec<Material> {
+    // Read from the raw JSON with bounds-checked access rather than through the
+    // `gltf` crate's typed image API, which `unwrap`s a missing `mimeType` and
+    // an out-of-range `bufferView` (`image.rs:124`, `:128`) — a malformed image
+    // would otherwise panic the reader. The material order is the JSON array
+    // order, which is the index `primitive.material()` returns.
+    let Some(root) =
+        json_chunk(bytes).and_then(|json| serde_json::from_slice::<serde_json::Value>(json).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(materials) = root.get("materials").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let array = |key: &str| root.get(key).and_then(serde_json::Value::as_array);
+    let (textures, images, views) = (array("textures"), array("images"), array("bufferViews"));
+
+    // The image a texture index resolves to, when it is an embedded bufferView
+    // with a MIME type that fits inside the BIN chunk. Every step is checked.
+    let image_of = |texture_index: usize| -> Option<Image> {
+        let source = textures?.get(texture_index)?.get("source")?.as_u64()? as usize;
+        let image = images?.get(source)?;
+        let view = views?.get(image.get("bufferView")?.as_u64()? as usize)?;
+        let mime = image.get("mimeType")?.as_str()?.to_owned();
+        let offset = view
+            .get("byteOffset")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let length = view.get("byteLength")?.as_u64()? as usize;
+        let data = blob.get(offset..offset.checked_add(length)?)?.to_vec();
+        Some(Image { data, mime })
+    };
+
+    materials
+        .iter()
         .map(|material| {
-            let pbr = material.pbr_metallic_roughness();
-            let base_color_image =
-                pbr.base_color_texture()
-                    .and_then(|info| match info.texture().source().source() {
-                        gltf::image::Source::View { view, mime_type } => {
-                            let (start, end) = (view.offset(), view.offset() + view.length());
-                            blob.get(start..end).map(|data| Image {
-                                data: data.to_vec(),
-                                mime: mime_type.to_owned(),
-                            })
+            let pbr = material.get("pbrMetallicRoughness");
+            let base_color_factor = pbr
+                .and_then(|p| p.get("baseColorFactor"))
+                .and_then(serde_json::Value::as_array)
+                .map(|a| {
+                    let mut out = [1.0f32; 4];
+                    for (slot, value) in out.iter_mut().zip(a) {
+                        if let Some(v) = value.as_f64() {
+                            *slot = v as f32;
                         }
-                        gltf::image::Source::Uri { .. } => None,
-                    });
+                    }
+                    out
+                })
+                .unwrap_or([1.0; 4]);
+            let base_color_image = pbr
+                .and_then(|p| p.get("baseColorTexture"))
+                .and_then(|t| t.get("index"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|index| image_of(index as usize));
             Material {
-                base_color_factor: pbr.base_color_factor(),
+                base_color_factor,
                 base_color_image,
             }
         })
