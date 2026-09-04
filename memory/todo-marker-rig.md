@@ -71,18 +71,17 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
       (model-local child, non-raycastable, follows orient gizmo, hidden once
       markers/fit take over) instead of thin SkeletonHelper lines. VERIFIED in-app
       with hyena.glb (122-bone rig, textured). CI green (8d7797c).
-- [x] S5c RESOLVED / NOT-REPRODUCIBLE IN CURRENT BUILD: user shared the failing file
-      (backless_a.glb, 13.6 MB). Inspection: NOT KTX2 — standard embedded PNG/JPEG
-      textures + `KHR_texture_transform` (required, dress UV scale 0.0045) +
-      `KHR_materials_specular`, all supported by three's default GLTFLoader. Loaded it
-      in the CURRENT build: renders FULLY TEXTURED (brown skin, black halter top, gold
-      leaf-pattern skirt) — verified at the earliest frame (no decode race), no console
-      errors. The user's "stripped" screenshot showed thin-line SkeletonHelper bones =
-      a build BEFORE the octahedra commit (8d7797c), i.e. their local build predates
-      the branch's texture/rendering fixes. ACTION for user: rebuild from latest
-      `port/tauri-rust-foundation`. If it still strips on their machine with the latest
-      build, it's environment-specific → add texture-load diagnostics + a non-ImageBitmap
-      decode fallback (do NOT ship that speculatively).
+- [x] S5c FIXED (ab0643d) — was a DEV-vs-COMPILED CSP bug, not stale build (my earlier
+      "not reproducible" note was WRONG: I only tested `tauri dev`, which uses a
+      permissive CSP). ROOT CAUSE: three's GLTFLoader uses ImageBitmapLoader on
+      Safari/WKWebView 17+, which loads textures via `fetch(blob:...)` — a connect-src
+      op. The production CSP's connect-src listed only `'self' ipc: http://ipc.localhost`
+      (no `blob:`), so every texture fetch was refused in COMPILED builds only
+      (`THREE.GLTFLoader: Couldn't load texture blob:tauri://localhost/...`). Symptom:
+      white skin + flat-colour clothes ("stripped textures", "objects in mesh" = the
+      octahedra over the untextured mesh). FIX: add `blob:` to connect-src in
+      src-tauri/tauri.conf.json (img-src already had it). VERIFIED in the real release
+      .app (backless_a.glb fully textured, 0 texture errors). See [[verify-in-compiled-build-not-just-dev]].
 - [ ] S5 (optional): dedicated Orient step; medial-Z projection of clicks; marker
       sets for non-human creatures (guide image is human today).
 
