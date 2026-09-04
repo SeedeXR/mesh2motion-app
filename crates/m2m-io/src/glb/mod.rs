@@ -20,6 +20,8 @@
 mod write;
 pub use write::write;
 
+pub mod graft;
+
 use std::collections::HashMap;
 
 /// What went wrong reading a `.glb`.

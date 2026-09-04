@@ -580,6 +580,15 @@ pub fn overlay_glb(
     Ok(m2m_io::glb::write(&document)?)
 }
 
+/// Writes the rigged model as a `.glb`, preserving the source's materials,
+/// textures, UVs and normals.
+///
+/// When the source is itself a glTF (`.glb`), the rig is **grafted onto the
+/// original file** — the skin, a skeleton of nodes and any animation are added
+/// and nothing else is touched, so shading survives by construction (see
+/// [`m2m_io::glb::graft`]). An FBX source has no glTF to keep, so it falls back
+/// to the rebuilt document, which drops shading, until the FBX reader carries it
+/// through.
 pub fn export_glb(
     model: &[u8],
     skeleton: &FittedSkeleton,
@@ -589,14 +598,136 @@ pub fn export_glb(
     check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
-    let clips = match animation {
-        Some((library, clip)) => {
-            vec![retarget_clip(&m2m_io::glb::read(library)?, skeleton, clip)?]
-        }
-        None => Vec::new(),
+    let clip = match animation {
+        Some((library, name)) => Some(retarget_clip(&m2m_io::glb::read(library)?, skeleton, name)?),
+        None => None,
     };
-    let document = rigged_document(skeleton, &mesh, &weights, Vec::new(), clips);
-    Ok(m2m_io::glb::write(&document)?)
+
+    // Only a glTF source can be augmented in place. Anything else (an FBX) is
+    // rebuilt, which is what happened before this and loses shading.
+    if !model.starts_with(b"glTF") {
+        let document = rigged_document(
+            skeleton,
+            &mesh,
+            &weights,
+            Vec::new(),
+            clip.into_iter().collect(),
+        );
+        return Ok(m2m_io::glb::write(&document)?);
+    }
+
+    let document = m2m_io::glb::read(model)?;
+    let mesh_node_world = document
+        .primitives
+        .iter()
+        .find_map(|p| p.node)
+        .and_then(|n| document.world_transforms().get(n).copied())
+        .unwrap_or(glam::Mat4::IDENTITY);
+    let bones = graft_bones(skeleton, mesh_node_world);
+    let per_primitive = per_primitive_skins(&document, &weights)?;
+    let animation = clip.as_ref().map(graft_animation_of);
+    Ok(m2m_io::glb::graft::graft_skin(
+        model,
+        &bones,
+        &per_primitive,
+        animation.as_ref(),
+    )?)
+}
+
+/// The skeleton as grafting bones: local rest transform and inverse bind matrix
+/// per bone, composed exactly as [`rigged_document`] does so a grafted export
+/// binds identically to a rebuilt one.
+///
+/// The inverse bind folds in the mesh node's world transform, so a mesh that
+/// keeps its original (possibly transformed) node still binds at the rest pose:
+/// `jointWorld * IBM = meshNodeWorld` at bind, and for the common identity mesh
+/// node this is just `jointWorld⁻¹`.
+fn graft_bones(
+    skeleton: &FittedSkeleton,
+    mesh_node_world: glam::Mat4,
+) -> Vec<m2m_io::glb::graft::GraftBone> {
+    let position = |index: usize| {
+        skeleton
+            .positions
+            .get(index)
+            .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
+    };
+    let world_rotation = world_rotations(skeleton);
+    (0..skeleton.bones.len())
+        .map(|bone| {
+            let parent = skeleton.parents.get(bone).copied().flatten();
+            let offset = position(bone) - parent.map_or(glam::Vec3::ZERO, position);
+            let local = match parent {
+                Some(parent) => world_rotation[parent].inverse() * offset,
+                None => offset,
+            };
+            let inverse_bind =
+                (glam::Mat4::from_rotation_translation(world_rotation[bone], position(bone))
+                    .inverse()
+                    * mesh_node_world)
+                    .to_cols_array();
+            m2m_io::glb::graft::GraftBone {
+                name: skeleton.bones[bone].clone(),
+                parent,
+                translation: local.to_array(),
+                rotation: skeleton
+                    .rotations
+                    .get(bone)
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 0.0, 1.0]),
+                inverse_bind,
+            }
+        })
+        .collect()
+}
+
+/// Slices the merged bind weights back into one skin per primitive, in the
+/// primitive order the merged mesh was built in — so the joint/weight arrays
+/// land on the vertices they were computed for.
+fn per_primitive_skins(
+    document: &m2m_io::glb::Document,
+    weights: &m2m_core::skinning::SkinWeights,
+) -> Result<Vec<m2m_io::glb::graft::GraftPrimitiveSkin>, RigError> {
+    let mut out = Vec::new();
+    let mut base = 0usize;
+    for primitive in &document.primitives {
+        let count = primitive.positions.len() / 3;
+        let (start, end) = (base * 4, (base + count) * 4);
+        let joints = weights
+            .indices
+            .get(start..end)
+            .ok_or(RigError::NothingToBind {
+                reason: "the bind produced fewer weights than the mesh has vertices",
+            })?
+            .to_vec();
+        let w = weights
+            .weights
+            .get(start..end)
+            .ok_or(RigError::NothingToBind {
+                reason: "the bind produced fewer weights than the mesh has vertices",
+            })?
+            .to_vec();
+        out.push(m2m_io::glb::graft::GraftPrimitiveSkin { joints, weights: w });
+        base += count;
+    }
+    Ok(out)
+}
+
+/// A retargeted clip as grafting channels.
+fn graft_animation_of(clip: &m2m_io::glb::Clip) -> m2m_io::glb::graft::GraftAnimation {
+    m2m_io::glb::graft::GraftAnimation {
+        name: clip.name.clone(),
+        channels: clip
+            .channels
+            .iter()
+            .map(|c| m2m_io::glb::graft::GraftChannel {
+                bone: c.node,
+                path: c.path,
+                times: c.times.clone(),
+                values: c.values.clone(),
+            })
+            .collect(),
+    }
 }
 
 /// One clip in a creature's animation library.
@@ -1695,6 +1826,44 @@ mod tests {
         }
     }
 
+    /// The glb export keeps the source's shading — its materials, textures, UVs
+    /// and normals — and adds the rig, rather than dropping everything but the
+    /// geometry. This is the whole point of grafting onto the original file.
+    #[test]
+    fn the_glb_export_keeps_the_source_materials_and_uvs() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
+
+        // The custom reader drops shading, so read the raw glTF JSON to see it.
+        let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let root: serde_json::Value =
+            serde_json::from_slice(&bytes[20..20 + json_len]).expect("json chunk");
+
+        let attributes = &root["meshes"][0]["primitives"][0]["attributes"];
+        for kept in ["POSITION", "NORMAL", "TEXCOORD_0"] {
+            assert!(attributes.get(kept).is_some(), "{kept} was dropped");
+        }
+        for added in ["JOINTS_0", "WEIGHTS_0"] {
+            assert!(attributes.get(added).is_some(), "{added} was not added");
+        }
+        assert_eq!(
+            root["materials"].as_array().map(Vec::len),
+            Some(1),
+            "the material was dropped"
+        );
+        assert_eq!(
+            root["images"].as_array().map(Vec::len),
+            Some(1),
+            "the texture image was dropped"
+        );
+        assert_eq!(
+            root["skins"].as_array().map(Vec::len),
+            Some(1),
+            "no skin was written"
+        );
+    }
+
     /// The exported skeleton stands where the fitter put it.
     #[test]
     fn a_bones_world_position_survives_the_export() {
@@ -1707,9 +1876,12 @@ mod tests {
         let back = m2m_io::glb::read(&bytes).expect("reads back");
         let world = back.world_transforms();
 
+        // The graft appends the skeleton after the mesh's own nodes, so bone `i`
+        // is the node `skins[0].joints[i]`, not node `i`.
+        let joints = &back.skins[0].joints;
         let mut worst = 0.0f32;
         for (bone, expected) in skeleton.positions.iter().enumerate() {
-            let got = world[bone].transform_point3(glam::Vec3::ZERO);
+            let got = world[joints[bone]].transform_point3(glam::Vec3::ZERO);
             worst = worst.max(got.distance(glam::Vec3::from(*expected)));
         }
         assert!(worst < 1e-4, "worst bone moved {worst} m in the export");
@@ -1818,8 +1990,9 @@ mod tests {
         let bytes = super::export_glb(&model("models/model-human.glb"), &skeleton, 2.0, None)
             .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
+        let joints = &back.skins[0].joints;
         for (bone, expected) in skeleton.rotations.iter().enumerate() {
-            let written = glam::Quat::from_array(back.nodes[bone].transform.rotation);
+            let written = glam::Quat::from_array(back.nodes[joints[bone]].transform.rotation);
             let expected = glam::Quat::from_array(*expected).normalize();
             assert!(
                 written.abs_diff_eq(expected, 1e-5) || written.abs_diff_eq(-expected, 1e-5),
@@ -1951,8 +2124,10 @@ mod tests {
             m2m_io::glb::Path::Rotation | m2m_io::glb::Path::Translation
         )));
 
-        // Every channel drives a bone node that exists.
-        assert!(out.channels.iter().all(|c| c.node < skeleton.bones.len()));
+        // Every channel drives one of the skin's bone nodes.
+        let joint_nodes: std::collections::HashSet<usize> =
+            back.skins[0].joints.iter().copied().collect();
+        assert!(out.channels.iter().all(|c| joint_nodes.contains(&c.node)));
     }
 
     /// Retargeting actually moves the motion; it is not a rename.
@@ -1999,6 +2174,8 @@ mod tests {
                 .to_degrees()
         };
 
+        // Grafted channels target the bone's NODE; map it back to the bone slot.
+        let bone_of_node = |node: usize| read_back.skins[0].joints.iter().position(|&j| j == node);
         let mut moved = 0usize;
         let mut held_where_rest_agrees = 0usize;
         for channel in out
@@ -2006,15 +2183,17 @@ mod tests {
             .iter()
             .filter(|c| c.path == m2m_io::glb::Path::Rotation)
         {
-            let (Some(before), Some(q)) =
-                (first_source.get(&channel.node), channel.values.get(..4))
+            let (Some(bone), Some(q)) = (bone_of_node(channel.node), channel.values.get(..4))
             else {
+                continue;
+            };
+            let Some(before) = first_source.get(&bone) else {
                 continue;
             };
             let after = glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]);
             let rest_gap = angle(
-                source.rotations.local[channel.node],
-                glam::Quat::from_array(skeleton.rotations[channel.node]),
+                source.rotations.local[bone],
+                glam::Quat::from_array(skeleton.rotations[bone]),
             );
 
             if angle(*before, after) > 1.0 {
