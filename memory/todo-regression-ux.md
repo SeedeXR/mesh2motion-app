@@ -17,7 +17,24 @@ review, commit/push, confirm CI green, screenshot the app to prove it.
   animate step (preview via export_glb graft), PBR lighting (no env map), or the
   user's specific PBR/Mixamo file.
 
-## Items
+## Progress
+- [x] R1 DONE (7fb80e3): texture shows at import for BOTH glb (raw bytes) and fbx
+      (convert reads material -> glb::write emits it), and in the animate preview
+      (graft keeps textures). Verified in the app: glb import textured, fbx import
+      textured, animate preview textured.
+- [x] R2 DONE (7fb80e3): animation preview no longer explodes. ROOT CAUSE was a
+      frame bug in retarget_clip — target translations were raw world offsets but
+      the bone nodes/source rig use the parent-local frame, so playback
+      double-rotated every offset and flung the mesh into shards. Fixed to
+      world_rotation[parent]^-1 * offset. ALSO: playAnimated now hides the
+      octahedral fitted skeleton during playback (it hung over the moving mesh).
+      Regression test asserts no bone flies >5m at frame 0. Verified in the app.
+- [ ] MINOR residual: a small spike at the lead foot mid-animation (one bone/leaf).
+      Investigate if quick; low priority vs the fixed explosion.
+- [ ] F1 Auto-fit option + Orient step (see below).
+- [ ] U1 UI/UX polish toward the reference.
+
+## Items (original)
 - [ ] R1 Texture/skin colours regression — reproduce with a PBR/Mixamo-style glb
       AND through the full flow (import->fit->bind->animate). Determine if it's
       the animate preview (export_glb output), viewport lighting for PBR (needs
