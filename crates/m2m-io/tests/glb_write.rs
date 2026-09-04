@@ -328,8 +328,14 @@ fn a_written_material_is_non_metallic() {
     };
     let json = json_of(&glb::write(&document).expect("writes"));
     let pbr = &json["materials"][0]["pbrMetallicRoughness"];
-    assert_eq!(pbr["metallicFactor"], 0.0, "FBX materials must be non-metallic");
-    assert_eq!(pbr["baseColorFactor"][0], 0.8, "the base colour must survive");
+    assert_eq!(
+        pbr["metallicFactor"], 0.0,
+        "FBX materials must be non-metallic"
+    );
+    assert_eq!(
+        pbr["baseColorFactor"][0], 0.8,
+        "the base colour must survive"
+    );
 }
 
 /// The JSON chunk of a written GLB, for tests that need to inspect the

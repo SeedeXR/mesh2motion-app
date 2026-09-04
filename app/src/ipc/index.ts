@@ -218,14 +218,15 @@ export interface Marker {
 
 /**
  * Fits a template's skeleton from user-placed markers (the marker-placement
- * flow — chin/wrists/elbows/knees/groin), rather than guessing joints from the
- * mesh. Needs no model bytes: the solve is rig-and-markers only.
+ * flow — chin/wrists/elbows/knees/groin). The markers pin the key joints and the
+ * model's mesh stands the feet on the ground, so the model path is needed too.
  */
 export async function fitFromMarkers(
   template: string,
-  markers: readonly Marker[]
+  markers: readonly Marker[],
+  path: string
 ): Promise<FittedSkeleton> {
-  return await invoke<FittedSkeleton>('fit_from_markers', { template, markers })
+  return await invoke<FittedSkeleton>('fit_from_markers', { template, markers, path })
 }
 
 /** What binding produced, without the weights themselves. */

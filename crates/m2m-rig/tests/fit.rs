@@ -1158,7 +1158,7 @@ fn markers_need_at_least_two_bones_to_fix_a_scale() {
         bone: "a".into(),
         position: [0.0, 0.0, 0.0],
     }];
-    assert!(fit_from_markers(&template, &rest, &parents, &one).is_none());
+    assert!(fit_from_markers(&template, &rest, &parents, &one, None).is_none());
 }
 
 #[test]
@@ -1186,7 +1186,7 @@ fn a_marked_bone_lands_exactly_on_its_marker() {
         })
         .collect();
 
-    let fitted = fit_from_markers(&template, &rest, &parents, &markers).expect("fits");
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
     for (bone, target) in targets {
         let at = fitted.position_of(bone).expect("bone is placed");
         assert!(
@@ -1216,7 +1216,7 @@ fn an_unmarked_tip_rigid_follows_its_nearest_marker() {
             position: hand_target.to_array(),
         },
     ];
-    let fitted = fit_from_markers(&template, &rest, &parents, &markers).expect("fits");
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
 
     let transformed = |bone: &str| rest.position_of(bone).unwrap() * fitted.scale + fitted.offset;
     let hand_delta = fitted.position_of("hand_l").unwrap() - transformed("hand_l");
@@ -1247,7 +1247,7 @@ fn an_intermediate_joint_interpolates_between_two_markers() {
             position: [1.0, 4.0, 0.0],
         },
     ];
-    let fitted = fit_from_markers(&template, &rest, &parents, &markers).expect("fits");
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
     let mid = fitted.position_of("mid").unwrap();
     // Midpoint of the two markers, since the rest spacing is uniform.
     assert!(

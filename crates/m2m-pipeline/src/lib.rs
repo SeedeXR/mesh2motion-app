@@ -191,18 +191,19 @@ pub fn fit(template_name: &str, model: &[u8]) -> Result<FittedSkeleton, RigError
 
 /// Fits a named template's skeleton to user-placed markers.
 ///
-/// The marker-placement flow: instead of guessing joints from the mesh, this is
-/// told where the key ones go (see [`m2m_rig::fit::fit_from_markers`]). Needs no
-/// model bytes — the solve is entirely rig-and-markers — only the template's own
-/// rig for the rest pose to carry.
+/// The marker-placement flow: the markers pin the key joints, and the **mesh**
+/// places what they don't — chiefly standing the feet on the ground (see
+/// [`m2m_rig::fit::fit_from_markers`] and `docs/research/marker-skeleton-solving.md`).
 ///
 /// # Errors
 ///
 /// [`RigError`] for an unknown template, a rig that is not bundled or will not
-/// read, or markers that name fewer than two of the template's bones.
+/// read, a model that will not read, or markers that name fewer than two of the
+/// template's bones.
 pub fn fit_from_markers(
     template_name: &str,
     markers: &[m2m_rig::fit::Marker],
+    model: &[u8],
 ) -> Result<FittedSkeleton, RigError> {
     let template = m2m_rig::template::all()?
         .into_iter()
@@ -220,12 +221,12 @@ pub fn fit_from_markers(
         parents,
         rotations: rest_rotations,
     } = rest_pose(&rig, &template.skeleton)?;
+    let mesh = mesh_of(&m2m_io::import::load(model)?);
 
-    let fitted = m2m_rig::fit::fit_from_markers(&template, &rest, &parents, markers).ok_or(
-        RigError::CannotFit {
-            template: template.name.clone(),
-        },
-    )?;
+    let fitted = m2m_rig::fit::fit_from_markers(&template, &rest, &parents, markers, Some(&mesh))
+        .ok_or(RigError::CannotFit {
+        template: template.name.clone(),
+    })?;
 
     Ok(fitted_to_skeleton(
         &template,
@@ -1763,7 +1764,7 @@ mod tests {
     fn marker_fitting_lands_the_rig_where_the_markers_are_placed() {
         // The marker-placement path, end to end through the pipeline: a valid
         // skeleton comes back and the marked joints sit exactly where asked.
-        use super::{fit_from_markers, Marker};
+        use super::{fit_from_markers, mesh_of, Marker};
         let targets = [
             ("pelvis", [0.05, 0.95, 0.0f32]),
             ("head", [0.0, 1.72, 0.05]),
@@ -1780,11 +1781,14 @@ mod tests {
             })
             .collect();
 
-        let fitted = fit_from_markers("human", &markers).expect("fits");
+        let model = model("models/model-human.glb");
+        let fitted = fit_from_markers("human", &markers, &model).expect("fits");
         assert_eq!(fitted.bones.len(), 66);
         assert_eq!(fitted.parents.len(), 66);
         assert_eq!(fitted.parents.iter().filter(|p| p.is_none()).count(), 1);
 
+        // Marked joints land exactly on their markers; the mesh only moves what the
+        // markers don't pin (the feet below the knee).
         for (bone, target) in targets {
             let index = fitted.bones.iter().position(|b| b == bone).expect("bone");
             let at = fitted.positions[index];
@@ -1794,6 +1798,23 @@ mod tests {
             .sqrt();
             assert!(dist < 1e-4, "{bone} at {at:?}, not on marker {target:?}");
         }
+
+        // The feet were grounded onto the mesh floor, not left floating below the
+        // knee at the template's shin length.
+        let (mesh_min, _) = mesh_of(&m2m_io::import::load(&model).unwrap())
+            .bounds()
+            .unwrap();
+        let toe = fitted
+            .bones
+            .iter()
+            .position(|b| b == "ball_leaf_l")
+            .expect("toe");
+        assert!(
+            (fitted.positions[toe][1] - mesh_min.y).abs() < 0.05,
+            "left toe at y {} is not on the floor {}",
+            fitted.positions[toe][1],
+            mesh_min.y
+        );
     }
 
     #[test]

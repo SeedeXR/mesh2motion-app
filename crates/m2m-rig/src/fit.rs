@@ -393,6 +393,7 @@ pub fn fit_from_markers(
     rest: &RestPose,
     parents: &[Option<usize>],
     markers: &[Marker],
+    mesh: Option<&Mesh>,
 ) -> Option<Fitted> {
     let index_of: std::collections::HashMap<&str, usize> = rest
         .bones
@@ -410,6 +411,7 @@ pub fn fit_from_markers(
     if marked.len() < 2 {
         return None;
     }
+    let marked_set: std::collections::HashSet<usize> = marked.iter().map(|&(i, _)| i).collect();
 
     // Uniform scale + translation, least squares over the marked correspondences.
     let n = marked.len() as f32;
@@ -486,7 +488,7 @@ pub fn fit_from_markers(
         }
     }
 
-    Some(Fitted {
+    let mut fitted = Fitted {
         bones: rest.bones.clone(),
         positions: transformed
             .iter()
@@ -495,7 +497,79 @@ pub fn fit_from_markers(
             .collect(),
         scale,
         offset,
-    })
+    };
+
+    // Stage B: the mesh places what the markers didn't. Markers pin the knee; the
+    // foot/ankle/toe below it are unmarked, so without the mesh they float or sink
+    // (the reported feet/ankle failure). See docs/research/marker-skeleton-solving.md.
+    if let Some(mesh) = mesh {
+        ground_feet(&mut fitted, mesh, template, &marked_set);
+    }
+    Some(fitted)
+}
+
+/// Stands the unmarked feet on the mesh's ground plane.
+///
+/// The markers pin the knee; the foot, ankle and toe below it are unmarked and
+/// otherwise just rigid-follow the knee, so a leg whose shin is a different length
+/// than the template floats or sinks its foot. Here the mesh decides: the run of
+/// bones below the deepest marked joint is scaled along itself, about that joint,
+/// until the chain's lowest bone — its ground contact — sits on the mesh's lowest
+/// surface. The marked joint never moves, and a leg with no marker is left alone.
+fn ground_feet(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    template: &crate::template::Template,
+    marked: &std::collections::HashSet<usize>,
+) {
+    let Some((mesh_min, _)) = mesh.bounds() else {
+        return;
+    };
+    let floor = mesh_min.y;
+    let index_of: std::collections::HashMap<&str, usize> = fitted
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.as_str(), i))
+        .collect();
+
+    for chain in template.of_kind(crate::template::ChainKind::Limb) {
+        if chain.role != Some(crate::template::LimbRole::Leg) {
+            continue;
+        }
+        let idxs: Vec<usize> = chain
+            .bones
+            .iter()
+            .filter_map(|b| index_of.get(b.as_str()).copied())
+            .collect();
+        // Anchor on the deepest marked joint of the leg (the knee); scale the run
+        // below it. No marker on this leg means nothing to anchor to — leave it.
+        let Some(anchor_at) = idxs.iter().rposition(|i| marked.contains(i)) else {
+            continue;
+        };
+        let below = &idxs[anchor_at + 1..];
+        if below.is_empty() {
+            continue;
+        }
+        let anchor = fitted.positions[idxs[anchor_at]];
+        // The ground contact is the lowest bone below the anchor.
+        let toe = below
+            .iter()
+            .copied()
+            .min_by(|&a, &b| fitted.positions[a].y.total_cmp(&fitted.positions[b].y))
+            .expect("below is non-empty");
+        let drop = anchor.y - fitted.positions[toe].y;
+        if drop <= f32::EPSILON {
+            continue; // the foot is not below the knee; nothing to stand on the floor
+        }
+        let scale = (anchor.y - floor) / drop;
+        if !(scale.is_finite() && scale > 0.0) {
+            continue;
+        }
+        for &i in below {
+            fitted.positions[i] = anchor + (fitted.positions[i] - anchor) * scale;
+        }
+    }
 }
 
 /// Linearly blends the two control points bracketing `at`.

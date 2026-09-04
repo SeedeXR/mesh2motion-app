@@ -785,7 +785,8 @@ function drawMarkers(): void {
 /** Solves the rig from the placed markers and draws the fitted skeleton. */
 async function runMarkerFit(): Promise<void> {
   const set = chosen === null ? null : markerSetFor(chosen)
-  if (chosen === null || set === null || fitting) return
+  if (chosen === null || set === null || loaded === null || fitting) return
+  const path = loaded.path
   const markers: Marker[] = set
     .filter((s) => markerPositions.has(s.id))
     .map((s) => ({ bone: s.bone, position: markerPositions.get(s.id) as [number, number, number] }))
@@ -796,7 +797,7 @@ async function runMarkerFit(): Promise<void> {
     const viewport = ensureViewport()
     viewport.endMarkerPlacement()
     markerMode = false
-    fitted = await fitFromMarkers(chosen, markers)
+    fitted = await fitFromMarkers(chosen, markers, path)
     bound = null
     clips = null
     clip = null
