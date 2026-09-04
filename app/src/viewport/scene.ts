@@ -489,8 +489,14 @@ export function createViewport(): Viewport {
       geometry.dispose()
       return null
     }
-    const mesh = new Mesh(geometry, boneMaterial.clone())
-    mesh.renderOrder = 1
+    // Occluded by the mesh, the way Blender draws an armature by default — so a
+    // textured character reads clean, not covered in bones. (The fitted skeleton,
+    // which is for editing, still draws on top.)
+    const material = boneMaterial.clone()
+    material.depthTest = true
+    material.transparent = false
+    material.opacity = 1
+    const mesh = new Mesh(geometry, material)
     // Not a pick target: marker and joint raycasts must reach the mesh, not this.
     mesh.raycast = () => {}
     return mesh
