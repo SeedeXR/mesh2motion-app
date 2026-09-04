@@ -301,6 +301,12 @@ fn write_materials(
             pbr_metallic_roughness: json::material::PbrMetallicRoughness {
                 base_color_factor: json::material::PbrBaseColorFactor(material.base_color_factor),
                 base_color_texture,
+                // These come from FBX Phong/Lambert materials, which are dielectric.
+                // glTF defaults metallicFactor to 1.0 — a full metal renders dark and
+                // desaturated (the "unrealistic FBX colours" bug), so pin it to a
+                // matte non-metal so the base colour reads as the albedo it is.
+                metallic_factor: json::material::StrengthFactor(0.0),
+                roughness_factor: json::material::StrengthFactor(1.0),
                 ..Default::default()
             },
             ..Default::default()

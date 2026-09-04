@@ -309,6 +309,29 @@ fn an_empty_document_writes_a_valid_file() {
     assert!(back.primitives.is_empty());
 }
 
+#[test]
+fn a_written_material_is_non_metallic() {
+    // glTF defaults metallicFactor to 1.0 — a full metal that renders dark and
+    // desaturated. Our materials come from FBX Phong/Lambert, which are dielectric,
+    // so the writer must pin metallic to 0 or the colours look wrong ("unrealistic
+    // FBX colours").
+    let document = Document {
+        nodes: Vec::new(),
+        primitives: Vec::new(),
+        materials: vec![glb::Material {
+            base_color_factor: [0.8, 0.4, 0.2, 1.0],
+            base_color_image: None,
+        }],
+        skins: Vec::new(),
+        clips: Vec::new(),
+        report: glb::GlbReport::default(),
+    };
+    let json = json_of(&glb::write(&document).expect("writes"));
+    let pbr = &json["materials"][0]["pbrMetallicRoughness"];
+    assert_eq!(pbr["metallicFactor"], 0.0, "FBX materials must be non-metallic");
+    assert_eq!(pbr["baseColorFactor"][0], 0.8, "the base colour must survive");
+}
+
 /// The JSON chunk of a written GLB, for tests that need to inspect the
 /// structure rather than what our reader makes of it.
 fn json_of(bytes: &[u8]) -> serde_json::Value {
