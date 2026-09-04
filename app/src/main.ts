@@ -738,20 +738,33 @@ async function enterMarkerMode(name: string): Promise<void> {
   render()
 }
 
-/** Fills the active slot from a click on the model, mirroring it when symmetry
- *  is on, then advances to the next empty slot. */
-function onMarkerPick(point: [number, number, number]): void {
+/** Sets a slot's marker to a point, mirroring to its pair when symmetry is on. */
+function setMarkerAt(slotId: string, point: [number, number, number]): void {
   const set = markerSetFor(chosen ?? '')
-  const slot = set?.find((s) => s.id === activeSlot)
+  const slot = set?.find((s) => s.id === slotId)
   if (set === null || slot === undefined) return
   markerPositions.set(slot.id, point)
   if (useSymmetry && slot.pair !== undefined) {
     const mirror = 2 * ensureViewport().symmetryX() - point[0]
     markerPositions.set(slot.pair, [mirror, point[1], point[2]])
   }
-  activeSlot = set.find((s) => !markerPositions.has(s.id))?.id ?? null
+}
+
+/** Places the active marker from a click on the model, then advances to the
+ *  next empty slot. */
+function onMarkerPick(point: [number, number, number]): void {
+  if (activeSlot === null) return
+  setMarkerAt(activeSlot, point)
+  const set = markerSetFor(chosen ?? '')
+  activeSlot = set?.find((s) => !markerPositions.has(s.id))?.id ?? null
   drawMarkers()
   render()
+}
+
+/** Moves an already-placed marker as it is dragged on the model. */
+function onMarkerMove(id: string, point: [number, number, number]): void {
+  setMarkerAt(id, point)
+  drawMarkers()
 }
 
 /** Draws the placed markers in the viewport. */
@@ -761,7 +774,11 @@ function drawMarkers(): void {
   ensureViewport().setMarkers(
     set
       .filter((s) => markerPositions.has(s.id))
-      .map((s) => ({ position: markerPositions.get(s.id) as [number, number, number], color: s.color }))
+      .map((s) => ({
+        id: s.id,
+        position: markerPositions.get(s.id) as [number, number, number],
+        color: s.color
+      }))
   )
 }
 
@@ -1046,7 +1063,7 @@ function render(): void {
   // While placing markers, keep the viewport armed to pick and the placed
   // markers drawn — render() re-runs this binding, and both calls are idempotent.
   if (step.id === StepId.EditSkeleton && markerMode) {
-    ensureViewport().beginMarkerPlacement(onMarkerPick)
+    ensureViewport().beginMarkerPlacement({ onPlace: onMarkerPick, onMove: onMarkerMove })
     drawMarkers()
   }
 

@@ -39,7 +39,6 @@ import {
   Scene,
   SRGBColorSpace,
   ShaderMaterial,
-  SkeletonHelper,
   Spherical,
   SphereGeometry,
   Sprite,
@@ -243,13 +242,19 @@ export interface Viewport {
   /** Removes the fitted-skeleton overlay and its edit handles, leaving the mesh. */
   clearFittedSkeleton(): void
   /**
-   * Enters marker-placement mode: a left-click on the model raycasts the mesh
-   * and reports the surface point, for the marker-rig flow. `endMarkerPlacement`
-   * leaves it. No-op picks (a click that misses the mesh) are ignored.
+   * Enters marker-placement mode. A left-click on the model drops the active
+   * marker via `onPlace`; grabbing an existing marker and dragging moves it via
+   * `onMove` (its slot id, the new surface point). `endMarkerPlacement` leaves
+   * it. Picks that miss the mesh are ignored.
    */
-  beginMarkerPlacement(onPick: (point: [number, number, number]) => void): void
-  /** Draws the given markers as coloured spheres, replacing any shown. */
-  setMarkers(markers: readonly { position: readonly [number, number, number]; color: number }[]): void
+  beginMarkerPlacement(handlers: {
+    onPlace: (point: [number, number, number]) => void
+    onMove: (id: string, point: [number, number, number]) => void
+  }): void
+  /** Draws the given markers as camera-facing rings, replacing any shown. */
+  setMarkers(
+    markers: readonly { id: string; position: readonly [number, number, number]; color: number }[]
+  ): void
   /** Leaves marker-placement mode and removes every marker sphere. */
   endMarkerPlacement(): void
   /** The model's symmetry plane on X (its bounds centre), for mirroring markers. */
@@ -322,7 +327,10 @@ export function createViewport(): Viewport {
   scene.add(grid.mesh)
 
   let model: Object3D | null = null
-  let skeleton: SkeletonHelper | null = null
+  // The imported model's own rig, drawn as octahedral bones (like Blender and
+  // like the fitted skeleton) rather than three's thin SkeletonHelper lines. A
+  // child of the model, so it follows the orient gizmo without any extra work.
+  let importedSkeleton: Mesh | null = null
   let fittedSkeleton: Mesh | null = null
   // The octahedral bones' material: solid, flat-shaded so each facet catches the
   // light and the bone reads as 3D, drawn over the mesh (depthTest off) so a
@@ -441,6 +449,51 @@ export function createViewport(): Viewport {
   function refreshFittedGeometry(): void {
     if (fittedSkeleton === null) return
     fillBoneGeometry(fittedSkeleton.geometry, editPositions, editParents)
+  }
+
+  /**
+   * The imported model's rig as octahedral bones, in the model's own local
+   * space so the mesh drawn as its child follows the model's transform.
+   *
+   * Reads the first skinned mesh's skeleton by three's `isSkinnedMesh` / `isBone`
+   * flags, so it needs no extra class imports. Returns null when the model has no
+   * skinned skeleton or too few bones to draw.
+   */
+  function importedBoneMesh(root: Object3D): Mesh | null {
+    root.updateWorldMatrix(true, true)
+    let bones: Object3D[] | null = null
+    root.traverse((object) => {
+      const skinned = object as { isSkinnedMesh?: boolean; skeleton?: { bones: Object3D[] } }
+      if (bones === null && skinned.isSkinnedMesh === true && skinned.skeleton !== undefined) {
+        bones = skinned.skeleton.bones
+      }
+    })
+    if (bones === null) return null
+    const list: Object3D[] = bones
+    if (list.length < 2) return null
+
+    const index = new Map<Object3D, number>()
+    list.forEach((bone, i) => index.set(bone, i))
+    const positions = list.map((bone) => {
+      const p = root.worldToLocal(bone.getWorldPosition(new Vector3()))
+      return [p.x, p.y, p.z] as [number, number, number]
+    })
+    const parents = list.map((bone) => {
+      const parent = bone.parent
+      return parent !== null && index.has(parent) ? (index.get(parent) as number) : null
+    })
+
+    const geometry = new BufferGeometry()
+    fillBoneGeometry(geometry, positions, parents)
+    if (geometry.getIndex()?.count === 0) {
+      geometry.dispose()
+      return null
+    }
+    const mesh = new Mesh(geometry, boneMaterial.clone())
+    mesh.renderOrder = 1
+    // Not a pick target: marker and joint raycasts must reach the mesh, not this.
+    mesh.raycast = () => {}
+    return mesh
   }
 
   /** Paints a handle for a state and sizes it to match: rest is its base size,
@@ -803,7 +856,14 @@ export function createViewport(): Viewport {
   // Mixamo auto-rigger look — drawn on top of the mesh so they never hide.
   let markerSprites: Sprite[] = []
   const ringTextures = new Map<number, CanvasTexture>()
-  let onMarkerPick: ((point: [number, number, number]) => void) | null = null
+  /** Placing a new marker, or moving an existing one by its slot id. */
+  interface MarkerHandlers {
+    onPlace: (point: [number, number, number]) => void
+    onMove: (id: string, point: [number, number, number]) => void
+  }
+  let markerHandlers: MarkerHandlers | null = null
+  /** The slot id of the marker being dragged, or null when not dragging. */
+  let draggingMarker: string | null = null
 
   /** A cached hollow-ring-plus-centre-dot texture in the marker's colour. */
   function ringTexture(color: number): CanvasTexture {
@@ -833,15 +893,57 @@ export function createViewport(): Viewport {
     return texture
   }
 
-  function onMarkerPointerDown(event: PointerEvent): void {
-    if (onMarkerPick === null || model === null || event.button !== 0) return
+  /** The surface point under the pointer on the model, or null off the mesh. */
+  function markerSurfacePoint(event: PointerEvent): [number, number, number] | null {
+    if (model === null) return null
     const rect = renderer.domElement.getBoundingClientRect()
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(pointer, camera)
     const hit = raycaster.intersectObject(model, true)[0]
-    if (hit === undefined) return
-    onMarkerPick([hit.point.x, hit.point.y, hit.point.z])
+    return hit === undefined ? null : [hit.point.x, hit.point.y, hit.point.z]
+  }
+
+  /** The slot id of the marker under the pointer, or null. */
+  function markerUnderPointer(event: PointerEvent): string | null {
+    const rect = renderer.domElement.getBoundingClientRect()
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObjects(markerSprites, false)[0]
+    return hit === undefined ? null : ((hit.object.userData['slot'] as string | undefined) ?? null)
+  }
+
+  function onMarkerPointerDown(event: PointerEvent): void {
+    if (markerHandlers === null || event.button !== 0) return
+    // Grab an existing marker to move it; otherwise drop the active one.
+    const grabbed = markerUnderPointer(event)
+    if (grabbed !== null) {
+      draggingMarker = grabbed
+      controls.enabled = false
+      const point = markerSurfacePoint(event)
+      if (point !== null) markerHandlers.onMove(grabbed, point)
+      return
+    }
+    const point = markerSurfacePoint(event)
+    if (point !== null) markerHandlers.onPlace(point)
+  }
+
+  function onMarkerPointerMove(event: PointerEvent): void {
+    if (markerHandlers === null) return
+    if (draggingMarker !== null) {
+      const point = markerSurfacePoint(event)
+      if (point !== null) markerHandlers.onMove(draggingMarker, point)
+      return
+    }
+    // A grab cursor over a marker, so it reads as draggable.
+    renderer.domElement.style.cursor = markerUnderPointer(event) !== null ? 'grab' : ''
+  }
+
+  function onMarkerPointerUp(): void {
+    if (draggingMarker === null) return
+    draggingMarker = null
+    controls.enabled = true
   }
 
   return {
@@ -855,18 +957,15 @@ export function createViewport(): Viewport {
       if (model !== null) {
         scene.remove(model)
         release(model)
-      }
-      if (skeleton !== null) {
-        scene.remove(skeleton)
-        skeleton.dispose()
-        skeleton = null
+        // importedSkeleton was a child of model, so release() disposed it.
+        importedSkeleton = null
       }
 
       model = contents.root
       scene.add(model)
       if (contents.bones > 0) {
-        skeleton = new SkeletonHelper(model)
-        scene.add(skeleton)
+        importedSkeleton = importedBoneMesh(model)
+        if (importedSkeleton !== null) model.add(importedSkeleton)
       }
 
       // Size the drawing buffer to the canvas now, rather than waiting for the
@@ -996,6 +1095,8 @@ export function createViewport(): Viewport {
 
     showFittedSkeleton(positions, parents, onEdit): void {
       clearFittedEditing()
+      // The fitted rig supersedes the model's own; don't draw both.
+      if (importedSkeleton !== null) importedSkeleton.visible = false
       if (fittedSkeleton !== null) {
         scene.remove(fittedSkeleton)
         fittedSkeleton.geometry.dispose()
@@ -1030,14 +1131,22 @@ export function createViewport(): Viewport {
       }
     },
 
-    beginMarkerPlacement(onPick: (point: [number, number, number]) => void): void {
-      onMarkerPick = onPick
-      // Idempotent: the app re-arms on every render, so drop any prior listener.
-      renderer.domElement.removeEventListener('pointerdown', onMarkerPointerDown)
-      renderer.domElement.addEventListener('pointerdown', onMarkerPointerDown)
+    beginMarkerPlacement(handlers: MarkerHandlers): void {
+      markerHandlers = handlers
+      // The model's own rig would clutter placement; the new rig is what matters.
+      if (importedSkeleton !== null) importedSkeleton.visible = false
+      const dom = renderer.domElement
+      // Idempotent: the app re-arms on every render, so drop any prior listeners.
+      dom.removeEventListener('pointerdown', onMarkerPointerDown)
+      dom.removeEventListener('pointermove', onMarkerPointerMove)
+      window.removeEventListener('pointerup', onMarkerPointerUp)
+      dom.addEventListener('pointerdown', onMarkerPointerDown)
+      dom.addEventListener('pointermove', onMarkerPointerMove)
+      // On window, so releasing off the canvas still ends a drag.
+      window.addEventListener('pointerup', onMarkerPointerUp)
     },
 
-    setMarkers(markers: readonly { position: readonly [number, number, number]; color: number }[]): void {
+    setMarkers(markers: readonly { id: string; position: readonly [number, number, number]; color: number }[]): void {
       for (const sprite of markerSprites) {
         scene.remove(sprite)
         sprite.material.dispose()
@@ -1055,14 +1164,21 @@ export function createViewport(): Viewport {
         sprite.position.set(marker.position[0], marker.position[1], marker.position[2])
         sprite.scale.setScalar(radius)
         sprite.renderOrder = 3
+        sprite.userData['slot'] = marker.id
         scene.add(sprite)
         markerSprites.push(sprite)
       }
     },
 
     endMarkerPlacement(): void {
-      onMarkerPick = null
-      renderer.domElement.removeEventListener('pointerdown', onMarkerPointerDown)
+      markerHandlers = null
+      draggingMarker = null
+      const dom = renderer.domElement
+      dom.removeEventListener('pointerdown', onMarkerPointerDown)
+      dom.removeEventListener('pointermove', onMarkerPointerMove)
+      window.removeEventListener('pointerup', onMarkerPointerUp)
+      dom.style.cursor = ''
+      controls.enabled = true
       for (const sprite of markerSprites) {
         scene.remove(sprite)
         sprite.material.dispose()
@@ -1091,7 +1207,6 @@ export function createViewport(): Viewport {
       if (model !== null) release(model)
       fittedSkeleton?.geometry.dispose()
       boneMaterial.dispose()
-      skeleton?.dispose()
       grid.dispose()
       handleRest.dispose()
       handleHover.dispose()
