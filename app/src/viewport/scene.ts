@@ -866,7 +866,10 @@ export function createViewport(): Viewport {
       // flag regardless of where the light is.
       overlay.traverse((object) => {
         if (object instanceof Mesh && hasVertexColors(object)) {
-          object.material = new MeshBasicMaterial({ vertexColors: true })
+          // `toneMapped: false` so the baked debug hues (a bone's colour, the
+          // red fallback flag) render exactly as computed — the scene's neutral
+          // tone map would otherwise desaturate them and blur the flag.
+          object.material = new MeshBasicMaterial({ vertexColors: true, toneMapped: false })
         }
       })
       if (model !== null) {
