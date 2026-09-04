@@ -353,12 +353,16 @@ function renderEditStep(): string {
   if (fitted === null) {
     return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
   }
+  const refit = `<button id="refit" class="action" ${fitting ? 'disabled' : ''}>${
+    fitting ? 'Fitting\u2026' : 'Auto-fit again'
+  }</button>`
   return `<dl class="facts">
       <dt>Bones</dt><dd>${fitted.bones.length}</dd>
       <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
       ${poseRow()}
     </dl>
-    <p style="color:var(--fg-2)">The skeleton is placed automatically. Drag a joint handle in the viewport to adjust any bone that sits outside the mesh, then bind.</p>`
+    ${refit}
+    <p style="color:var(--fg-2)">The skeleton is placed automatically. If the model faces the wrong way, orient it with the move / rotate tools, then auto-fit again. Drag a joint handle to nudge any bone that sits outside the mesh, then bind.</p>`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */
@@ -834,6 +838,14 @@ function render(): void {
   bindButton?.addEventListener('click', () => void runBind())
 
   app.querySelector<HTMLButtonElement>('#paint')?.addEventListener('click', () => void runPaint())
+
+  // Auto-fit again re-runs the automatic placement — handy after orienting or
+  // moving the model on the grid.
+  app
+    .querySelector<HTMLButtonElement>('#refit')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void runFit(chosen)
+    })
 
   app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
     const format = button.dataset['format']
