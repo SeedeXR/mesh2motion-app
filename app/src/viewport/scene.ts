@@ -33,6 +33,7 @@ import {
   type Object3D,
   PerspectiveCamera,
   PlaneGeometry,
+  CanvasTexture,
   PMREMGenerator,
   Raycaster,
   Scene,
@@ -41,6 +42,8 @@ import {
   SkeletonHelper,
   Spherical,
   SphereGeometry,
+  Sprite,
+  SpriteMaterial,
   TOUCH,
   Vector2,
   Vector3,
@@ -795,9 +798,40 @@ export function createViewport(): Viewport {
   // A person drops chin/wrist/elbow/knee/groin markers on the model; each click
   // raycasts the mesh for a surface point and reports it. The app owns the slot
   // and symmetry logic and hands back the markers to draw.
-  let markerMeshes: Mesh[] = []
-  let markerGeometry: SphereGeometry | null = null
+  //
+  // Markers are camera-facing sprites of a hollow ring with a centre dot — the
+  // Mixamo auto-rigger look — drawn on top of the mesh so they never hide.
+  let markerSprites: Sprite[] = []
+  const ringTextures = new Map<number, CanvasTexture>()
   let onMarkerPick: ((point: [number, number, number]) => void) | null = null
+
+  /** A cached hollow-ring-plus-centre-dot texture in the marker's colour. */
+  function ringTexture(color: number): CanvasTexture {
+    const cached = ringTextures.get(color)
+    if (cached !== undefined) return cached
+    const size = 128
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')
+    const texture = new CanvasTexture(canvas)
+    texture.colorSpace = SRGBColorSpace
+    ringTextures.set(color, texture)
+    if (ctx === null) return texture // jsdom / no 2d context: an empty sprite.
+    const hex = `#${color.toString(16).padStart(6, '0')}`
+    const c = size / 2
+    ctx.strokeStyle = hex
+    ctx.lineWidth = size * 0.1
+    ctx.beginPath()
+    ctx.arc(c, c, size * 0.36, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = hex
+    ctx.beginPath()
+    ctx.arc(c, c, size * 0.09, 0, Math.PI * 2)
+    ctx.fill()
+    texture.needsUpdate = true
+    return texture
+  }
 
   function onMarkerPointerDown(event: PointerEvent): void {
     if (onMarkerPick === null || model === null || event.button !== 0) return
@@ -1004,35 +1038,38 @@ export function createViewport(): Viewport {
     },
 
     setMarkers(markers: readonly { position: readonly [number, number, number]; color: number }[]): void {
-      for (const mesh of markerMeshes) {
-        scene.remove(mesh)
-        disposeMaterial(mesh.material)
+      for (const sprite of markerSprites) {
+        scene.remove(sprite)
+        sprite.material.dispose()
       }
-      markerMeshes = []
-      // ~2% of the model's diagonal, so a marker reads at any creature scale.
-      const radius = Math.max(bounds.getSize(new Vector3()).length() * 0.02, 0.01)
-      markerGeometry ??= new SphereGeometry(1, 16, 12)
+      markerSprites = []
+      // ~5% of the model's diagonal, so a ring reads clearly at any creature scale.
+      const radius = Math.max(bounds.getSize(new Vector3()).length() * 0.05, 0.02)
       for (const marker of markers) {
-        const material = new MeshBasicMaterial({ color: marker.color, depthTest: false, transparent: true })
-        const mesh = new Mesh(markerGeometry, material)
-        mesh.position.set(marker.position[0], marker.position[1], marker.position[2])
-        mesh.scale.setScalar(radius)
-        mesh.renderOrder = 3
-        scene.add(mesh)
-        markerMeshes.push(mesh)
+        const material = new SpriteMaterial({
+          map: ringTexture(marker.color),
+          depthTest: false,
+          transparent: true
+        })
+        const sprite = new Sprite(material)
+        sprite.position.set(marker.position[0], marker.position[1], marker.position[2])
+        sprite.scale.setScalar(radius)
+        sprite.renderOrder = 3
+        scene.add(sprite)
+        markerSprites.push(sprite)
       }
     },
 
     endMarkerPlacement(): void {
       onMarkerPick = null
       renderer.domElement.removeEventListener('pointerdown', onMarkerPointerDown)
-      for (const mesh of markerMeshes) {
-        scene.remove(mesh)
-        disposeMaterial(mesh.material)
+      for (const sprite of markerSprites) {
+        scene.remove(sprite)
+        sprite.material.dispose()
       }
-      markerMeshes = []
-      markerGeometry?.dispose()
-      markerGeometry = null
+      markerSprites = []
+      for (const texture of ringTextures.values()) texture.dispose()
+      ringTextures.clear()
     },
 
     symmetryX(): number {

@@ -308,25 +308,70 @@ body {
   background: var(--accent-dim);
 }
 
-/* Marker-placement panel (Fit step). */
-.marker-slot {
+/* Marker-placement panel (Fit step, marker-rig flow). */
+.marker-guide {
+  display: block;
+  width: 100%;
+  max-width: 180px;
+  height: auto;
+  margin: var(--s-2) auto;
+}
+.marker-prompt {
+  color: var(--fg-1);
+  margin: var(--s-2) 0;
+}
+.marker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-bottom: var(--s-2);
+}
+.marker-row {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  margin-bottom: var(--s-1);
-  text-align: left;
 }
-.marker-slot > span:nth-child(2) { flex: 1; }
-.marker-slot[aria-current="true"] {
-  border-color: var(--accent);
-  background: var(--accent-dim);
+.marker-label {
+  flex: 1;
+  color: var(--fg-1);
 }
-.marker-dot {
-  width: 12px;
-  height: 12px;
+.marker-rings {
+  display: flex;
+  gap: var(--s-2);
+}
+/* A hollow ring with a centre dot — the reference marker. */
+.marker-ring {
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  flex: 0 0 auto;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+  border: 3px solid var(--ring);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow var(--dur-fast) var(--ease);
+}
+.marker-ring::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ring);
+  opacity: 0.45;
+}
+.marker-ring.placed::after {
+  width: 9px;
+  height: 9px;
+  opacity: 1;
+}
+.marker-ring[aria-current="true"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent);
+}
+.marker-ring:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .toggle {
   display: flex;

@@ -55,9 +55,17 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
       Note: surface-click marker (no medial-Z projection yet) — edit-bones covers
       residual; the mesh's joint crevices show IBL blue reflection once the
       skeleton clears (pre-existing render, not a bug).
-- [ ] S4 (optional polish): medial-Z projection of marker clicks; marker sets for
-      non-human creatures; hide during placement. Editable bones already exist
-      (joint drag). Default flow is done.
+- [x] S4 (Mixamo UI/UX pass, user asked to match the reference): markers are now
+      camera-facing **hollow ring + centre dot sprites** (Mixamo look, drawn on top),
+      not solid spheres. Panel: a front-view **guide diagram** (colour-matched rings
+      on a T-pose figure), grouped ring legend (Chin / Wrists / Elbows / Knees /
+      Groin with pairs side-by-side), Mixamo-style **instructions** + active-marker
+      prompt, Solve (n/total). VISUALLY VERIFIED in-app (marker-rings.png): rings on
+      the model match the reference; guide + legend + instructions render clean.
+      Note: full separate Orient step folded into the panel tip (move/rotate tools
+      exist); animated clip preview already lives in the Animate step.
+- [ ] S5 (optional): dedicated Orient step; medial-Z projection of clicks; marker
+      sets for non-human creatures (guide SVG is human-shaped today).
 
 ## Notes
 - rest.bones order == parents index space (both from pipeline `rest_pose`).

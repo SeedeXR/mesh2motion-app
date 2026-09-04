@@ -386,30 +386,88 @@ function renderEditStep(): string {
     <p style="color:var(--fg-2)">Drag a joint handle to nudge any bone that sits outside the mesh, then bind. Re-place markers to solve again from scratch, or auto-fit to let the mesh place it.</p>`
 }
 
-/** The marker-placement panel: a slot per joint, a symmetry toggle, and the
- * solve / auto-fit choice. Clicking a slot arms it for the next viewport click. */
+/** The marker-placement panel (the Mixamo Place-markers step): a guide diagram,
+ * a grouped set of ring markers, the symmetry toggle and the solve / auto-fit
+ * choice. Clicking a ring arms it for the next viewport click. */
 function renderMarkerPanel(): string {
   const set = chosen === null ? null : markerSetFor(chosen)
   if (set === null) return ''
-  const slots = set
-    .map((slot) => {
-      const placed = markerPositions.has(slot.id)
-      const dot = `#${slot.color.toString(16).padStart(6, '0')}`
-      return `<button class="action marker-slot" data-slot="${slot.id}" ${slot.id === activeSlot ? 'aria-current="true"' : ''}>
-          <span class="marker-dot" style="background:${dot}" aria-hidden="true"></span>
-          <span>${escape(slot.label)}</span>
-          <span style="color:var(--fg-2)">${placed ? 'placed' : '\u2014'}</span>
-        </button>`
+
+  // Group the slots the way the reference does: single markers on their own row,
+  // left/right pairs on one row side by side.
+  const groups: { label: string; slots: typeof set }[] = []
+  const done = new Set<string>()
+  for (const slot of set) {
+    if (done.has(slot.id)) continue
+    if (slot.pair !== undefined) {
+      const pair = set.find((s) => s.id === slot.pair)
+      const slots = pair === undefined ? [slot] : [slot, pair]
+      slots.forEach((s) => done.add(s.id))
+      groups.push({ label: `${slot.label.replace(/ [LR]$/, '')}s`, slots })
+    } else {
+      done.add(slot.id)
+      groups.push({ label: slot.label, slots: [slot] })
+    }
+  }
+
+  const rows = groups
+    .map((group) => {
+      const rings = group.slots
+        .map((slot) => {
+          const hex = `#${slot.color.toString(16).padStart(6, '0')}`
+          const state = markerPositions.has(slot.id) ? 'placed' : ''
+          const active = slot.id === activeSlot ? 'aria-current="true"' : ''
+          return `<button class="marker-ring ${state}" data-slot="${slot.id}" ${active}
+                     style="--ring:${hex}" title="${escape(slot.label)}" aria-label="${escape(slot.label)}"></button>`
+        })
+        .join('')
+      return `<div class="marker-row"><span class="marker-label">${escape(group.label)}</span><span class="marker-rings">${rings}</span></div>`
     })
     .join('')
+
   const placed = set.filter((s) => markerPositions.has(s.id)).length
+  const total = set.length
   const canSolve = placed >= 2 && !fitting
+  const activeName = set.find((s) => s.id === activeSlot)?.label
+  const prompt =
+    activeName === undefined
+      ? 'All markers placed \u2014 press Solve to build the rig.'
+      : `Click the <b>${escape(activeName)}</b> on your model.${useSymmetry ? ' The other side mirrors.' : ''}`
+
   return `
-    <p style="color:var(--fg-2)">Pick a slot, then click that joint on your model.${useSymmetry ? ' The other side mirrors automatically.' : ''}</p>
-    ${slots}
+    <p style="color:var(--fg-2)">Face the model forward in a T-pose (use the move / rotate tools), then place a marker on each joint and Solve.</p>
+    ${markerGuideSvg(set)}
+    <p class="marker-prompt">${prompt}</p>
+    <div class="marker-grid">${rows}</div>
     <label class="toggle"><input type="checkbox" id="symmetry" ${useSymmetry ? 'checked' : ''}/> Use symmetry</label>
-    <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${fitting ? 'Solving\u2026' : `Solve rig (${placed})`}</button>
+    <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${
+      fitting ? 'Solving\u2026' : `Solve rig (${placed}/${total})`
+    }</button>
     <button id="autofit" class="action">Auto-fit instead</button>`
+}
+
+/** A small front-view guide showing where each marker goes, coloured to match \u2014
+ * the mesh2motion take on the reference's placement thumbnail. */
+function markerGuideSvg(set: ReturnType<typeof markerSetFor>): string {
+  const colorOf = (id: string): string => {
+    const c = set?.find((s) => s.id === id)?.color ?? 0x888888
+    return `#${c.toString(16).padStart(6, '0')}`
+  }
+  const ring = (cx: number, cy: number, id: string): string =>
+    `<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="${colorOf(id)}" stroke-width="2.5"/><circle cx="${cx}" cy="${cy}" r="1.6" fill="${colorOf(id)}"/>`
+  return `<svg class="marker-guide" viewBox="0 0 200 210" role="img" aria-label="Where the markers go">
+    <g stroke="var(--fg-2)" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.5">
+      <circle cx="100" cy="26" r="13"/>
+      <path d="M100 39 V116"/>
+      <path d="M100 60 H44 M100 60 H156"/>
+      <path d="M100 116 L82 188 M100 116 L118 188"/>
+    </g>
+    ${ring(100, 46, 'chin')}
+    ${ring(44, 60, 'wrist_l')}${ring(156, 60, 'wrist_r')}
+    ${ring(72, 60, 'elbow_l')}${ring(128, 60, 'elbow_r')}
+    ${ring(89, 152, 'knee_l')}${ring(111, 152, 'knee_r')}
+    ${ring(100, 118, 'groin')}
+  </svg>`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */
@@ -977,8 +1035,8 @@ function render(): void {
       if (chosen !== null) void runFit(chosen)
     })
 
-  // Marker-placement flow: slot selection, symmetry, solve / auto-fit.
-  app.querySelectorAll<HTMLButtonElement>('.marker-slot').forEach((button) => {
+  // Marker-placement flow: ring selection, symmetry, solve / auto-fit.
+  app.querySelectorAll<HTMLButtonElement>('.marker-ring').forEach((button) => {
     button.addEventListener('click', () => {
       activeSlot = button.dataset['slot'] ?? null
       render()
