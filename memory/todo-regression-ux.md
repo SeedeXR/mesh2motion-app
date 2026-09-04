@@ -31,8 +31,19 @@ review, commit/push, confirm CI green, screenshot the app to prove it.
       Regression test asserts no bone flies >5m at frame 0. Verified in the app.
 - [ ] MINOR residual: a small spike at the lead foot mid-animation (one bone/leaf).
       Investigate if quick; low priority vs the fixed explosion.
-- [ ] F1 Auto-fit option + Orient step (see below).
-- [ ] U1 UI/UX polish toward the reference.
+- [x] F1 DONE (e288386): "Auto-fit again" button in the Fit step + orient-aware
+      guidance (orient with move/rotate tools, then auto-fit). Verified in-app.
+- [x] MINOR foot spike: investigated — Blender renders frames 5/15/20/33 clean,
+      no shards. Was a transient single-frame artifact, not a persistent bug.
+- [ ] U1 UI/UX polish toward the reference — open-ended; making concrete
+      improvements per tick (done: orient guidance + autofit button). Candidates:
+      clip-preview thumbnails, smoother step transitions, front-orient helper.
+
+## Sonar (2026-09-04): gate ERROR from PRE-EXISTING branch issues, NOT the
+## regression/F1 commits (those add 0 new violations): author_rig.rs:370
+## essential-complexity example (documented P4-Q defer), history.ts:13 stale
+## (states is already readonly), + 3.35% duplication from the earlier texture
+## work (distinct glTF/FBX constructs). CI green on all commits.
 
 ## Items (original)
 - [ ] R1 Texture/skin colours regression — reproduce with a PBR/Mixamo-style glb

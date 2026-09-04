@@ -29,11 +29,14 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   MOUSE,
+  NeutralToneMapping,
   type Object3D,
   PerspectiveCamera,
   PlaneGeometry,
+  PMREMGenerator,
   Raycaster,
   Scene,
+  SRGBColorSpace,
   ShaderMaterial,
   SkeletonHelper,
   Spherical,
@@ -45,6 +48,7 @@ import {
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import {
   applyFraming,
   findClip,
@@ -242,10 +246,18 @@ export interface Viewport {
 
 /** Creates a viewport. The canvas is returned unmounted. */
 export function createViewport(): Viewport {
-  const renderer = new WebGLRenderer({ antialias: false })
+  const renderer = new WebGLRenderer({ antialias: true })
   // Above 2x the cost grows faster than anyone can see the difference, and a
   // 3x display would otherwise render nine times the pixels.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  // Colour fidelity, so a textured model looks the way it does in Blender or
+  // Maya rather than dull and flat. The KHR PBR-Neutral tone map preserves hue
+  // and saturation while taming highlights (unlike ACES, which shifts colour);
+  // the output is sRGB, which is three's default but pinned here so it cannot
+  // drift.
+  renderer.toneMapping = NeutralToneMapping
+  renderer.toneMappingExposure = 1.0
+  renderer.outputColorSpace = SRGBColorSpace
 
   // Frames-drawn counter for the "viewport is blank" diagnostic (`info()`).
   let renders = 0
@@ -277,8 +289,15 @@ export function createViewport(): Viewport {
   controls.touches = { ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }
   installBlenderNavigation(controls, renderer.domElement)
 
-  scene.add(new AmbientLight(0xffffff, 1.2))
-  const key = new DirectionalLight(0xffffff, 1.8)
+  // Image-based lighting from a neutral studio room — the same trick the glTF
+  // sample viewer and three's editor use. It gives PBR materials soft ambient
+  // and gentle reflections, which is what makes a model read as lit rather than
+  // flat; a single directional key still shapes the form. Generated once via
+  // PMREM and kept as the scene's environment.
+  const pmrem = new PMREMGenerator(renderer)
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+  scene.add(new AmbientLight(0xffffff, 0.35))
+  const key = new DirectionalLight(0xffffff, 1.4)
   key.position.set(2, 4, 3)
   scene.add(key)
 
