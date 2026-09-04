@@ -35,9 +35,23 @@ review, commit/push, confirm CI green, screenshot the app to prove it.
       guidance (orient with move/rotate tools, then auto-fit). Verified in-app.
 - [x] MINOR foot spike: investigated — Blender renders frames 5/15/20/33 clean,
       no shards. Was a transient single-frame artifact, not a persistent bug.
-- [ ] U1 UI/UX polish toward the reference — open-ended; making concrete
-      improvements per tick (done: orient guidance + autofit button). Candidates:
-      clip-preview thumbnails, smoother step transitions, front-orient helper.
+- [x] RENDERING FIDELITY DONE (2edd5c6, 18986e7): the real regression. Viewport
+      had no IBL/tone-mapping/AA, so PBR (esp. metallic) rendered flat/dark.
+      Added RoomEnvironment IBL + KHR PBR-neutral tone map + sRGB + antialias.
+      PROVEN vs Blender with metallic PBR spheres (metal now shiny not black;
+      colours match). Weight-paint overlay set toneMapped:false so debug hues
+      stay true (verified vibrant in-app).
+- [x] Weight-paint bones-clutter hidden during overlay (268f4e0); clip-preview
+      thumbnails confirmed animating (preview.ts AnimationMixer + setAnimationLoop).
+- [~] U1 UI/UX: concrete improvements done (orient guidance, autofit button,
+      textured throughout via rendering fix, refine-by-drag exists, animating
+      thumbnails, clean weight-paint/animate views). Full Mixamo marker-placement
+      UX = a paradigm redesign that needs USER DIRECTION (markers vs the current
+      more-automatic auto-fit).
+- BLOCKED ON USER INPUT: (a) their SPECIFIC model to reproduce any remaining
+      colour mismatch (rendering is model-specific); (b) Maya screenshots — maya
+      headless hardware-render not available (no GPU viewport in mayapy batch);
+      (c) the auto-rig UX vision (marker placement vs smoother current flow).
 
 ## Sonar (2026-09-04): gate ERROR from PRE-EXISTING branch issues, NOT the
 ## regression/F1 commits (those add 0 new violations): author_rig.rs:370
