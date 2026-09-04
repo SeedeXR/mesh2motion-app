@@ -243,7 +243,7 @@ export function skeletonOctahedra(
     const vy = dz * ux - dx * uz
     const vz = dx * uy - dy * ux
 
-    const radius = Math.max(length * 0.1, minWidth)
+    const radius = Math.max(length * 0.075, minWidth)
     const cx = head[0] + dx * length * 0.1
     const cy = head[1] + dy * length * 0.1
     const cz = head[2] + dz * length * 0.1

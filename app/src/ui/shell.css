@@ -166,6 +166,8 @@ body {
   font: inherit;
   cursor: pointer;
   min-height: var(--s-6);
+  /* Space stacked action buttons apart so they don't read as one slab. */
+  margin-bottom: var(--s-2);
   transition: background var(--dur-fast) var(--ease);
 }
 
@@ -312,11 +314,11 @@ body {
 .marker-guide {
   display: block;
   width: 100%;
+  max-width: 260px;
   height: auto;
-  margin: var(--s-2) 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: #000;
+  margin: var(--s-2) auto;
+  /* A transparent PNG cutout — no card, it floats on the panel like a reference. */
+  background: transparent;
 }
 .marker-prompt {
   color: var(--fg-1);

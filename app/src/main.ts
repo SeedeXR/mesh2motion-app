@@ -433,11 +433,12 @@ function renderMarkerPanel(): string {
   const placed = set.filter((s) => markerPositions.has(s.id)).length
   const total = set.length
   const canSolve = placed >= 2 && !fitting
-  const activeName = set.find((s) => s.id === activeSlot)?.label
+  const active = set.find((s) => s.id === activeSlot)
+  const hint = active?.hint === undefined ? '' : ` \u2014 ${escape(active.hint)}`
   const prompt =
-    activeName === undefined
+    active === undefined
       ? 'All markers placed \u2014 press Solve to build the rig.'
-      : `Click the <b>${escape(activeName)}</b> on your model.${useSymmetry ? ' The other side mirrors.' : ''}`
+      : `Click the <b>${escape(active.label)}</b> on your model${hint}.${useSymmetry ? ' The other side mirrors.' : ''}`
 
   return `
     <p style="color:var(--fg-2)">Face the model forward in a T-pose (use the move / rotate tools), then place a marker on each joint and Solve.</p>

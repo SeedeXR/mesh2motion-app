@@ -425,10 +425,12 @@ export function createViewport(): Viewport {
   }
 
 
-  /** The octahedral bones are ~40% as wide as a joint handle, so the grabbable
-   * spheres still read as the pick targets, not the bones. */
+  /** The floor on octahedral-bone width — a slim ~28% of a joint handle, so the
+   * grabbable spheres still read as the pick targets and short bones (fingers,
+   * toes) stay slender rather than bloating to the minimum. Long bones size off
+   * their own length (see `skeletonOctahedra`). */
   function boneWidth(positions: readonly (readonly [number, number, number])[]): number {
-    return handleRadius(positions) * 0.4
+    return handleRadius(positions) * 0.28
   }
 
   /** Fills `geometry` with octahedral bones for the given joints, with normals

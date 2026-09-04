@@ -24,18 +24,20 @@ export interface MarkerSlot {
   readonly pair?: string
   /** Marker colour (Mixamo's palette: chin cyan … groin pink). */
   readonly color: number
+  /** Where exactly to place it, shown while this marker is active. */
+  readonly hint?: string
 }
 
 export const MARKER_SETS: Readonly<Record<string, readonly MarkerSlot[]>> = {
   human: [
-    { id: 'chin', label: 'Chin', bone: 'head', color: 0x38bdf8 },
-    { id: 'wrist_l', label: 'Wrist L', bone: 'hand_l', side: 'l', pair: 'wrist_r', color: 0xa3e635 },
-    { id: 'wrist_r', label: 'Wrist R', bone: 'hand_r', side: 'r', pair: 'wrist_l', color: 0xa3e635 },
-    { id: 'elbow_l', label: 'Elbow L', bone: 'lowerarm_l', side: 'l', pair: 'elbow_r', color: 0xfacc15 },
-    { id: 'elbow_r', label: 'Elbow R', bone: 'lowerarm_r', side: 'r', pair: 'elbow_l', color: 0xfacc15 },
-    { id: 'knee_l', label: 'Knee L', bone: 'calf_l', side: 'l', pair: 'knee_r', color: 0xfb923c },
-    { id: 'knee_r', label: 'Knee R', bone: 'calf_r', side: 'r', pair: 'knee_l', color: 0xfb923c },
-    { id: 'groin', label: 'Groin', bone: 'pelvis', color: 0xf472b6 }
+    { id: 'chin', label: 'Chin', bone: 'head', color: 0x38bdf8, hint: 'at the centre of the jaw' },
+    { id: 'wrist_l', label: 'Wrist L', bone: 'hand_l', side: 'l', pair: 'wrist_r', color: 0xa3e635, hint: 'at the wrist joint' },
+    { id: 'wrist_r', label: 'Wrist R', bone: 'hand_r', side: 'r', pair: 'wrist_l', color: 0xa3e635, hint: 'at the wrist joint' },
+    { id: 'elbow_l', label: 'Elbow L', bone: 'lowerarm_l', side: 'l', pair: 'elbow_r', color: 0xfacc15, hint: 'at the elbow bend' },
+    { id: 'elbow_r', label: 'Elbow R', bone: 'lowerarm_r', side: 'r', pair: 'elbow_l', color: 0xfacc15, hint: 'at the elbow bend' },
+    { id: 'knee_l', label: 'Knee L', bone: 'calf_l', side: 'l', pair: 'knee_r', color: 0xfb923c, hint: 'at the kneecap' },
+    { id: 'knee_r', label: 'Knee R', bone: 'calf_r', side: 'r', pair: 'knee_l', color: 0xfb923c, hint: 'at the kneecap' },
+    { id: 'groin', label: 'Groin', bone: 'pelvis', color: 0xf472b6, hint: 'at the hip joint, between the legs' }
   ]
 }
 
