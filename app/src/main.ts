@@ -57,6 +57,11 @@ import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
 import { markerSetFor } from './state/markers'
+import markerGuideHuman from './assets/marker-guide-human.png'
+
+/** A rendered guide image per template, showing where the markers go on a real
+ *  model — the reference's placement thumbnail. Only templates with one show it. */
+const MARKER_GUIDES: Readonly<Record<string, string>> = { human: markerGuideHuman }
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -436,7 +441,7 @@ function renderMarkerPanel(): string {
 
   return `
     <p style="color:var(--fg-2)">Face the model forward in a T-pose (use the move / rotate tools), then place a marker on each joint and Solve.</p>
-    ${markerGuideSvg(set)}
+    ${guideImage(chosen)}
     <p class="marker-prompt">${prompt}</p>
     <div class="marker-grid">${rows}</div>
     <label class="toggle"><input type="checkbox" id="symmetry" ${useSymmetry ? 'checked' : ''}/> Use symmetry</label>
@@ -446,28 +451,11 @@ function renderMarkerPanel(): string {
     <button id="autofit" class="action">Auto-fit instead</button>`
 }
 
-/** A small front-view guide showing where each marker goes, coloured to match \u2014
- * the mesh2motion take on the reference's placement thumbnail. */
-function markerGuideSvg(set: ReturnType<typeof markerSetFor>): string {
-  const colorOf = (id: string): string => {
-    const c = set?.find((s) => s.id === id)?.color ?? 0x888888
-    return `#${c.toString(16).padStart(6, '0')}`
-  }
-  const ring = (cx: number, cy: number, id: string): string =>
-    `<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="${colorOf(id)}" stroke-width="2.5"/><circle cx="${cx}" cy="${cy}" r="1.6" fill="${colorOf(id)}"/>`
-  return `<svg class="marker-guide" viewBox="0 0 200 210" role="img" aria-label="Where the markers go">
-    <g stroke="var(--fg-2)" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.5">
-      <circle cx="100" cy="26" r="13"/>
-      <path d="M100 39 V116"/>
-      <path d="M100 60 H44 M100 60 H156"/>
-      <path d="M100 116 L82 188 M100 116 L118 188"/>
-    </g>
-    ${ring(100, 46, 'chin')}
-    ${ring(44, 60, 'wrist_l')}${ring(156, 60, 'wrist_r')}
-    ${ring(72, 60, 'elbow_l')}${ring(128, 60, 'elbow_r')}
-    ${ring(89, 152, 'knee_l')}${ring(111, 152, 'knee_r')}
-    ${ring(100, 118, 'groin')}
-  </svg>`
+/** The rendered guide image for a template, or nothing when it has none. */
+function guideImage(template: string | null): string {
+  const src = template === null ? undefined : MARKER_GUIDES[template]
+  if (src === undefined) return ''
+  return `<img class="marker-guide" src="${src}" alt="Where the markers go on a T-posed model" />`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */

@@ -312,9 +312,11 @@ body {
 .marker-guide {
   display: block;
   width: 100%;
-  max-width: 180px;
   height: auto;
-  margin: var(--s-2) auto;
+  margin: var(--s-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #000;
 }
 .marker-prompt {
   color: var(--fg-1);
