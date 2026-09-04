@@ -36,14 +36,14 @@ textures. Map per-vertex (mesh_of concat order). Verify in Maya (strict) + Blend
 - [~] ITEM 1 (FBX Blender orientation) — MISCHARACTERIZED + DEFERRED. GlobalSettings ALREADY declares UpAxis=Y (build.rs global_settings_node). The real issue: Blender's FBX importer rotates the ARMATURE object +90°X (Y-up→Z-up) but leaves the skinned MESH object at identity, so the mesh lies down while the armature stands. Pre-existing (before this session), Maya-unaffected (imports upright). A safe fix reworks the mesh/armature hierarchy in the Maya-verified fbx builder (e.g. parent the mesh under the armature root with a compensating local transform so Blender rotates them together) and MUST re-verify the bind in Maya — not a one-line/loop-safe change. Deferred with this reason rather than risk the verified bind for a cosmetic Blender-only rest-pose display issue.
 - [x] ITEM 2b DONE (040a52f): FBX material/texture reader. convert.rs read_material follows Model<-Material<-Texture<-Video, reads embedded Content bytes (via Object.node raw tree), PNG/JPEG by signature, dedup by id; primitive.material set; Document.materials populated. fbx_source_shading already reads Document.materials so export_fbx re-emits with NO further change. VERIFIED: our textured FBX -> import -> rig -> export FBX keeps material Main + packed 499x500 texture + map1 UVs (Blender). Self-contained round-trip test asserts exact embedded PNG bytes survive build->encode->parse->convert. fbx_pipeline fuzzed 75s/480k, no panic.
 - [~] ITEM 3 (multi-material FBX) — NON-IMPACTING, deferred. Checked every shipped asset: all are 1 (or 0) materials — NONE is multi-material. glTF->glb already keeps all materials via grafting; glTF/FBX->fbx merges to one mesh w/ the first material, which is exactly correct for every real asset. A fix (per-polygon LayerElementMaterial + multiple Material/Texture/Video) has no fixture and no user-facing impact today; deferred until a multi-material asset exists.
-- BOUNDARY (not a listed item): FBX->glb drops the material (the glb REBUILD writer emits no materials; glTF sources keep them by grafting, and FBX->fbx keeps them by re-emit). Fixing needs the custom glb writer to emit materials+embedded images — the writer extension the graft was built to avoid. Low priority: FBX->fbx is the natural round-trip and is full.
+- [x] FBX->glb MATERIAL DONE (905ce55): glb writer now emits materials + embedded textures (write_materials: baseColor factor + image in BIN via bufferView, one shared sampler; primitives carry material index; additive so material-less docs are byte-identical). rigged_document builds the glb material from the source shading. Verified FBX(embedded tex)->glb keeps material+499x500 texture+UVs (Blender). glb write fuzzed 75s/632k, no panic. Self-containment test now checks images are embedded (bufferView, no URI).
 
-## FINAL STATE (texture passthrough)
-Export shading matrix — what each path keeps:
-- glTF(.glb) -> glb: FULL (materials+textures+UVs+normals, via graft)
-- glTF(.glb) -> fbx: FULL (via fbx_source_shading re-emit, Maya+Blender verified)
-- FBX -> fbx:        FULL (materials+textures+UVs+normals, this loop)
-- FBX -> glb:        UVs+normals (material dropped — boundary above)
-Deferred: Item 1 (Blender rest-pose orientation, risky bind rework, Maya-fine), Item 3 (multi-material, no asset uses it), FBX->glb material (glb writer extension).
+## FINAL STATE (texture passthrough) — COMPLETE
+Export shading matrix — every path keeps FULL shading (materials+textures+UVs+normals):
+- glTF(.glb) -> glb: FULL (via graft — original file untouched)
+- glTF(.glb) -> fbx: FULL (fbx_source_shading re-emit; Maya+Blender verified)
+- FBX -> fbx:        FULL (fbx material reader + re-emit)
+- FBX -> glb:        FULL (fbx material reader + glb writer materials)
+Item 2 COMPLETE. Deferred (with reason, non-blocking): Item 1 (Blender rest-pose orientation — pre-existing, Maya-correct, fix is a risky bind rework in the verified fbx builder), Item 3 (multi-material fbx — NO shipped asset is multi-material, so zero impact + no fixture). Item 4 MOOT (.gltf not an import format).
 
 LESSON: mesh node of model-human is identity; POSITION/NORMAL/TEXCOORD_0 accessors 0/1/2. import is glb+fbx only (no .gltf).
