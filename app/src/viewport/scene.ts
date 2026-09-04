@@ -820,6 +820,9 @@ export function createViewport(): Viewport {
         animated.scale.copy(model.scale)
         model.visible = false
       }
+      // Hide the fitted skeleton while a clip plays: its octahedral bones sit at
+      // the rest pose and would otherwise hang in the air over the moving mesh.
+      if (fittedSkeleton !== null) fittedSkeleton.visible = false
       scene.add(animated)
 
       mixer = new AnimationMixer(animated)
@@ -897,6 +900,7 @@ export function createViewport(): Viewport {
         animated = null
       }
       if (model !== null) model.visible = true
+      if (fittedSkeleton !== null) fittedSkeleton.visible = true
     },
 
     showFittedSkeleton(positions, parents, onEdit): void {

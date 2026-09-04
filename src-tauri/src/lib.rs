@@ -103,6 +103,14 @@ fn dev_autofit() -> Option<String> {
     std::env::var("M2M_AUTOFIT").ok()
 }
 
+/// Dev/screenshot harness: a clip name to bind and preview after auto-fit, from
+/// `M2M_AUTOCLIP`, so the Animate step (the retargeted preview and the clip
+/// thumbnails) can be screenshotted without clicking through the workflow.
+#[tauri::command]
+fn dev_autoclip() -> Option<String> {
+    std::env::var("M2M_AUTOCLIP").ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -477,6 +485,7 @@ pub fn run() {
             report_startup,
             dev_autoload,
             dev_autofit,
+            dev_autoclip,
             log_line,
             import_model,
             load_model,

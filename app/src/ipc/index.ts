@@ -53,6 +53,10 @@ export async function devAutoload(): Promise<string | null> {
 }
 
 /** Dev/screenshot harness: a creature template to auto-fit after autoload, or null. */
+export async function devAutoclip(): Promise<string | null> {
+  return await invoke<string | null>('dev_autoclip')
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }

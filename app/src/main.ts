@@ -29,6 +29,7 @@ import {
   buildInfo,
   devAutoload,
   devAutofit,
+  devAutoclip,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -967,6 +968,24 @@ async function maybeAutoload(): Promise<void> {
   if (template === null) return
   await runFit(template)
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  render()
+
+  // Optionally bind and preview a clip so the Animate step (retargeted preview +
+  // clip thumbnails) can be screenshotted without clicking through.
+  let autoclip: string | null = null
+  try {
+    autoclip = await devAutoclip()
+  } catch {
+    return
+  }
+  if (autoclip === null) return
+  await runBind()
+  await ensureClips()
+  clip = clips?.find((c) => c.name === autoclip)?.name ?? clips?.[0]?.name ?? null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  render()
+  await ensureLibrary(template)
+  await runPreview()
   render()
 }
 // Fire-and-forget at the entry module's end; nothing runs after it.

@@ -927,6 +927,13 @@ fn retarget_clip(
             .map(|r| glam::Quat::from_array(*r))
             .collect(),
     };
+    // Rest bone offsets in each bone's PARENT-LOCAL frame — the same frame the
+    // source rig's node translations are in, and the frame the exported bone
+    // nodes expect. Using the raw world offset here instead double-rotates every
+    // offset at playback (the parent's rotation is applied to a value already in
+    // world space), which flings the mesh apart. Must match the node-local
+    // translation `graft_bones`/`rigged_document` write.
+    let world_rotation = world_rotations(skeleton);
     let target_translations = m2m_rig::retarget::RestTranslations {
         local: (0..skeleton.bones.len())
             .map(|bone| {
@@ -937,7 +944,11 @@ fn retarget_clip(
                         .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
                 };
                 let parent = skeleton.parents.get(bone).copied().flatten();
-                position(bone) - parent.map_or(glam::Vec3::ZERO, position)
+                let offset = position(bone) - parent.map_or(glam::Vec3::ZERO, position);
+                match parent {
+                    Some(parent) => world_rotation[parent].inverse() * offset,
+                    None => offset,
+                }
             })
             .collect(),
     };
@@ -2311,6 +2322,81 @@ mod tests {
         let joint_nodes: std::collections::HashSet<usize> =
             back.skins[0].joints.iter().copied().collect();
         assert!(out.channels.iter().all(|c| joint_nodes.contains(&c.node)));
+    }
+
+    /// The retargeted animation keeps the skeleton together — it does not fling
+    /// bones across the scene.
+    ///
+    /// Regression: the retarget's target translations were the raw world offset
+    /// between a bone and its parent, while the exported bone nodes (and the
+    /// source rig) express translation in the parent's LOCAL frame. At playback
+    /// the parent's rotation was applied to a value already in world space, so
+    /// every bone offset was double-rotated and the mesh exploded into shards.
+    /// No count catches it — the clip name, channel count and time axis are all
+    /// correct — so this composes the first animated frame and checks the bones
+    /// stay near the character, not scattered to infinity.
+    #[test]
+    fn the_animation_does_not_fling_the_skeleton_apart() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some((&library(), "Chest_Open")),
+        )
+        .expect("exports");
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        let clip = &back.clips[0];
+
+        // Frame-0 local transform per node: the animation's first key overrides
+        // the node's rest translation/rotation.
+        let mut translation: Vec<glam::Vec3> = back
+            .nodes
+            .iter()
+            .map(|n| glam::Vec3::from(n.transform.translation))
+            .collect();
+        let mut rotation: Vec<glam::Quat> = back
+            .nodes
+            .iter()
+            .map(|n| glam::Quat::from_array(n.transform.rotation))
+            .collect();
+        for channel in &clip.channels {
+            match channel.path {
+                m2m_io::glb::Path::Translation => {
+                    if let Some(t) = channel.values.get(..3) {
+                        translation[channel.node] = glam::Vec3::new(t[0], t[1], t[2]);
+                    }
+                }
+                m2m_io::glb::Path::Rotation => {
+                    if let Some(q) = channel.values.get(..4) {
+                        rotation[channel.node] = glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Compose world positions down the hierarchy — parents precede children
+        // in this document, so one pass suffices.
+        let mut world = vec![glam::Mat4::IDENTITY; back.nodes.len()];
+        for (node, source) in back.nodes.iter().enumerate() {
+            let local = glam::Mat4::from_rotation_translation(rotation[node], translation[node]);
+            world[node] = match source.parent {
+                Some(parent) => world[parent] * local,
+                None => local,
+            };
+        }
+
+        // The character is ~1.8 m tall; a correctly posed skeleton stays within a
+        // couple of metres of the origin. The bug put bones tens of metres out.
+        for &joint in &back.skins[0].joints {
+            let position = world[joint].transform_point3(glam::Vec3::ZERO);
+            assert!(
+                position.length() < 5.0,
+                "bone node {joint} is {:.1} m from the origin at frame 0 — the skeleton exploded",
+                position.length()
+            );
+        }
     }
 
     /// Retargeting actually moves the motion; it is not a rename.
