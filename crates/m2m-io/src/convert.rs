@@ -14,17 +14,16 @@
 //! # What this carries, and what it does not
 //!
 //! Carried: the node hierarchy with local transforms, triangulated meshes,
-//! skins with their joint lists and inverse bind matrices, the unit scale, and
-//! one normal and UV per vertex (so an FBX source keeps its shading coordinates
-//! on export — see [`weld_by_source`]).
+//! skins with their joint lists and inverse bind matrices, the unit scale, one
+//! normal and UV per vertex, and each mesh's baseColor material with its
+//! embedded texture — so an FBX source keeps its shading on export (see
+//! [`weld_by_source`] and [`read_material`]).
 //!
-//! Not carried yet: **animation**, and materials/textures. Animation is the real
-//! omission — [`crate::fbx::animation`] already reads it and [`glb::Clip`]
-//! already holds it, so it is work rather than a question. It is left out
-//! because the viewport needs geometry before it needs playback, and shipping
-//! half a converter with the gap named beats shipping a whole one guessed at.
-//! Materials/textures are read from glTF but not yet from FBX, so an FBX source
-//! keeps its UVs but takes the default material.
+//! Not carried yet: **animation**. [`crate::fbx::animation`] already reads it and
+//! [`glb::Clip`] already holds it, so it is work rather than a question; it is
+//! left out because the viewport needs geometry before it needs playback, and
+//! shipping half a converter with the gap named beats shipping a whole one
+//! guessed at.
 
 use crate::fbx::dom::Scene;
 use crate::fbx::geometry::{self, GeometricTransform};
@@ -89,8 +88,23 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
 
     let mut primitives: Vec<glb::Primitive> = Vec::new();
     let mut out_skins: Vec<glb::Skin> = Vec::new();
+    let mut materials: Vec<glb::Material> = Vec::new();
+    // Source Material id -> index into `materials`, so a material shared by two
+    // meshes is written once.
+    let mut material_of_id: HashMap<i64, usize> = HashMap::new();
 
     for (node_index, &id) in order.iter().enumerate() {
+        // The material this model draws with, read once and deduplicated.
+        let material = scene
+            .children_of(id, Some("Material"))
+            .first()
+            .map(|&material_id| {
+                *material_of_id.entry(material_id).or_insert_with(|| {
+                    materials.push(read_material(scene, material_id));
+                    materials.len() - 1
+                })
+            });
+
         for geometry_id in scene.children_of(id, Some("Geometry")) {
             let Some(object) = scene.object(geometry_id) else {
                 continue;
@@ -146,12 +160,10 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
                 mesh: primitives.len(),
                 node: Some(node_index),
                 positions: welded.positions,
-                // Normals and UVs carried from the FBX; materials/textures are
-                // not read from FBX yet, so an FBX source keeps its shape's
-                // shading coordinates but takes the default material.
+                // Normals, UVs and the material carried from the FBX.
                 normals: welded.normals,
                 uvs: welded.uvs,
-                material: None,
+                material,
                 indices: welded.indices,
                 joints: welded.joints,
                 weights: welded.weights,
@@ -163,10 +175,57 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
     Ok(glb::Document {
         nodes,
         primitives,
-        materials: Vec::new(),
+        materials,
         skins: out_skins,
         clips: Vec::new(),
         report: glb::GlbReport::default(),
+    })
+}
+
+/// Reads a `Material` object's baseColor: its diffuse colour and, when it has an
+/// embedded texture, the image bytes.
+///
+/// Follows the FBX connection chain `Material <- Texture <- Video` (the writer's
+/// direction, reversed) and reads the `Video`'s embedded `Content`. An external
+/// texture — a `Video` with a filename but no `Content` — keeps the colour but
+/// no image, exactly as the glTF reader treats a texture stored by URI.
+fn read_material(scene: &Scene, material_id: i64) -> glb::Material {
+    let diffuse = scene
+        .object(material_id)
+        .and_then(|m| m.property("DiffuseColor"))
+        .and_then(|p| p.as_vec3())
+        .unwrap_or([1.0, 1.0, 1.0]);
+    let base_color_factor = [diffuse[0] as f32, diffuse[1] as f32, diffuse[2] as f32, 1.0];
+
+    let base_color_image = scene
+        .children_of(material_id, Some("Texture"))
+        .first()
+        .and_then(|&texture| scene.children_of(texture, Some("Video")).first().copied())
+        .and_then(|video| scene.object(video))
+        .and_then(embedded_image);
+
+    glb::Material {
+        base_color_factor,
+        base_color_image,
+    }
+}
+
+/// The image bytes embedded in a `Video` object's `Content` child, when present.
+fn embedded_image(video: &crate::fbx::dom::Object) -> Option<glb::Image> {
+    let content = video.node.children.iter().find(|n| n.name == "Content")?;
+    let bytes = content.properties.iter().find_map(|p| match p {
+        crate::fbx::binary::FbxProperty::Raw(bytes) if !bytes.is_empty() => Some(bytes.clone()),
+        _ => None,
+    })?;
+    // Distinguish PNG from JPEG by signature; the FBX does not record the type.
+    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    Some(glb::Image {
+        data: bytes,
+        mime: mime.to_owned(),
     })
 }
 

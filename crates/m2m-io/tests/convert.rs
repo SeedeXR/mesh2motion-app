@@ -389,3 +389,59 @@ fn welding_does_not_move_a_single_vertex() {
     }
     assert!(checked > 500, "only {checked} corners checked");
 }
+
+/// A material with an embedded texture survives the FBX round trip.
+///
+/// Builds an FBX carrying one material and one embedded image, reads it back,
+/// and checks the converter reconstructs the baseColor and the image bytes —
+/// the read side of the export's texture passthrough.
+#[test]
+fn an_embedded_fbx_texture_is_read_back() {
+    use m2m_io::fbx::{build, encode};
+
+    // A distinctive "PNG" so the assertion is about these exact bytes, not just
+    // that some image came through.
+    const IMAGE: &[u8] = b"\x89PNG\r\n\x1a\nMESH2MOTION-TEST-TEXTURE";
+    let positions = [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let scene = build::Scene {
+        meshes: &[build::Mesh {
+            name: "Tri",
+            positions: &positions,
+            normals: &[],
+            uvs: &[0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            material: Some(0),
+            faces: build::Faces::Triangles(&[0, 1, 2]),
+        }],
+        bones: &[],
+        skins: &[],
+        materials: &[build::Material {
+            name: "Painted",
+            diffuse: [0.25, 0.5, 0.75],
+            texture: Some(build::Texture {
+                file_name: "paint.png",
+                image: IMAGE,
+            }),
+        }],
+        clips: &[],
+        time_mode: 6,
+    };
+    let bytes = encode::encode(&build::build(&scene)).expect("encodes");
+
+    let document = fbx_to_gltf(&Scene::from_document(
+        binary::parse(&bytes).expect("parses"),
+    ))
+    .expect("converts");
+
+    assert_eq!(document.materials.len(), 1, "the material was not read");
+    let material = &document.materials[0];
+    // The diffuse colour, with an implicit opaque alpha.
+    let factor = material.base_color_factor;
+    assert!((factor[0] - 0.25).abs() < 1e-3 && (factor[1] - 0.5).abs() < 1e-3);
+    let image = material
+        .base_color_image
+        .as_ref()
+        .expect("the embedded image was not read");
+    assert_eq!(image.data, IMAGE, "the image bytes did not round-trip");
+    assert_eq!(image.mime, "image/png");
+    assert_eq!(document.primitives[0].material, Some(0));
+}

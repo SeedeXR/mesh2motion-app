@@ -1179,13 +1179,12 @@ const CM_PER_M: f64 = 100.0;
 ///
 /// # Shading
 ///
-/// A glTF source's per-vertex normals and UVs, and its baseColor material with
-/// its texture embedded, are carried through ([`fbx_source_shading`]) so the fbx
-/// looks like the model it came from, not just its rig. Unlike the glb export
-/// this is a rebuild, not a graft — there is no source fbx to keep — so the
-/// shading is re-emitted through [`m2m_io::fbx::build`]. An FBX source keeps only
-/// its geometry until the FBX reader carries shading through; a multi-material
-/// mesh takes its first material.
+/// The source's per-vertex normals and UVs, and its baseColor material with its
+/// texture embedded, are carried through ([`fbx_source_shading`]) so the fbx
+/// looks like the model it came from, not just its rig — for a glTF **and** an
+/// FBX source. Unlike the glb export this is a rebuild, not a graft, so the
+/// shading is re-emitted through [`m2m_io::fbx::build`]. A multi-material mesh
+/// takes its first material.
 ///
 /// # Why a second writer rather than a conversion
 ///
@@ -1422,9 +1421,9 @@ struct FbxShading {
 
 /// Reads the shading a source carries, in the merged vertex order the bind used,
 /// so the fbx export can keep it. Works for a glTF or an FBX source (both parse
-/// to a `glb::Document`); an FBX carries its normals and UVs but not, yet, its
-/// material. A source whose primitives disagree on whether they have normals/UVs
-/// yields empty — dropping shading rather than writing a misaligned layer.
+/// to a `glb::Document`, both now carrying normals, UVs and a baseColor material).
+/// A source whose primitives disagree on whether they have normals/UVs yields
+/// empty for those — dropping a layer rather than writing a misaligned one.
 fn fbx_source_shading(model: &[u8]) -> FbxShading {
     let empty = FbxShading {
         normals: Vec::new(),
