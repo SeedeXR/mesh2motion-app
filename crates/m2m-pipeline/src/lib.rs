@@ -545,11 +545,17 @@ fn rigged_document(
             mesh: 0,
             node: Some(mesh_node),
             positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
+            // The rebuilt document is the weight overlay and the FBX-source
+            // fallback, neither of which carries shading.
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            material: None,
             indices: mesh.indices.clone(),
             joints: weights.indices.clone(),
             weights: weights.weights.clone(),
             colors,
         }],
+        materials: Vec::new(),
         skins: vec![m2m_io::glb::Skin {
             joints: (0..skeleton.bones.len()).collect(),
             inverse_bind_matrices,
@@ -1156,7 +1162,17 @@ fn check_bone_order(skeleton: &FittedSkeleton) -> Result<(), RigError> {
 /// values in a file that says centimetres import as a 1.8 cm character.
 const CM_PER_M: f64 = 100.0;
 
-/// Writes the rigged model as a binary `.fbx`.
+/// Writes the rigged model as a binary `.fbx`, keeping a glTF source's shading.
+///
+/// # Shading
+///
+/// A glTF source's per-vertex normals and UVs, and its baseColor material with
+/// its texture embedded, are carried through ([`fbx_source_shading`]) so the fbx
+/// looks like the model it came from, not just its rig. Unlike the glb export
+/// this is a rebuild, not a graft — there is no source fbx to keep — so the
+/// shading is re-emitted through [`m2m_io::fbx::build`]. An FBX source keeps only
+/// its geometry until the FBX reader carries shading through; a multi-material
+/// mesh takes its first material.
 ///
 /// # Why a second writer rather than a conversion
 ///
@@ -1246,9 +1262,30 @@ pub fn export_fbx(
         .iter()
         .flat_map(|p| (*p * CM_PER_M as f32).to_array())
         .collect();
+
+    // The source's shading — per-vertex normals and UVs (aligned to the merged
+    // mesh above) and its baseColor material with its texture embedded — so the
+    // fbx keeps the look of the model, not just its rig. Empty for an FBX source,
+    // whose reader does not carry shading through yet.
+    let shading = fbx_source_shading(model);
+    let fbx_materials: Vec<build::Material> = shading
+        .material
+        .iter()
+        .map(|m| build::Material {
+            name: "Main",
+            diffuse: m.diffuse,
+            texture: m.image.as_ref().map(|(bytes, name)| build::Texture {
+                file_name: name,
+                image: bytes,
+            }),
+        })
+        .collect();
     let meshes = [build::Mesh {
         name: "mesh",
         positions: &positions,
+        normals: &shading.normals,
+        uvs: &shading.uvs,
+        material: (!fbx_materials.is_empty()).then_some(0),
         faces: build::Faces::Triangles(&mesh.indices),
     }];
 
@@ -1344,6 +1381,7 @@ pub fn export_fbx(
         meshes: &meshes,
         bones: &bones,
         skins: &skins,
+        materials: &fbx_materials,
         clips: &clips,
         // 30fps. Nothing here is animated, but the field is not optional and a
         // wrong frame rate would misread any clip added later.
@@ -1351,6 +1389,92 @@ pub fn export_fbx(
     };
 
     Ok(m2m_io::fbx::encode::encode(&build::build(&scene))?)
+}
+
+/// A source material owned for the length of an fbx export: its diffuse colour
+/// and, when it has one, its texture's bytes and a file name.
+struct MaterialOwned {
+    diffuse: [f64; 3],
+    image: Option<(Vec<u8>, String)>,
+}
+
+/// The per-vertex normals and UVs, and the material, an fbx export should carry
+/// from a glTF source — aligned to the same merged vertex order [`solve`] binds.
+struct FbxShading {
+    normals: Vec<f32>,
+    uvs: Vec<f32>,
+    material: Option<MaterialOwned>,
+}
+
+/// Reads the shading a glTF source carries, in the merged vertex order the bind
+/// used, so the fbx export can keep it. An FBX source, or a glTF whose
+/// primitives disagree on whether they have normals/UVs, yields empty — dropping
+/// shading rather than writing a misaligned or partial layer.
+fn fbx_source_shading(model: &[u8]) -> FbxShading {
+    let empty = FbxShading {
+        normals: Vec::new(),
+        uvs: Vec::new(),
+        material: None,
+    };
+    if !model.starts_with(b"glTF") {
+        return empty;
+    }
+    let Ok(document) = m2m_io::glb::read(model) else {
+        return empty;
+    };
+    let world = document.world_transforms();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let (mut all_normals, mut all_uvs) = (true, true);
+    for primitive in &document.primitives {
+        let vertices = primitive.positions.len() / 3;
+        // Normals rotate with the node (its inverse-transpose), positions having
+        // already been baked to world by the bind's `mesh_of`.
+        let transform = primitive
+            .node
+            .and_then(|n| world.get(n).copied())
+            .unwrap_or(glam::Mat4::IDENTITY);
+        let normal_matrix = glam::Mat3::from_mat4(transform).inverse().transpose();
+        if primitive.normals.len() == vertices * 3 {
+            for n in primitive.normals.chunks_exact(3) {
+                let rotated =
+                    (normal_matrix * glam::Vec3::new(n[0], n[1], n[2])).normalize_or_zero();
+                normals.extend_from_slice(&rotated.to_array());
+            }
+        } else {
+            all_normals = false;
+        }
+        if primitive.uvs.len() == vertices * 2 {
+            uvs.extend_from_slice(&primitive.uvs);
+        } else {
+            all_uvs = false;
+        }
+    }
+    let material = document
+        .primitives
+        .iter()
+        .find_map(|p| p.material)
+        .and_then(|m| document.materials.get(m))
+        .map(|m| MaterialOwned {
+            diffuse: [
+                f64::from(m.base_color_factor[0]),
+                f64::from(m.base_color_factor[1]),
+                f64::from(m.base_color_factor[2]),
+            ],
+            image: m.base_color_image.as_ref().map(|image| {
+                let ext = if image.mime.contains("png") {
+                    "png"
+                } else {
+                    "jpg"
+                };
+                (image.data.clone(), format!("texture.{ext}"))
+            }),
+        });
+    FbxShading {
+        normals: if all_normals { normals } else { Vec::new() },
+        uvs: if all_uvs { uvs } else { Vec::new() },
+        material,
+    }
 }
 
 /// Each bone as a segment the solver can measure distance to.
@@ -1709,6 +1833,7 @@ mod tests {
         let mut document = m2m_io::glb::Document {
             nodes: Vec::new(),
             primitives: Vec::new(),
+            materials: Vec::new(),
             skins: Vec::new(),
             clips: Vec::new(),
             report: m2m_io::glb::GlbReport::default(),
@@ -1732,6 +1857,9 @@ mod tests {
                 mesh,
                 node: Some(0),
                 positions,
+                normals: Vec::new(),
+                uvs: Vec::new(),
+                material: None,
                 indices,
                 joints: Vec::new(),
                 weights: Vec::new(),
@@ -1861,6 +1989,26 @@ mod tests {
             root["skins"].as_array().map(Vec::len),
             Some(1),
             "no skin was written"
+        );
+    }
+
+    /// The fbx export keeps the source's UVs, normals and texture too — as UV
+    /// and normal layer elements, a material, and the image embedded in a Video.
+    #[test]
+    fn the_fbx_export_keeps_the_source_texture_and_uvs() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
+            .expect("exports");
+
+        let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(contains(b"LayerElementUV"), "no UV layer");
+        assert!(contains(b"LayerElementNormal"), "no normal layer");
+        assert!(contains(b"Material"), "no material");
+        // The Video's Content is the source PNG embedded verbatim, so its
+        // signature is in the file.
+        assert!(
+            contains(b"\x89PNG\r\n\x1a\n"),
+            "the texture image was not embedded"
         );
     }
 

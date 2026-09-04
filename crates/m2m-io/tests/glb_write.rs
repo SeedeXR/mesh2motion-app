@@ -284,6 +284,7 @@ fn an_empty_document_writes_a_valid_file() {
     let document = Document {
         nodes: Vec::new(),
         primitives: Vec::new(),
+        materials: Vec::new(),
         skins: Vec::new(),
         clips: Vec::new(),
         report: glb::GlbReport::default(),

@@ -108,6 +108,19 @@ pub struct Primitive {
     pub node: Option<usize>,
     /// `x, y, z` per vertex, in the mesh's own space.
     pub positions: Vec<f32>,
+    /// `x, y, z` per vertex — `NORMAL` — empty when the primitive carries none.
+    ///
+    /// Read so an export that keeps the source's shading can write them; the rig
+    /// itself does not use them.
+    pub normals: Vec<f32>,
+    /// `u, v` per vertex — `TEXCOORD_0` — empty when the primitive carries none.
+    ///
+    /// The texture coordinates a material's image is sampled through; kept for
+    /// the same reason as `normals`.
+    pub uvs: Vec<f32>,
+    /// The material this primitive draws with, as an index into
+    /// [`Document::materials`], or `None` for the default material.
+    pub material: Option<usize>,
     /// Triangle corners into `positions`. Always a multiple of three.
     pub indices: Vec<u32>,
     /// Four joint indices per vertex, empty when unskinned.
@@ -125,6 +138,27 @@ pub struct Primitive {
     /// for overlays the app bakes in, such as the weight-paint view, where the
     /// viewer's loader reads the colours we write.
     pub colors: Vec<f32>,
+}
+
+/// A material's baseColor: a factor and, when present, an image sampled by the
+/// primitive's UVs. Only the baseColor is kept — it is what a rigged export
+/// needs to look like the model it came from, and the rest of a PBR material
+/// (metallic, roughness, normal maps) is not something the rig pipeline touches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Material {
+    /// Linear RGBA baseColor factor, `[1,1,1,1]` when the file gives none.
+    pub base_color_factor: [f32; 4],
+    /// The baseColor texture's image, when the material has one.
+    pub base_color_image: Option<Image>,
+}
+
+/// An embedded image: its bytes and MIME type, exactly as the file stored them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    /// The encoded image bytes (PNG or JPEG).
+    pub data: Vec<u8>,
+    /// The MIME type, e.g. `image/png`.
+    pub mime: String,
 }
 
 /// A node's local transform, kept as TRS rather than a matrix so a bone's
@@ -276,6 +310,9 @@ pub struct Document {
     pub nodes: Vec<Node>,
     /// Triangulated primitives.
     pub primitives: Vec<Primitive>,
+    /// Materials, indexed as the file indexes them; a primitive names one by
+    /// index. Empty when the reader was not asked to keep shading.
+    pub materials: Vec<Material>,
     /// Skins.
     pub skins: Vec<Skin>,
     /// Animations.
@@ -451,16 +488,46 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
     let nodes = read_nodes(&gltf, &mut report);
     let mesh_owner = mesh_owners(&gltf);
     let primitives = read_primitives(&gltf, &mesh_owner, get_buffer_data, &mut report)?;
+    let materials = read_materials(&gltf, blob);
     let skins = read_skins(&gltf, get_buffer_data, &mut report);
     let clips = read_clips(&gltf, get_buffer_data, &mut report);
 
     Ok(Document {
         nodes,
         primitives,
+        materials,
         skins,
         clips,
         report,
     })
+}
+
+/// Reads each material's baseColor factor and, when it is a texture embedded in
+/// the BIN chunk, its image bytes. A texture stored by URI (external file or
+/// data URI) is not resolved — the reader never fetches, matching how it refuses
+/// external buffers — so such a material keeps its factor but no image.
+fn read_materials(gltf: &gltf::Gltf, blob: &[u8]) -> Vec<Material> {
+    gltf.materials()
+        .map(|material| {
+            let pbr = material.pbr_metallic_roughness();
+            let base_color_image =
+                pbr.base_color_texture()
+                    .and_then(|info| match info.texture().source().source() {
+                        gltf::image::Source::View { view, mime_type } => {
+                            let (start, end) = (view.offset(), view.offset() + view.length());
+                            blob.get(start..end).map(|data| Image {
+                                data: data.to_vec(),
+                                mime: mime_type.to_owned(),
+                            })
+                        }
+                        gltf::image::Source::Uri { .. } => None,
+                    });
+            Material {
+                base_color_factor: pbr.base_color_factor(),
+                base_color_image,
+            }
+        })
+        .collect()
 }
 
 /// Extensions this reader can safely ignore when a file *requires* one.
@@ -1035,10 +1102,25 @@ fn read_primitive_data<'a>(
         report.half_skinned_primitives += 1;
     }
 
+    // Shading the rig itself does not use, kept so an export can preserve it.
+    let mut normals: Vec<f32> = reader
+        .read_normals()
+        .map(|n| n.flatten().collect())
+        .unwrap_or_default();
+    sanitize(&mut normals, &mut report.non_finite_values);
+    let mut uvs: Vec<f32> = reader
+        .read_tex_coords(0)
+        .map(|t| t.into_f32().flatten().collect())
+        .unwrap_or_default();
+    sanitize(&mut uvs, &mut report.non_finite_values);
+
     Ok(Primitive {
         mesh: mesh_index,
         node: mesh_owner.get(&mesh_index).copied(),
         positions,
+        normals,
+        uvs,
+        material: primitive.material().index(),
         indices,
         joints,
         weights,

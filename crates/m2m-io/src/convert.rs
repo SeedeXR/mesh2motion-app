@@ -145,6 +145,11 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
                 mesh: primitives.len(),
                 node: Some(node_index),
                 positions: welded.positions,
+                // The FBX reader does not yet carry shading through, so an
+                // FBX-sourced model still exports without it (see the export docs).
+                normals: Vec::new(),
+                uvs: Vec::new(),
+                material: None,
                 indices: welded.indices,
                 joints: welded.joints,
                 weights: welded.weights,
@@ -156,6 +161,7 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
     Ok(glb::Document {
         nodes,
         primitives,
+        materials: Vec::new(),
         skins: out_skins,
         clips: Vec::new(),
         report: glb::GlbReport::default(),
