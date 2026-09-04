@@ -30,6 +30,7 @@ import {
   devAutoload,
   devAutofit,
   devAutoclip,
+  devAutopaint,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -981,6 +982,16 @@ async function maybeAutoload(): Promise<void> {
   await runFit(template)
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
   render()
+
+  // Optionally bind and show the weight-paint overlay, for the Bind step.
+  if (await devAutopaint().catch(() => false)) {
+    await runBind()
+    activeStep = STEPS.findIndex((s) => s.id === StepId.BindWeights)
+    render()
+    await runPaint()
+    render()
+    return
+  }
 
   // Optionally bind and preview a clip so the Animate step (retargeted preview +
   // clip thumbnails) can be screenshotted without clicking through.

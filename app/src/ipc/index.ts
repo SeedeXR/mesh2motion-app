@@ -57,6 +57,10 @@ export async function devAutoclip(): Promise<string | null> {
   return await invoke<string | null>('dev_autoclip')
 }
 
+export async function devAutopaint(): Promise<boolean> {
+  return await invoke<boolean>('dev_autopaint')
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }

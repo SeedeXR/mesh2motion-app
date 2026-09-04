@@ -878,6 +878,8 @@ export function createViewport(): Viewport {
         overlay.scale.copy(model.scale)
         model.visible = false
       }
+      // Hide the octahedral bones so they do not sit over the painted weights.
+      if (fittedSkeleton !== null) fittedSkeleton.visible = false
       scene.add(overlay)
     },
 

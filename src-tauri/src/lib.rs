@@ -111,6 +111,13 @@ fn dev_autoclip() -> Option<String> {
     std::env::var("M2M_AUTOCLIP").ok()
 }
 
+/// Dev/screenshot harness: when `M2M_AUTOPAINT` is set, bind and show the
+/// weight-paint overlay after auto-fit, so the Bind step can be screenshotted.
+#[tauri::command]
+fn dev_autopaint() -> bool {
+    std::env::var("M2M_AUTOPAINT").is_ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -486,6 +493,7 @@ pub fn run() {
             dev_autoload,
             dev_autofit,
             dev_autoclip,
+            dev_autopaint,
             log_line,
             import_model,
             load_model,
