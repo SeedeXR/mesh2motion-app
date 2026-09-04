@@ -1159,7 +1159,7 @@ export function createViewport(): Viewport {
       }
       markerSprites = []
       // ~5% of the model's diagonal, so a ring reads clearly at any creature scale.
-      const radius = Math.max(bounds.getSize(new Vector3()).length() * 0.05, 0.02)
+      const radius = Math.max(bounds.getSize(new Vector3()).length() * 0.038, 0.02)
       for (const marker of markers) {
         const material = new SpriteMaterial({
           map: ringTexture(marker.color),

@@ -1217,7 +1217,17 @@ async function maybeAutoload(): Promise<void> {
     }
     await enterMarkerMode(template)
     for (const slot of markerSetFor(template) ?? []) {
-      const at = truth.get(slot.bone)
+      let at = truth.get(slot.bone)
+      // The chin slot maps to the `head` bone, which sits at the forehead; the
+      // chin/jaw is lower. For the guide render, drop it to jaw level (midway
+      // between the head and neck bones) so the guide matches where to place it.
+      if (slot.id === 'chin') {
+        const head = truth.get('head')
+        const neck = truth.get('neck_01')
+        if (head !== undefined && neck !== undefined) {
+          at = [head[0], (head[1] + neck[1]) / 2, head[2]]
+        }
+      }
       if (at !== undefined) markerPositions.set(slot.id, at)
     }
     activeSlot = null
