@@ -237,6 +237,20 @@ export interface Viewport {
    * or off-centre. `'none'` removes the gizmo.
    */
   setTransformMode(mode: 'none' | 'rotate' | 'translate'): void
+  /** Removes the fitted-skeleton overlay and its edit handles, leaving the mesh. */
+  clearFittedSkeleton(): void
+  /**
+   * Enters marker-placement mode: a left-click on the model raycasts the mesh
+   * and reports the surface point, for the marker-rig flow. `endMarkerPlacement`
+   * leaves it. No-op picks (a click that misses the mesh) are ignored.
+   */
+  beginMarkerPlacement(onPick: (point: [number, number, number]) => void): void
+  /** Draws the given markers as coloured spheres, replacing any shown. */
+  setMarkers(markers: readonly { position: readonly [number, number, number]; color: number }[]): void
+  /** Leaves marker-placement mode and removes every marker sphere. */
+  endMarkerPlacement(): void
+  /** The model's symmetry plane on X (its bounds centre), for mirroring markers. */
+  symmetryX(): number
   /** A one-line diagnostic string: canvas size, buffer size, frames drawn, and
    *  the active render backend. For "the viewport is blank" reports. */
   info(): string
@@ -777,6 +791,25 @@ export function createViewport(): Viewport {
     })
   }
 
+  // --- Marker placement (Fit step, marker-rig flow) ------------------------
+  // A person drops chin/wrist/elbow/knee/groin markers on the model; each click
+  // raycasts the mesh for a surface point and reports it. The app owns the slot
+  // and symmetry logic and hands back the markers to draw.
+  let markerMeshes: Mesh[] = []
+  let markerGeometry: SphereGeometry | null = null
+  let onMarkerPick: ((point: [number, number, number]) => void) | null = null
+
+  function onMarkerPointerDown(event: PointerEvent): void {
+    if (onMarkerPick === null || model === null || event.button !== 0) return
+    const rect = renderer.domElement.getBoundingClientRect()
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObject(model, true)[0]
+    if (hit === undefined) return
+    onMarkerPick([hit.point.x, hit.point.y, hit.point.z])
+  }
+
   return {
     canvas: renderer.domElement,
 
@@ -953,6 +986,58 @@ export function createViewport(): Viewport {
     setView,
     zoom,
     setTransformMode,
+
+    clearFittedSkeleton(): void {
+      clearFittedEditing()
+      if (fittedSkeleton !== null) {
+        scene.remove(fittedSkeleton)
+        fittedSkeleton.geometry.dispose()
+        fittedSkeleton = null
+      }
+    },
+
+    beginMarkerPlacement(onPick: (point: [number, number, number]) => void): void {
+      onMarkerPick = onPick
+      // Idempotent: the app re-arms on every render, so drop any prior listener.
+      renderer.domElement.removeEventListener('pointerdown', onMarkerPointerDown)
+      renderer.domElement.addEventListener('pointerdown', onMarkerPointerDown)
+    },
+
+    setMarkers(markers: readonly { position: readonly [number, number, number]; color: number }[]): void {
+      for (const mesh of markerMeshes) {
+        scene.remove(mesh)
+        disposeMaterial(mesh.material)
+      }
+      markerMeshes = []
+      // ~2% of the model's diagonal, so a marker reads at any creature scale.
+      const radius = Math.max(bounds.getSize(new Vector3()).length() * 0.02, 0.01)
+      markerGeometry ??= new SphereGeometry(1, 16, 12)
+      for (const marker of markers) {
+        const material = new MeshBasicMaterial({ color: marker.color, depthTest: false, transparent: true })
+        const mesh = new Mesh(markerGeometry, material)
+        mesh.position.set(marker.position[0], marker.position[1], marker.position[2])
+        mesh.scale.setScalar(radius)
+        mesh.renderOrder = 3
+        scene.add(mesh)
+        markerMeshes.push(mesh)
+      }
+    },
+
+    endMarkerPlacement(): void {
+      onMarkerPick = null
+      renderer.domElement.removeEventListener('pointerdown', onMarkerPointerDown)
+      for (const mesh of markerMeshes) {
+        scene.remove(mesh)
+        disposeMaterial(mesh.material)
+      }
+      markerMeshes = []
+      markerGeometry?.dispose()
+      markerGeometry = null
+    },
+
+    symmetryX(): number {
+      return (bounds.min.x + bounds.max.x) * 0.5
+    },
 
     info(): string {
       const el = renderer.domElement

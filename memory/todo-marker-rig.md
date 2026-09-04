@@ -42,10 +42,22 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
       no drift — all `fit()` tests still green) + Tauri command + IPC `fitFromMarkers`.
       `Marker.position` is `[f32;3]` (serde, crosses IPC). Pipeline integration test
       lands 6 human markers exactly. cargo+clippy+tsc clean, 36 pipeline tests pass.
-- [ ] S3: frontend marker-placement UI — draggable markers, symmetry toggle,
-      raycast onto mesh, project to medial depth. Default flow; current auto-fit
-      as the alternative ("Auto-fit instead").
-- [ ] S4: editable bones after solve (joint-drag exists) + polish; make default.
+- [x] S3: frontend marker-placement UI. Viewport: beginMarkerPlacement/setMarkers/
+      endMarkerPlacement/symmetryX/clearFittedSkeleton. state/markers.ts (human
+      Mixamo set: chin/wrists/elbows/knees/groin → bones). main.ts: chooseTemplate
+      enters marker mode by default (auto-fit for setless templates); onMarkerPick
+      raycasts + mirrors on symmetry; runMarkerFit solves via fitFromMarkers;
+      "Auto-fit instead" + "Re-place markers" alternatives. Dev harness
+      M2M_AUTOMARK / M2M_AUTOMARK_SOLVE. VISUALLY VERIFIED in-app: markers land on
+      correct joints in Mixamo palette (screenshot), solve produces a correct
+      66-bone T-pose skeleton over the mesh with editable handles (screenshot),
+      fit_from_markers IPC ok in 2ms. tsc + 50 vitest + cargo clean.
+      Note: surface-click marker (no medial-Z projection yet) — edit-bones covers
+      residual; the mesh's joint crevices show IBL blue reflection once the
+      skeleton clears (pre-existing render, not a bug).
+- [ ] S4 (optional polish): medial-Z projection of marker clicks; marker sets for
+      non-human creatures; hide during placement. Editable bones already exist
+      (joint drag). Default flow is done.
 
 ## Notes
 - rest.bones order == parents index space (both from pipeline `rest_pose`).

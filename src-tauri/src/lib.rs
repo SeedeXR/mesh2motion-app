@@ -118,6 +118,21 @@ fn dev_autopaint() -> bool {
     std::env::var("M2M_AUTOPAINT").is_ok()
 }
 
+/// Dev/screenshot harness: when `M2M_AUTOMARK` is set, drive the marker-placement
+/// flow after auto-fit (seed markers from the auto-fit joints, then solve) so the
+/// marker Fit step can be screenshotted without clicking in the viewport.
+#[tauri::command]
+fn dev_automark() -> bool {
+    std::env::var("M2M_AUTOMARK").is_ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOMARK_SOLVE` is set, the marker harness
+/// also runs the solve, so the fitted skeleton (not just placement) can be shot.
+#[tauri::command]
+fn dev_automark_solve() -> bool {
+    std::env::var("M2M_AUTOMARK_SOLVE").is_ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -519,6 +534,8 @@ pub fn run() {
             dev_autofit,
             dev_autoclip,
             dev_autopaint,
+            dev_automark,
+            dev_automark_solve,
             log_line,
             import_model,
             load_model,

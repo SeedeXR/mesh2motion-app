@@ -308,6 +308,39 @@ body {
   background: var(--accent-dim);
 }
 
+/* Marker-placement panel (Fit step). */
+.marker-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-1);
+  text-align: left;
+}
+.marker-slot > span:nth-child(2) { flex: 1; }
+.marker-slot[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.marker-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.action.primary {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
 /* A landmark heading kept for screen readers but out of the visual layout. */
 .visually-hidden {
   position: absolute;

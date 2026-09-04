@@ -61,6 +61,16 @@ export async function devAutopaint(): Promise<boolean> {
   return await invoke<boolean>('dev_autopaint')
 }
 
+/** Dev/screenshot harness: drive the marker-placement flow after autoload. */
+export async function devAutomark(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark')
+}
+
+/** Dev/screenshot harness: also run the marker solve, not just placement. */
+export async function devAutomarkSolve(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark_solve')
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }

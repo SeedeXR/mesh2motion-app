@@ -31,11 +31,14 @@ import {
   devAutofit,
   devAutoclip,
   devAutopaint,
+  devAutomark,
+  devAutomarkSolve,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
   fitSkeleton,
+  fitFromMarkers,
   previewAnimation,
   importModel,
   isDesktop,
@@ -46,12 +49,14 @@ import {
   type ClipSummary,
   type FittedSkeleton,
   type ImportedFile,
+  type Marker,
   type SkeletonTemplate
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
+import { markerSetFor } from './state/markers'
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -101,6 +106,16 @@ let chosen: string | null = null
 let fitted: FittedSkeleton | null = null
 /** Set while a fit is running — voxelising takes a moment. */
 let fitting = false
+
+/** Marker-placement flow: on while a person is placing markers, before the
+ *  skeleton is solved. Off for the auto-fit flow and once solved. */
+let markerMode = false
+/** Placed marker positions, by slot id (see state/markers.ts). */
+const markerPositions = new Map<string, [number, number, number]>()
+/** The slot the next viewport click fills, or null. */
+let activeSlot: string | null = null
+/** Whether placing one side's marker mirrors it to the other. */
+let useSymmetry = true
 
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
@@ -348,22 +363,53 @@ function poseRow(): string {
   return label === null ? '' : `<dt>Pose</dt><dd>${label}</dd>`
 }
 
-/** The Fit Skeleton step: reports the automatic fit and detected pose, and the
- * viewport lets the user drag joints to adjust it. */
+/** The Fit Skeleton step: marker placement (its default) or, once solved, the
+ * fit report with the viewport letting the user drag joints to adjust it. */
 function renderEditStep(): string {
+  if (markerMode) return renderMarkerPanel()
   if (fitted === null) {
     return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
   }
   const refit = `<button id="refit" class="action" ${fitting ? 'disabled' : ''}>${
     fitting ? 'Fitting\u2026' : 'Auto-fit again'
   }</button>`
+  const replace =
+    chosen !== null && markerSetFor(chosen) !== null
+      ? '<button id="replace-markers" class="action">Re-place markers</button>'
+      : ''
   return `<dl class="facts">
       <dt>Bones</dt><dd>${fitted.bones.length}</dd>
       <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
       ${poseRow()}
     </dl>
-    ${refit}
-    <p style="color:var(--fg-2)">The skeleton is placed automatically. If the model faces the wrong way, orient it with the move / rotate tools, then auto-fit again. Drag a joint handle to nudge any bone that sits outside the mesh, then bind.</p>`
+    ${refit}${replace}
+    <p style="color:var(--fg-2)">Drag a joint handle to nudge any bone that sits outside the mesh, then bind. Re-place markers to solve again from scratch, or auto-fit to let the mesh place it.</p>`
+}
+
+/** The marker-placement panel: a slot per joint, a symmetry toggle, and the
+ * solve / auto-fit choice. Clicking a slot arms it for the next viewport click. */
+function renderMarkerPanel(): string {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (set === null) return ''
+  const slots = set
+    .map((slot) => {
+      const placed = markerPositions.has(slot.id)
+      const dot = `#${slot.color.toString(16).padStart(6, '0')}`
+      return `<button class="action marker-slot" data-slot="${slot.id}" ${slot.id === activeSlot ? 'aria-current="true"' : ''}>
+          <span class="marker-dot" style="background:${dot}" aria-hidden="true"></span>
+          <span>${escape(slot.label)}</span>
+          <span style="color:var(--fg-2)">${placed ? 'placed' : '\u2014'}</span>
+        </button>`
+    })
+    .join('')
+  const placed = set.filter((s) => markerPositions.has(s.id)).length
+  const canSolve = placed >= 2 && !fitting
+  return `
+    <p style="color:var(--fg-2)">Pick a slot, then click that joint on your model.${useSymmetry ? ' The other side mirrors automatically.' : ''}</p>
+    ${slots}
+    <label class="toggle"><input type="checkbox" id="symmetry" ${useSymmetry ? 'checked' : ''}/> Use symmetry</label>
+    <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${fitting ? 'Solving\u2026' : `Solve rig (${placed})`}</button>
+    <button id="autofit" class="action">Auto-fit instead</button>`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */
@@ -621,9 +667,92 @@ async function ensureTemplates(): Promise<void> {
   render()
 }
 
+/** A template was chosen: place markers (its default flow) or, for a template
+ *  with no marker set, fall straight through to automatic fitting. */
+function chooseTemplate(name: string): void {
+  if (markerSetFor(name) !== null) void enterMarkerMode(name)
+  else void runFit(name)
+}
+
+/** Enters the marker-placement flow for a template: clears any prior rig, shows
+ *  the bare model, and arms the viewport to place markers on it. */
+async function enterMarkerMode(name: string): Promise<void> {
+  chosen = name
+  markerMode = true
+  markerPositions.clear()
+  activeSlot = markerSetFor(name)?.[0]?.id ?? null
+  // Drop any skeleton from a previous solve so only the bare mesh and the
+  // markers show while placing (the "Re-place markers" case; a no-op on first
+  // entry, when nothing is drawn yet).
+  ensureViewport().clearFittedSkeleton()
+  fitted = null
+  bound = null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  furthestStep = Math.max(furthestStep, activeStep)
+  render()
+}
+
+/** Fills the active slot from a click on the model, mirroring it when symmetry
+ *  is on, then advances to the next empty slot. */
+function onMarkerPick(point: [number, number, number]): void {
+  const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === activeSlot)
+  if (set === null || slot === undefined) return
+  markerPositions.set(slot.id, point)
+  if (useSymmetry && slot.pair !== undefined) {
+    const mirror = 2 * ensureViewport().symmetryX() - point[0]
+    markerPositions.set(slot.pair, [mirror, point[1], point[2]])
+  }
+  activeSlot = set.find((s) => !markerPositions.has(s.id))?.id ?? null
+  drawMarkers()
+  render()
+}
+
+/** Draws the placed markers in the viewport. */
+function drawMarkers(): void {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null) return
+  ensureViewport().setMarkers(
+    set
+      .filter((s) => markerPositions.has(s.id))
+      .map((s) => ({ position: markerPositions.get(s.id) as [number, number, number], color: s.color }))
+  )
+}
+
+/** Solves the rig from the placed markers and draws the fitted skeleton. */
+async function runMarkerFit(): Promise<void> {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (chosen === null || set === null || fitting) return
+  const markers: Marker[] = set
+    .filter((s) => markerPositions.has(s.id))
+    .map((s) => ({ bone: s.bone, position: markerPositions.get(s.id) as [number, number, number] }))
+  if (markers.length < 2) return
+  fitting = true
+  render()
+  try {
+    const viewport = ensureViewport()
+    viewport.endMarkerPlacement()
+    markerMode = false
+    fitted = await fitFromMarkers(chosen, markers)
+    bound = null
+    clips = null
+    clip = null
+    viewport.showFittedSkeleton(fitted.positions, fitted.parents, onJointEdited)
+    furthestStep = Math.max(furthestStep, 3)
+    record()
+  } finally {
+    fitting = false
+    render()
+  }
+}
+
 /** Places the chosen template's skeleton and draws it. */
 async function runFit(name: string): Promise<void> {
   if (loaded === null || fitting) return
+  if (markerMode) {
+    ensureViewport().endMarkerPlacement()
+    markerMode = false
+  }
   chosen = name
   fitting = true
   render()
@@ -848,6 +977,33 @@ function render(): void {
       if (chosen !== null) void runFit(chosen)
     })
 
+  // Marker-placement flow: slot selection, symmetry, solve / auto-fit.
+  app.querySelectorAll<HTMLButtonElement>('.marker-slot').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeSlot = button.dataset['slot'] ?? null
+      render()
+    })
+  })
+  app.querySelector<HTMLInputElement>('#symmetry')?.addEventListener('change', (event) => {
+    useSymmetry = (event.target as HTMLInputElement).checked
+  })
+  app.querySelector<HTMLButtonElement>('#solve')?.addEventListener('click', () => void runMarkerFit())
+  app.querySelector<HTMLButtonElement>('#autofit')?.addEventListener('click', () => {
+    if (chosen !== null) void runFit(chosen)
+  })
+  app
+    .querySelector<HTMLButtonElement>('#replace-markers')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void enterMarkerMode(chosen)
+    })
+
+  // While placing markers, keep the viewport armed to pick and the placed
+  // markers drawn — render() re-runs this binding, and both calls are idempotent.
+  if (step.id === StepId.EditSkeleton && markerMode) {
+    ensureViewport().beginMarkerPlacement(onMarkerPick)
+    drawMarkers()
+  }
+
   app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
     const format = button.dataset['format']
     if (format !== 'glb' && format !== 'fbx') return
@@ -891,7 +1047,7 @@ function render(): void {
       return
     }
     if (name === undefined) return
-    button.addEventListener('click', () => void runFit(name))
+    button.addEventListener('click', () => chooseTemplate(name))
   })
 
   if (step.id === StepId.Animate) {
@@ -982,6 +1138,31 @@ async function maybeAutoload(): Promise<void> {
   await runFit(template)
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
   render()
+
+  // Optionally drive the marker-placement flow: seed the markers from the
+  // auto-fit joints (a stand-in for clicking each one) and rest in placement
+  // mode, so the marker Fit step can be screenshotted.
+  if (await devAutomark().catch(() => false)) {
+    const truth = new Map<string, [number, number, number]>()
+    if (fitted !== null) {
+      const positions = fitted.positions
+      fitted.bones.forEach((bone, i) => {
+        const p = positions[i]
+        if (p !== undefined) truth.set(bone, [p[0], p[1], p[2]])
+      })
+    }
+    await enterMarkerMode(template)
+    for (const slot of markerSetFor(template) ?? []) {
+      const at = truth.get(slot.bone)
+      if (at !== undefined) markerPositions.set(slot.id, at)
+    }
+    activeSlot = null
+    render()
+    drawMarkers()
+    // Optionally run the solve too, so the fitted skeleton can be screenshotted.
+    if (await devAutomarkSolve().catch(() => false)) await runMarkerFit()
+    return
+  }
 
   // Optionally bind and show the weight-paint overlay, for the Bind step.
   if (await devAutopaint().catch(() => false)) {
