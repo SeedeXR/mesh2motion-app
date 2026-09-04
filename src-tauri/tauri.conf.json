@@ -33,8 +33,7 @@
       "../assets/characters/*.glb": "characters/"
     },
     "targets": [
-      "app",
-      "dmg"
+      "app"
     ],
     "icon": [
       "icons/icon.icns"
