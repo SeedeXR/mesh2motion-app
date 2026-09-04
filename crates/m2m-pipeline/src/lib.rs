@@ -541,24 +541,48 @@ fn rigged_document(
         skin: Some(0),
     });
 
+    // The source material, as a glb material (the mime comes from the file name
+    // the shading reader assigned). Empty for the weight overlay.
+    let materials: Vec<m2m_io::glb::Material> = shading
+        .material
+        .as_ref()
+        .map(|m| m2m_io::glb::Material {
+            base_color_factor: [
+                m.diffuse[0] as f32,
+                m.diffuse[1] as f32,
+                m.diffuse[2] as f32,
+                1.0,
+            ],
+            base_color_image: m.image.as_ref().map(|(bytes, name)| m2m_io::glb::Image {
+                data: bytes.clone(),
+                mime: if name.ends_with("png") {
+                    "image/png".into()
+                } else {
+                    "image/jpeg".into()
+                },
+            }),
+        })
+        .into_iter()
+        .collect();
+    let material = (!materials.is_empty()).then_some(0);
+
     m2m_io::glb::Document {
         primitives: vec![m2m_io::glb::Primitive {
             mesh: 0,
             node: Some(mesh_node),
             positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
             // The weight overlay passes empty shading; an FBX-source export
-            // passes the source's normals and UVs (aligned to this merged mesh),
-            // so a rebuilt glb keeps them. Materials/textures come from grafting,
-            // which this path is not, so the material stays default.
+            // passes the source's normals, UVs and material (aligned to this
+            // merged mesh), so the rebuilt glb keeps all of them.
             normals: shading.normals,
             uvs: shading.uvs,
-            material: None,
+            material,
             indices: mesh.indices.clone(),
             joints: weights.indices.clone(),
             weights: weights.weights.clone(),
             colors,
         }],
-        materials: Vec::new(),
+        materials,
         skins: vec![m2m_io::glb::Skin {
             joints: (0..skeleton.bones.len()).collect(),
             inverse_bind_matrices,

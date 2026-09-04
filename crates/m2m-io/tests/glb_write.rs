@@ -257,9 +257,23 @@ fn the_written_file_references_nothing_outside_itself() {
         buffers[0].get("uri").is_none_or(serde_json::Value::is_null),
         "the buffer must have no URI"
     );
-    assert!(json
+    // Images are written when a material has a texture, but embedded — each via
+    // a bufferView into the BIN chunk, never a URI.
+    for image in json
         .get("images")
-        .is_none_or(|i| i.as_array().is_none_or(std::vec::Vec::is_empty)));
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        assert!(
+            image.get("bufferView").is_some(),
+            "an image must be embedded, not external"
+        );
+        assert!(
+            image.get("uri").is_none_or(serde_json::Value::is_null),
+            "an image must have no URI"
+        );
+    }
     assert!(
         !String::from_utf8_lossy(&bytes).contains("\"uri\""),
         "no URI of any kind should be written"
