@@ -14,15 +14,17 @@
 //! # What this carries, and what it does not
 //!
 //! Carried: the node hierarchy with local transforms, triangulated meshes,
-//! skins with their joint lists and inverse bind matrices, and the unit scale.
+//! skins with their joint lists and inverse bind matrices, the unit scale, and
+//! one normal and UV per vertex (so an FBX source keeps its shading coordinates
+//! on export — see [`weld_by_source`]).
 //!
-//! Not carried yet: **animation**, normals and UVs. Animation is the real
-//! omission — [`crate::fbx::animation`] already reads it and
-//! [`glb::Clip`] already holds it, so it is work rather than a question. It is
-//! left out because the viewport needs geometry before it needs playback, and
-//! shipping half a converter with the gap named beats shipping a whole one
-//! guessed at. Normals and UVs have nowhere to go: [`glb::Primitive`] has no
-//! field for them.
+//! Not carried yet: **animation**, and materials/textures. Animation is the real
+//! omission — [`crate::fbx::animation`] already reads it and [`glb::Clip`]
+//! already holds it, so it is work rather than a question. It is left out
+//! because the viewport needs geometry before it needs playback, and shipping
+//! half a converter with the gap named beats shipping a whole one guessed at.
+//! Materials/textures are read from glTF but not yet from FBX, so an FBX source
+//! keeps its UVs but takes the default material.
 
 use crate::fbx::dom::Scene;
 use crate::fbx::geometry::{self, GeometricTransform};
@@ -133,22 +135,22 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
             }
 
             // Weld the per-corner expansion back to one vertex per FBX source.
-            // `geometry::parse` expands every polygon corner into its own
-            // vertex so that per-corner normals and UVs have somewhere to live;
-            // we carry neither, so all corners of a source vertex are identical
-            // in what we keep — position and skin weights — and merging them is
-            // lossless. On the reference rig this is 62,520 corners down to
-            // 10,514 vertices, which is what crosses the bulk channel and sits
-            // in the GPU.
+            // `geometry::parse` expands every polygon corner into its own vertex
+            // so per-corner normals and UVs have somewhere to live; welding takes
+            // the first corner's, which is exact for position and skin weights
+            // and an approximation at a hard edge or UV seam (see `weld_by_source`).
+            // On the reference rig this is 62,520 corners down to 10,514 vertices,
+            // which is what crosses the bulk channel and sits in the GPU.
             let welded = weld_by_source(&mesh, &joints, &weights);
             primitives.push(glb::Primitive {
                 mesh: primitives.len(),
                 node: Some(node_index),
                 positions: welded.positions,
-                // The FBX reader does not yet carry shading through, so an
-                // FBX-sourced model still exports without it (see the export docs).
-                normals: Vec::new(),
-                uvs: Vec::new(),
+                // Normals and UVs carried from the FBX; materials/textures are
+                // not read from FBX yet, so an FBX source keeps its shape's
+                // shading coordinates but takes the default material.
+                normals: welded.normals,
+                uvs: welded.uvs,
                 material: None,
                 indices: welded.indices,
                 joints: welded.joints,
@@ -174,6 +176,15 @@ struct Welded {
     indices: Vec<u32>,
     joints: Vec<u16>,
     weights: Vec<f32>,
+    /// One normal per welded vertex — the first corner's — when the mesh had
+    /// them. Welding merges a source vertex's corners, which can carry different
+    /// normals at a hard edge; taking the first is a smoothing approximation
+    /// that keeps the vertex count and the bind exactly as they were.
+    normals: Vec<f32>,
+    /// One UV per welded vertex — the first corner's, V flipped to glTF's axis.
+    /// A UV seam splits a source vertex across two UVs; taking the first is the
+    /// matching approximation, for the same reason as `normals`.
+    uvs: Vec<f32>,
 }
 
 /// Collapses the per-corner expansion, keyed on the FBX source vertex.
@@ -195,6 +206,8 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
     let mut positions = Vec::new();
     let mut out_joints = Vec::new();
     let mut out_weights = Vec::new();
+    let mut out_normals = Vec::new();
+    let mut out_uvs = Vec::new();
     let skinned = !joints.is_empty();
 
     for corner in 0..mesh.vertex_source.len() {
@@ -209,6 +222,21 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
             out_joints.extend_from_slice(&joints[base..base + MAX_INFLUENCES]);
             out_weights.extend_from_slice(&weights[base..base + MAX_INFLUENCES]);
         }
+        if let Some(normals) = mesh
+            .normals
+            .as_ref()
+            .and_then(|n| n.get(corner * 3..corner * 3 + 3))
+        {
+            out_normals.extend_from_slice(normals);
+        }
+        if let Some(uv) = mesh
+            .uvs
+            .as_ref()
+            .and_then(|u| u.get(corner * 2..corner * 2 + 2))
+        {
+            // FBX's V axis runs opposite to glTF's; flip it back.
+            out_uvs.extend_from_slice(&[uv[0], 1.0 - uv[1]]);
+        }
     }
 
     let indices = mesh
@@ -217,10 +245,22 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
         .map(|&corner| new_index[mesh.vertex_source[corner as usize] as usize])
         .collect();
 
+    // Only keep attributes that came out complete — one per welded vertex — so a
+    // partially-read layer is dropped rather than misaligned.
+    let vertices = positions.len() / 3;
+    if out_normals.len() != vertices * 3 {
+        out_normals.clear();
+    }
+    if out_uvs.len() != vertices * 2 {
+        out_uvs.clear();
+    }
+
     Welded {
         positions,
         indices,
         joints: out_joints,
         weights: out_weights,
+        normals: out_normals,
+        uvs: out_uvs,
     }
 }

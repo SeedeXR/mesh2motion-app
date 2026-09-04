@@ -8,11 +8,11 @@
 //! # What is carried, and what is not
 //!
 //! Positions, triangle indices, the node hierarchy with its local TRS, skins
-//! with their inverse bind matrices, joint indices and weights, and animation
-//! channels. **Not** normals, texture coordinates, materials or textures: the
-//! reader does not read them, so the writer cannot invent them. A file round
-//! tripped through here keeps its rig and its shape and loses its shading,
-//! which matches what the FBX writer does.
+//! with their inverse bind matrices, joint indices and weights, animation
+//! channels, and — when a primitive carries them — normals and UVs. **Not**
+//! materials or textures: those are preserved by grafting onto the source file
+//! (see [`super::graft`]), not rebuilt here. A file rebuilt through this writer
+//! keeps its rig, its shape, and its shading coordinates.
 //!
 //! Everything lands in one buffer — the GLB's BIN chunk — because this writer
 //! deliberately never emits an external URI. See the module docs on why.
@@ -199,6 +199,36 @@ fn write_primitive(
         json::mesh::Semantic::Colors(0),
         json::accessor::ComponentType::F32,
     );
+
+    // Normals (Vec3) and UVs (Vec2) when the primitive carries them — the
+    // shading a rigged export keeps from its source. Written only when present,
+    // so a rig template or the weight overlay, which carry neither, are unchanged.
+    if !primitive.normals.is_empty() {
+        let view = bin.push(&as_bytes(&primitive.normals));
+        let acc = accessor(
+            view,
+            primitive.normals.len() / 3,
+            json::accessor::ComponentType::F32,
+            json::accessor::Type::Vec3,
+        );
+        attributes.insert(
+            Checked::Valid(json::mesh::Semantic::Normals),
+            push(accessors, acc),
+        );
+    }
+    if !primitive.uvs.is_empty() {
+        let view = bin.push(&as_bytes(&primitive.uvs));
+        let acc = accessor(
+            view,
+            primitive.uvs.len() / 2,
+            json::accessor::ComponentType::F32,
+            json::accessor::Type::Vec2,
+        );
+        attributes.insert(
+            Checked::Valid(json::mesh::Semantic::TexCoords(0)),
+            push(accessors, acc),
+        );
+    }
 
     let view = bin.push(&as_bytes(&primitive.indices));
     let indices = accessor(

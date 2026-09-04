@@ -265,9 +265,9 @@ fn a_joint_is_only_deforming_for_the_skin_it_belongs_to() {
 #[test]
 fn welding_collapses_the_per_corner_expansion_losslessly() {
     // `geometry::parse` expands every polygon corner into its own vertex so
-    // per-corner normals and UVs have somewhere to live. We carry neither, so
-    // that expansion is pure bloat on the bulk channel and in the GPU. Welding
-    // by source vertex must remove it WITHOUT changing the geometry.
+    // per-corner normals and UVs have somewhere to live. Welding by source
+    // vertex removes that bloat WITHOUT changing the geometry, and carries one
+    // normal and UV per welded vertex (the first corner's) so shading survives.
     let document = document();
 
     // Measured: the reference rig's two meshes are 10,514 and 14,232 source
@@ -286,6 +286,15 @@ fn welding_collapses_the_per_corner_expansion_losslessly() {
 
     for primitive in &document.primitives {
         let vertices = primitive.positions.len() / 3;
+
+        // Normals and UVs are carried, one per welded vertex, so an FBX source
+        // keeps its shading coordinates on export.
+        assert_eq!(
+            primitive.normals.len(),
+            vertices * 3,
+            "a normal per welded vertex"
+        );
+        assert_eq!(primitive.uvs.len(), vertices * 2, "a UV per welded vertex");
 
         // Triangle count is unchanged — welding merges vertices, never faces.
         // The reference rig triangulates to 20,840 and 28,272 triangles.

@@ -478,6 +478,7 @@ fn rigged_document(
     mesh: &m2m_core::mesh::Mesh,
     weights: &m2m_core::skinning::SkinWeights,
     colors: Vec<f32>,
+    shading: FbxShading,
     clips: Vec<m2m_io::glb::Clip>,
 ) -> m2m_io::glb::Document {
     let position = |index: usize| {
@@ -545,10 +546,12 @@ fn rigged_document(
             mesh: 0,
             node: Some(mesh_node),
             positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
-            // The rebuilt document is the weight overlay and the FBX-source
-            // fallback, neither of which carries shading.
-            normals: Vec::new(),
-            uvs: Vec::new(),
+            // The weight overlay passes empty shading; an FBX-source export
+            // passes the source's normals and UVs (aligned to this merged mesh),
+            // so a rebuilt glb keeps them. Materials/textures come from grafting,
+            // which this path is not, so the material stays default.
+            normals: shading.normals,
+            uvs: shading.uvs,
             material: None,
             indices: mesh.indices.clone(),
             joints: weights.indices.clone(),
@@ -582,7 +585,14 @@ pub fn overlay_glb(
     check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
     let colors = weight_colors(&weights);
-    let document = rigged_document(skeleton, &mesh, &weights, colors, Vec::new());
+    let document = rigged_document(
+        skeleton,
+        &mesh,
+        &weights,
+        colors,
+        FbxShading::default(),
+        Vec::new(),
+    );
     Ok(m2m_io::glb::write(&document)?)
 }
 
@@ -591,10 +601,11 @@ pub fn overlay_glb(
 ///
 /// When the source is itself a glTF (`.glb`), the rig is **grafted onto the
 /// original file** — the skin, a skeleton of nodes and any animation are added
-/// and nothing else is touched, so shading survives by construction (see
-/// [`m2m_io::glb::graft`]). An FBX source has no glTF to keep, so it falls back
-/// to the rebuilt document, which drops shading, until the FBX reader carries it
-/// through.
+/// and nothing else is touched, so materials, textures, UVs and normals survive
+/// by construction (see [`m2m_io::glb::graft`]). An FBX source has no glTF to
+/// keep, so it is rebuilt: it keeps the normals and UVs the reader carried
+/// through, but takes the default material (FBX materials/textures are not read
+/// yet).
 pub fn export_glb(
     model: &[u8],
     skeleton: &FittedSkeleton,
@@ -609,14 +620,16 @@ pub fn export_glb(
         None => None,
     };
 
-    // Only a glTF source can be augmented in place. Anything else (an FBX) is
-    // rebuilt, which is what happened before this and loses shading.
+    // Only a glTF source can be augmented in place. An FBX is rebuilt, keeping
+    // the normals and UVs the reader carried through (materials/textures are not
+    // read from FBX yet).
     if !model.starts_with(b"glTF") {
         let document = rigged_document(
             skeleton,
             &mesh,
             &weights,
             Vec::new(),
+            fbx_source_shading(model),
             clip.into_iter().collect(),
         );
         return Ok(m2m_io::glb::write(&document)?);
@@ -1398,28 +1411,27 @@ struct MaterialOwned {
     image: Option<(Vec<u8>, String)>,
 }
 
-/// The per-vertex normals and UVs, and the material, an fbx export should carry
-/// from a glTF source — aligned to the same merged vertex order [`solve`] binds.
+/// The per-vertex normals and UVs, and the material, an export should carry from
+/// its source — aligned to the same merged vertex order [`solve`] binds.
+#[derive(Default)]
 struct FbxShading {
     normals: Vec<f32>,
     uvs: Vec<f32>,
     material: Option<MaterialOwned>,
 }
 
-/// Reads the shading a glTF source carries, in the merged vertex order the bind
-/// used, so the fbx export can keep it. An FBX source, or a glTF whose
-/// primitives disagree on whether they have normals/UVs, yields empty — dropping
-/// shading rather than writing a misaligned or partial layer.
+/// Reads the shading a source carries, in the merged vertex order the bind used,
+/// so the fbx export can keep it. Works for a glTF or an FBX source (both parse
+/// to a `glb::Document`); an FBX carries its normals and UVs but not, yet, its
+/// material. A source whose primitives disagree on whether they have normals/UVs
+/// yields empty — dropping shading rather than writing a misaligned layer.
 fn fbx_source_shading(model: &[u8]) -> FbxShading {
     let empty = FbxShading {
         normals: Vec::new(),
         uvs: Vec::new(),
         material: None,
     };
-    if !model.starts_with(b"glTF") {
-        return empty;
-    }
-    let Ok(document) = m2m_io::glb::read(model) else {
+    let Ok(document) = m2m_io::import::load(model) else {
         return empty;
     };
     let world = document.world_transforms();
