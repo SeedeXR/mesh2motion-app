@@ -1007,6 +1007,18 @@ fn validate_primitive_accessors(primitive: &gltf::Primitive<'_>) -> (bool, bool)
                 gltf::accessor::Dimensions::Vec3,
                 &[gltf::accessor::DataType::F32],
             ),
+            // TexCoords is now read (for shading passthrough), so it must be
+            // validated too, or a malformed UV accessor panics the gltf crate's
+            // reader the same way an unchecked POSITION would.
+            gltf::Semantic::TexCoords(_) => accessor_is(
+                &accessor,
+                gltf::accessor::Dimensions::Vec2,
+                &[
+                    gltf::accessor::DataType::F32,
+                    gltf::accessor::DataType::U8,
+                    gltf::accessor::DataType::U16,
+                ],
+            ),
             gltf::Semantic::Joints(_) => accessor_is(
                 &accessor,
                 gltf::accessor::Dimensions::Vec4,

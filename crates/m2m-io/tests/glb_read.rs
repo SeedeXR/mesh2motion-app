@@ -586,3 +586,18 @@ fn a_required_appearance_extension_loads_but_a_geometry_one_does_not() {
         "a required geometry extension the reader cannot read must still fail"
     );
 }
+
+/// A malformed `TEXCOORD_0` accessor must not panic the reader.
+///
+/// Regression: once the reader began keeping UVs (for shading passthrough) it
+/// read `TEXCOORD_0` without validating the accessor's type and dimensions, and
+/// a fuzz input with a malformed one panicked inside the `gltf` crate's
+/// accessor iterator (`accessor/util.rs:371`). The reader's contract is that a
+/// malformed file returns an error, never a panic — so this reads that exact
+/// input and only requires that it does not panic.
+#[test]
+fn a_malformed_texcoord_accessor_does_not_panic() {
+    const CRASH: &[u8] = include_bytes!("fixtures/glb-texcoord-accessor-panic.bin");
+    // Ok or Err both satisfy the contract; a panic does not.
+    let _ = glb::read(CRASH);
+}
