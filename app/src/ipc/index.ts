@@ -199,6 +199,25 @@ export async function fitSkeleton(template: string, path: string): Promise<Fitte
   return await invoke<FittedSkeleton>('fit_skeleton', { template, path })
 }
 
+/** A user-placed rig marker: a template bone and where its joint should sit. */
+export interface Marker {
+  readonly bone: string
+  /** `[x, y, z]` in mesh world space. */
+  readonly position: readonly [number, number, number]
+}
+
+/**
+ * Fits a template's skeleton from user-placed markers (the marker-placement
+ * flow — chin/wrists/elbows/knees/groin), rather than guessing joints from the
+ * mesh. Needs no model bytes: the solve is rig-and-markers only.
+ */
+export async function fitFromMarkers(
+  template: string,
+  markers: readonly Marker[]
+): Promise<FittedSkeleton> {
+  return await invoke<FittedSkeleton>('fit_from_markers', { template, markers })
+}
+
 /** What binding produced, without the weights themselves. */
 export interface BindReport {
   readonly vertices: number

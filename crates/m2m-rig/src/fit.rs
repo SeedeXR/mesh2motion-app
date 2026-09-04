@@ -351,12 +351,14 @@ pub fn fit_template(
 /// their model and the rig solves to fit them. A marker naming a bone the
 /// template does not carry is ignored, so one marker set can serve templates
 /// that differ in which bones they have.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Marker {
     /// The template bone this marker pins.
     pub bone: String,
-    /// Where that bone's joint should land, in mesh world space.
-    pub position: Vec3,
+    /// Where that bone's joint should land, in mesh world space. An `[x, y, z]`
+    /// array, not a `Vec3`, because this crosses IPC — the same reason
+    /// [`Fitted`] positions do (`architecture.md` keeps glam out of the wire).
+    pub position: [f32; 3],
 }
 
 /// Fits a template's skeleton to a mesh from user-placed markers.
@@ -403,7 +405,7 @@ pub fn fit_from_markers(
     // not have is dropped rather than failing the whole solve.
     let marked: Vec<(usize, Vec3)> = markers
         .iter()
-        .filter_map(|m| Some((*index_of.get(m.bone.as_str())?, m.position)))
+        .filter_map(|m| Some((*index_of.get(m.bone.as_str())?, Vec3::from(m.position))))
         .collect();
     if marked.len() < 2 {
         return None;

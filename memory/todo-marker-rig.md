@@ -35,8 +35,13 @@ Solver `fit_from_markers(template, rest, parents, markers) -> Fitted`
    spine path if measured torso mismatch is visible.
 
 ## Stages
-- [ ] S1: Rust `fit_from_markers` solver + unit tests (self-contained, verify now).
-- [ ] S2: pipeline `fit_from_markers` wiring + Tauri command `fit_from_markers` + IPC.
+- [x] S1 (ad2c263): Rust `fit_from_markers` solver + 4 unit tests. Verified: marked
+      bones land exactly, finger rigid-follows hand, intermediate interpolates,
+      <2 markers None.
+- [x] S2: pipeline `fit_from_markers` (extracted shared `fitted_to_skeleton` tail,
+      no drift — all `fit()` tests still green) + Tauri command + IPC `fitFromMarkers`.
+      `Marker.position` is `[f32;3]` (serde, crosses IPC). Pipeline integration test
+      lands 6 human markers exactly. cargo+clippy+tsc clean, 36 pipeline tests pass.
 - [ ] S3: frontend marker-placement UI — draggable markers, symmetry toggle,
       raycast onto mesh, project to medial depth. Default flow; current auto-fit
       as the alternative ("Auto-fit instead").

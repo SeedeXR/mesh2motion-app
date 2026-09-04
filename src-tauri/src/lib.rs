@@ -366,6 +366,31 @@ async fn fit_skeleton(
     .map_err(|e| e.to_string())?
 }
 
+/// Places a template's skeleton from user-placed markers.
+///
+/// The marker-placement flow: the app sends where a person dropped the markers
+/// (chin, wrists, elbows, knees, groin) and the rig fits them. Needs no model
+/// bytes — the solve is rig-and-markers only — so it is fast, but it is spawned
+/// off the main thread for consistency with [`fit_skeleton`] and to keep the
+/// window responsive.
+#[tauri::command]
+async fn fit_from_markers(
+    app: tauri::AppHandle,
+    template: String,
+    markers: Vec<rig::Marker>,
+) -> Result<rig::FittedSkeleton, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        timed("fit_from_markers", || {
+            progress(&app, "fit_from_markers", "fitting", 0.3);
+            let fitted = rig::fit_from_markers(&template, &markers).map_err(|e| e.to_string())?;
+            progress(&app, "fit_from_markers", "done", 1.0);
+            Ok(fitted)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Binds the mesh to the fitted skeleton.
 ///
 /// Off the main thread for the same reason as fitting, and more so: this
@@ -499,6 +524,7 @@ pub fn run() {
             load_model,
             skeleton_templates,
             fit_skeleton,
+            fit_from_markers,
             bind_weights,
             export_model,
             animation_clips,

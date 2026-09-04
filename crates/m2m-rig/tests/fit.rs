@@ -1156,7 +1156,7 @@ fn markers_need_at_least_two_bones_to_fix_a_scale() {
     let parents = vec![None, Some(0)];
     let one = [Marker {
         bone: "a".into(),
-        position: Vec3::ZERO,
+        position: [0.0, 0.0, 0.0],
     }];
     assert!(fit_from_markers(&template, &rest, &parents, &one).is_none());
 }
@@ -1182,7 +1182,7 @@ fn a_marked_bone_lands_exactly_on_its_marker() {
         .iter()
         .map(|(bone, position)| Marker {
             bone: (*bone).to_owned(),
-            position: *position,
+            position: position.to_array(),
         })
         .collect();
 
@@ -1209,11 +1209,11 @@ fn an_unmarked_tip_rigid_follows_its_nearest_marker() {
     let markers = vec![
         Marker {
             bone: "pelvis".into(),
-            position: Vec3::new(0.0, 0.9, 0.0),
+            position: [0.0, 0.9, 0.0],
         },
         Marker {
             bone: "hand_l".into(),
-            position: hand_target,
+            position: hand_target.to_array(),
         },
     ];
     let fitted = fit_from_markers(&template, &rest, &parents, &markers).expect("fits");
@@ -1240,11 +1240,11 @@ fn an_intermediate_joint_interpolates_between_two_markers() {
     let markers = vec![
         Marker {
             bone: "root".into(),
-            position: Vec3::ZERO,
+            position: [0.0, 0.0, 0.0],
         },
         Marker {
             bone: "tip".into(),
-            position: Vec3::new(1.0, 4.0, 0.0),
+            position: [1.0, 4.0, 0.0],
         },
     ];
     let fitted = fit_from_markers(&template, &rest, &parents, &markers).expect("fits");
