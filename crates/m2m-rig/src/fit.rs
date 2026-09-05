@@ -917,6 +917,17 @@ pub fn fit_limb(
     }
     let direction = reach.normalize();
 
+    // Keep a lateral limb on its own side of the body. A leg's cone points
+    // nearly straight down, so `along` (distance along the axis) barely depends
+    // on X and the left/right foot tie is broken by vertex order — which aimed
+    // both legs at the *same* foot. Rejecting vertices across the sagittal plane
+    // from the limb's root fixes it, and self-disables for a limb rooted on the
+    // centreline (where `attach_side` is ~0, so the product is never negative).
+    let center_x = mesh
+        .bounds()
+        .map_or(attach.x, |(min, max)| 0.5 * (min.x + max.x));
+    let attach_side = attach.x - center_x;
+
     // Half-angle of the cone. Wide enough to follow an arm from a T-pose down
     // to an A-pose, narrow enough that it cannot cross to the other side of the
     // body or pick up a limb it does not own.
@@ -932,6 +943,9 @@ pub fn fit_limb(
         let along = offset.dot(direction);
         if along / distance < COS_LIMIT {
             continue;
+        }
+        if (vertex.x - center_x) * attach_side < 0.0 {
+            continue; // across the body from this limb's root — a different limb
         }
         // Ranked by how far along the limb's own axis a vertex lies, not by how
         // far away it is. Distance picks whatever is furthest anywhere in the

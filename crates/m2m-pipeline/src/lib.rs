@@ -1989,8 +1989,57 @@ mod tests {
         // from a hand-authored rig: the geodesic solver gives 96% of vertices
         // the full four influences, where the reference Mixamo export gives 93%
         // of its vertices exactly one. Whether that is too smooth is what the
-        // legacy A/B in `memory/test.md` §9 is for.
-        assert_eq!(report.influence_histogram, [254, 3, 38, 7104]);
+        // legacy A/B in `memory/test.md` §9 is for. The distribution grew
+        // smoother still (7104 -> 7129 four-influence) once `fit_limb` stopped
+        // aiming the right leg across the body at the left foot.
+        assert_eq!(report.influence_histogram, [250, 0, 20, 7129]);
+    }
+
+    /// The auto-fit places the two legs as mirror images.
+    ///
+    /// Regression: `fit_limb` swung the right leg across the body onto the left
+    /// foot. Its cone ranks mesh vertices by distance *along the limb axis*,
+    /// which for a near-vertical leg barely depends on X, so the left/right toe
+    /// tie broke by vertex order and both legs aimed at the same foot — leaving
+    /// the right foot's mesh bound to bones on the wrong side and spiking under
+    /// animation. The lower-leg bones must come out mirrored in X.
+    #[test]
+    fn fitted_legs_are_left_right_symmetric() {
+        let f = fit("human", &model("models/model-human.glb")).expect("fits");
+        let pos = |name: &str| -> [f32; 3] {
+            let i = f
+                .bones
+                .iter()
+                .position(|b| b == name)
+                .unwrap_or_else(|| panic!("{name}"));
+            f.positions[i]
+        };
+        for (l, r) in [
+            ("calf_l", "calf_r"),
+            ("foot_l", "foot_r"),
+            ("ball_l", "ball_r"),
+            ("ball_leaf_l", "ball_leaf_r"),
+        ] {
+            let (a, b) = (pos(l), pos(r));
+            assert!(
+                (a[0] + b[0]).abs() < 0.02,
+                "{l}/{r} not mirrored in x: {} vs {}",
+                a[0],
+                b[0]
+            );
+            assert!(
+                (a[1] - b[1]).abs() < 0.02,
+                "{l}/{r} differ in y: {} vs {}",
+                a[1],
+                b[1]
+            );
+            assert!(
+                (a[2] - b[2]).abs() < 0.02,
+                "{l}/{r} differ in z: {} vs {}",
+                a[2],
+                b[2]
+            );
+        }
     }
 
     /// The root and every leaf are kept out of the weighting.
