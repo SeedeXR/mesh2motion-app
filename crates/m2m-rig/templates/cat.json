@@ -1,0 +1,142 @@
+{
+  "name": "cat",
+  "skeleton": "rig-cat.glb",
+  "guidance": "Small digitigrade felid \u2014 a supple spine, a long counter-balancing tail, and slender legs that walk on the toes. Keep the paws under the body on a narrow track, the shoulders loose, and the head low and level.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "root"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "Hips",
+        "Spine_1",
+        "Spine_2",
+        "Spine_2.001",
+        "Spine_3",
+        "Spine_4"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "Head",
+        "Nose",
+        "Head.tip"
+      ]
+    },
+    {
+      "name": "jaw",
+      "kind": "jaw",
+      "bones": [
+        "Chin",
+        "Chin_Tip"
+      ]
+    },
+    {
+      "name": "stomach",
+      "kind": "accessory",
+      "bones": [
+        "Stomach",
+        "Stomach_tip"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "Tail_Base",
+        "Tail_Mid",
+        "Tail_Mid.001",
+        "Tail_End",
+        "Tail_Tip"
+      ]
+    },
+    {
+      "name": "ear_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "Ear_L",
+        "Ear_Tip_L"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Back_Leg_Pelvis_L",
+        "Back_Leg_Upper_L",
+        "Back_Leg_Lower_L",
+        "Back_Leg_Ankle_L",
+        "Back_Leg_Foot_L",
+        "Back_Leg_Foot_1_L",
+        "Back_Leg_Tip_L"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Front_Leg_Shoulder_L",
+        "Front_Leg_Upper_L",
+        "Front_Leg_Lower_L",
+        "Front_Leg_Ankle_L",
+        "Front_Leg_Foot_L",
+        "Front_Leg_Tip_L"
+      ]
+    },
+    {
+      "name": "ear_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "Ear_R",
+        "Ear_Tip_R"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Back_Leg_Pelvis_R",
+        "Back_Leg_Upper_R",
+        "Back_Leg_Lower_R",
+        "Back_Leg_Ankle_R",
+        "Back_Leg_Foot_R",
+        "Back_Leg_Foot_1_R",
+        "Back_Leg_Tip_R"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "Front_Leg_Shoulder_R",
+        "Front_Leg_Upper_R",
+        "Front_Leg_Lower_R",
+        "Front_Leg_Ankle_R",
+        "Front_Leg_Foot_R",
+        "Front_Leg_Tip_R"
+      ]
+    }
+  ]
+}

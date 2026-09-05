@@ -41,9 +41,12 @@ Feasibility (verified, see session notes):
       Proceed → `skeletonFromImport` → bind → chosen='human' → jump to Animate. Verified in the
       compiled .app: the Mixamo fixture imported, skipped fitting, and PLAYS Chest_Open
       retargeted onto its own mixamorig skeleton (clean deformation). (M2M_AUTOPROCEED dev hook.)
-- [ ] S5 (F2 renders). Render each rigged animal sample (app capture: load → autofit →
-      mesh+skeleton) to a reference image; show it in the animal Fit step (a
-      MARKER_GUIDES-equivalent for animals). Verify in compiled .app.
+- [ ] S5 (F2 renders) — PENDING a design call. Original idea: capture load→autofit→
+      mesh+skeleton. BUT the animal AUTOFIT is rough (buffalo skeleton splays off the mesh),
+      so an autofit capture is a MISLEADING "proper rig" reference. The real reference is each
+      animal's OWN authored rig (skeleton_from_import gives it), rendered clean (no handles).
+      That needs a small dev/skeleton-view path. Open question for the user: ship own-rig
+      reference images, or first improve the animal autofit (the arguably bigger gap)?
 
 Known simplifications / follow-ups:
 - Proceed recomputes weights with our solver (not the import's original weights). Fine for

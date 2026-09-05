@@ -2315,13 +2315,42 @@ mod tests {
         );
     }
 
+    /// Every manifest describes its OWN rig exactly: no chain names a bone the
+    /// rig lacks, and no rig bone goes unclaimed. This is the guard that adding a
+    /// creature (rig + manifest) keeps the two in agreement.
+    #[test]
+    fn every_manifest_matches_its_rig() {
+        for template in m2m_rig::template::all().expect("manifests parse") {
+            let Some(bytes) = super::skeleton_bytes(&template.skeleton) else {
+                panic!(
+                    "{} names an unbundled rig {}",
+                    template.name, template.skeleton
+                );
+            };
+            let doc = m2m_io::glb::read(bytes).expect("rig reads");
+            let skin = doc.skins.first().expect("rig has a skin");
+            let joints: std::collections::HashSet<usize> = skin.joints.iter().copied().collect();
+            let name = |n: usize| doc.nodes[n].name.as_str();
+            let pairs: Vec<(&str, Option<&str>)> = skin
+                .joints
+                .iter()
+                .map(|&j| {
+                    let parent = doc.nodes[j].parent.filter(|p| joints.contains(p)).map(name);
+                    (name(j), parent)
+                })
+                .collect();
+            let problems = template.check(&m2m_rig::template::Skeleton::new(pairs));
+            assert!(problems.is_empty(), "{}: {problems:?}", template.name);
+        }
+    }
+
     #[test]
     fn every_shipped_template_has_the_rig_it_names() {
         // A manifest naming a `.glb` that is not embedded would fail only when
         // a user picked that creature, which is the worst time to find out.
         let offered = templates().expect("the shipped manifests parse");
 
-        assert_eq!(offered.len(), 15);
+        assert_eq!(offered.len(), 16);
         for template in &offered {
             assert!(template.available, "{} has no bundled rig", template.name);
             assert!(template.bones > 0, "{} claims no bones", template.name);
@@ -2331,7 +2360,7 @@ mod tests {
                 template.name
             );
         }
-        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 715);
+        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 764);
     }
 
     #[test]
@@ -3086,6 +3115,26 @@ mod tests {
         assert_eq!(clips.len(), 94);
         assert_eq!(clips[0].name, "Chest_Open");
         assert!((clips[0].duration - 1.375).abs() < 1e-3, "{:?}", clips[0]);
+        assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));
+    }
+
+    /// The wired cat library ships the five felid gaits, named `cat_*`, and no
+    /// raw `*_source_*` passthrough survived the split.
+    #[test]
+    fn the_cat_library_ships_the_felid_gaits() {
+        let clips = super::library_clips(&model("animations/cat-animations.glb")).expect("lists");
+        let mut names: Vec<&str> = clips.iter().map(|c| c.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "cat_gallop",
+                "cat_idle",
+                "cat_stalk",
+                "cat_trot",
+                "cat_walk"
+            ]
+        );
         assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));
     }
 
