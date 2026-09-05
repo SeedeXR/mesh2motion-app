@@ -53,8 +53,15 @@ From mixamo-export-modal-options.png. A modal on Export:
 
 - (start) Plan created. Marker fixture committed. Item-4 report delivered (defer).
 - 1a DONE: bone geometry is already octahedral (Mixamo-shaped); the gap was colour.
-- 1b DONE (impl): `skeletonOctahedra` now returns a per-vertex blue→violet depth
-  gradient; bone material switched MeshStandard→MeshBasic (+toneMapped:false) so
-  the IBL doesn't wash the hues to white (first attempt with MeshStandard rendered
-  near-white). tsc + 52 vitest green. Verifying colour in the compiled build.
-  Next: confirm colour reads, commit 1b; then 1c (loupe on joint-handle drag).
+- 1b DONE + committed (4047708): blue→violet depth gradient, MeshBasic material.
+- USER FEEDBACK: "skeleton is not the one in mixamo, check closely". Fixed:
+  - Long violet bone up the legs was the `root`→`pelvis` connector (root at floor
+    y≈0). Skip a floor-reference root's connector in skeletonOctahedra (bottom-15%
+    heuristic, safe for imported rigs whose root is a real mid-body Hips joint).
+  - Giant sphere handles dominated; Mixamo bones are the primary read. Shrank
+    handleRadius 1.5%→0.6% of the diagonal (small precision dots); boneWidth floor
+    0.28→0.7 of a handle so bones stay prominent.
+- 1c DONE (impl): editing loupe — the precision zoom now follows a joint handle
+  while it's dragged (gizmo dragging-changed/objectChange → setLoupeTarget), armed
+  in startFittedEditing, disarmed in clearFittedEditing. tsc + 53 vitest green.
+  Next: verify skeleton + handles + loupe in the compiled build, commit item 1.

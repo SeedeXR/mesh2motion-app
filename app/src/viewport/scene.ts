@@ -462,16 +462,18 @@ export function createViewport(): Viewport {
   ): number {
     const box = new Box3()
     for (const p of positions) box.expandByPoint(new Vector3(p[0], p[1], p[2]))
-    return Math.max(box.getSize(new Vector3()).length() * 0.015, 0.005)
+    // Small precision dots (~0.6% of the skeleton's diagonal), so the coloured
+    // bones — not the handles — are the primary read, like the Mixamo skeleton.
+    // Hover/select grow them into an easy grab target (see paintHandle).
+    return Math.max(box.getSize(new Vector3()).length() * 0.006, 0.003)
   }
 
 
-  /** The floor on octahedral-bone width — a slim ~28% of a joint handle, so the
-   * grabbable spheres still read as the pick targets and short bones (fingers,
-   * toes) stay slender rather than bloating to the minimum. Long bones size off
-   * their own length (see `skeletonOctahedra`). */
+  /** The floor on octahedral-bone width for short bones (fingers, toes). Long
+   * bones size off their own length (see `skeletonOctahedra`); this only keeps a
+   * stub from vanishing. A bit wider than a handle so the bones stay prominent. */
   function boneWidth(positions: readonly (readonly [number, number, number])[]): number {
-    return handleRadius(positions) * 0.28
+    return handleRadius(positions) * 0.7
   }
 
   /** Fills `geometry` with octahedral bones for the given joints, with normals
@@ -662,6 +664,12 @@ export function createViewport(): Viewport {
     renderer.domElement.style.cursor = ''
     onJointEdit = null
     controls.enabled = true
+    // Disarm the editing loupe, unless marker placement is the one using it.
+    if (markerHandlers === null) {
+      loupeActive = false
+      loupeShown = false
+      if (loupeEl !== null) loupeEl.hidden = true
+    }
   }
 
   /** Puts a draggable handle on every joint and a translate gizmo in the scene. */
@@ -704,6 +712,11 @@ export function createViewport(): Viewport {
       const dragging = (event as unknown as { value: boolean }).value
       // Freeing the orbit while dragging would spin the camera with the joint.
       controls.enabled = !dragging
+      // Show the precision-preview loupe over the joint while it's dragged, so a
+      // fine placement is as easy as placing a marker; hide it when the drag ends.
+      const at = gizmo?.object?.position
+      if (dragging && at !== undefined) setLoupeTarget([at.x, at.y, at.z])
+      else setLoupeTarget(null)
       // Notify once, when the drag ends — one edited placement per drag, so undo
       // steps over whole moves rather than every pixel of one.
       if (!dragging) onJointEdit?.(editPositions)
@@ -717,9 +730,13 @@ export function createViewport(): Viewport {
         object.position.y,
         object.position.z
       ])
+      setLoupeTarget([object.position.x, object.position.y, object.position.z])
       refreshFittedGeometry()
     })
     scene.add(gizmo.getHelper())
+    // Arm the loupe for editing (setLoupeTarget is a no-op until it's active).
+    loupeActive = true
+    ensureLoupeEl()
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     renderer.domElement.addEventListener('pointermove', onPointerMove)
     window.addEventListener('keydown', onEditKeyDown)

@@ -219,6 +219,14 @@ export function skeletonOctahedra(
   // reads on a human, a fox or a bird without any per-template knowledge.
   const depth = boneDepths(parents)
   const maxDepth = Math.max(1, ...depth)
+  // A reference/motion root sits at the floor (our human rig's `root` at y≈0,
+  // below the hips). The connector from it runs up the centre of the legs — a
+  // long bone Mixamo never draws. Skip a parentless root's connector only when
+  // that root is in the bottom of the skeleton, so an imported rig whose root is
+  // a real mid-body joint (Hips) keeps all its bones.
+  const ys = positions.map((p) => p[1])
+  const minY = ys.length > 0 ? Math.min(...ys) : 0
+  const rootFloor = minY + 0.15 * ((ys.length > 0 ? Math.max(...ys) : 0) - minY)
   // root violet (0x8b5cf6) -> tip sky (0x38bdf8), in linear-ish 0..1 rgb.
   const root: readonly [number, number, number] = [0.545, 0.361, 0.965]
   const tip: readonly [number, number, number] = [0.22, 0.741, 0.973]
@@ -228,6 +236,10 @@ export function skeletonOctahedra(
   const colors: number[] = []
   parents.forEach((parent, bone) => {
     if (parent === null) return
+    // Skip a floor-reference root's connector (see rootFloor above): Mixamo
+    // shows no bone from the floor up to the hips.
+    const parentPos = positions[parent]
+    if (parents[parent] === null && parentPos !== undefined && parentPos[1] < rootFloor) return
     const tail = positions[bone]
     const head = positions[parent]
     if (head === undefined || tail === undefined) return

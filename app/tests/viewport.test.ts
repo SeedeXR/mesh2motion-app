@@ -221,10 +221,12 @@ describe('presetCameraPosition', () => {
 })
 
 describe('skeletonOctahedra', () => {
+  // Root at the TOP so it is not a floor-reference root (whose connector is
+  // skipped — see the dedicated test below).
   const line: [number, number, number][] = [
-    [0, 0, 0],
+    [0, 2, 0],
     [0, 1, 0],
-    [0, 2, 0]
+    [0, 0, 0]
   ]
 
   test('one octahedron per bone that has a parent', () => {
@@ -242,8 +244,22 @@ describe('skeletonOctahedra', () => {
     // the joint itself. Getting this backwards would point every bone the wrong
     // way down the chain.
     const { positions } = skeletonOctahedra(line, [null, 0, 1], 0.1)
-    expect(Array.from(positions.slice(0, 3))).toEqual([0, 0, 0]) // head tip = parent
+    expect(Array.from(positions.slice(0, 3))).toEqual([0, 2, 0]) // head tip = parent
     expect(Array.from(positions.slice(3, 6))).toEqual([0, 1, 0]) // tail tip = joint
+  })
+
+  test('a floor-reference root draws no connector up into the body', () => {
+    // Root at the floor (bottom of the skeleton), like the human rig's `root` at
+    // y≈0 below the hips. Its connector would run a long bone up the centre —
+    // Mixamo draws none, so only the second bone (joint 1 → joint 2) is drawn.
+    const floorRoot: [number, number, number][] = [
+      [0, 0, 0],
+      [0, 1, 0],
+      [0, 2, 0]
+    ]
+    const { positions } = skeletonOctahedra(floorRoot, [null, 0, 1], 0.1)
+    expect(positions).toHaveLength(1 * 6 * 3)
+    expect(Array.from(positions.slice(0, 3))).toEqual([0, 1, 0]) // head = joint 1, not the root
   })
 
   test('bones carry a hierarchy-depth colour gradient (root violet → tip sky)', () => {
