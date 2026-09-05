@@ -479,6 +479,20 @@ async fn fit_skeleton(
     .map_err(|e| e.to_string())?
 }
 
+/// Reads an already-rigged model's OWN skeleton, so it can go straight to
+/// Animate without a template fit (the "Proceed" path for a rigged import).
+#[tauri::command]
+async fn skeleton_from_import(path: String) -> Result<rig::FittedSkeleton, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        timed("skeleton_from_import", || {
+            let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+            rig::skeleton_from_import(&bytes).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Places a template's skeleton from user-placed markers.
 ///
 /// The marker-placement flow: the app sends where a person dropped the markers
@@ -671,6 +685,7 @@ pub fn run() {
             load_model,
             skeleton_templates,
             fit_skeleton,
+            skeleton_from_import,
             fit_from_markers,
             bind_weights,
             export_model,

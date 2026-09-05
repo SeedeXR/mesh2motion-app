@@ -1282,6 +1282,74 @@ struct RetargetSource {
     bone_of_node: std::collections::HashMap<usize, usize>,
 }
 
+/// Builds a [`FittedSkeleton`] from a model's OWN embedded rig, so an
+/// already-rigged import can go straight to Animate without a template fit.
+///
+/// The bone names, hierarchy and rest transforms are the import's own — no
+/// template convention is imposed. Retargeting onto it relies on
+/// [`retarget_clip`]'s bone auto-mapping (see the exact-name-then-automap path).
+/// `scale` is 1.0 (the rig is already at the mesh's own scale) and `pose` is
+/// left unknown.
+///
+/// # Errors
+/// The model fails to read, or it carries no skin (nothing to animate).
+pub fn skeleton_from_import(model: &[u8]) -> Result<FittedSkeleton, RigError> {
+    let document = m2m_io::import::load(model)?;
+    let skin = document
+        .skins
+        .first()
+        .ok_or_else(|| RigError::NoSkin("the imported model".to_owned()))?;
+    let world = document.world_transforms();
+    let slot_of_node: std::collections::HashMap<usize, usize> = skin
+        .joints
+        .iter()
+        .enumerate()
+        .map(|(slot, &node)| (node, slot))
+        .collect();
+    Ok(FittedSkeleton {
+        bones: skin
+            .joints
+            .iter()
+            .map(|&j| document.nodes[j].name.clone())
+            .collect(),
+        parents: skin
+            .joints
+            .iter()
+            .map(|&j| {
+                document.nodes[j]
+                    .parent
+                    .and_then(|p| slot_of_node.get(&p).copied())
+            })
+            .collect(),
+        positions: skin
+            .joints
+            .iter()
+            .map(|&j| world[j].transform_point3(glam::Vec3::ZERO).to_array())
+            .collect(),
+        rotations: skin
+            .joints
+            .iter()
+            .map(|&j| document.nodes[j].transform.rotation)
+            .collect(),
+        scale: 1.0,
+        pose: "other".to_owned(),
+    })
+}
+
+/// The bundled bone-name tables (Mixamo, Rigify) used to auto-map an imported
+/// rig onto a library. Embedded with `include_str!` so they ship in the binary
+/// rather than being read from disk (the examples read them from the crate dir).
+fn known_rigs() -> Vec<m2m_rig::automap::KnownRig> {
+    const TABLES: [&str; 2] = [
+        include_str!("../../m2m-rig/known-rigs/mixamo.json"),
+        include_str!("../../m2m-rig/known-rigs/rigify.json"),
+    ];
+    TABLES
+        .iter()
+        .filter_map(|json| serde_json::from_str(json).ok())
+        .collect()
+}
+
 /// Reads a library's own rig: names, parents, positions and rest pose.
 fn retarget_source(document: &m2m_io::glb::Document) -> Result<RetargetSource, RigError> {
     let skin = document
@@ -1415,20 +1483,32 @@ fn retarget_clip(
             .collect(),
     };
 
-    // Source bone to target bone, by name.
+    // Source bone to target bone, by exact name — the template case, where the
+    // library and the fitted skeleton share names. When that maps too few of the
+    // source (an imported rig with foreign names, e.g. `mixamorig:LeftArm`), fall
+    // back to the name-table + structural auto-mapper, which handles Mixamo/Rigify
+    // and, for meaningless names like `Bone.027`, matches on chain shape instead.
     let target_of_name: std::collections::HashMap<&str, usize> = skeleton
         .bones
         .iter()
         .enumerate()
         .map(|(index, name)| (name.as_str(), index))
         .collect();
-    let mapping: std::collections::HashMap<usize, usize> = source
+    let mut mapping: std::collections::HashMap<usize, usize> = source
         .skeleton
         .names
         .iter()
         .enumerate()
         .filter_map(|(bone, name)| target_of_name.get(name.as_str()).map(|&t| (bone, t)))
         .collect();
+    if mapping.len() * 2 < source.skeleton.names.len() {
+        let (auto, _strategy) =
+            m2m_rig::automap::map_bones_best(&source.skeleton, &target, &known_rigs(), 0.5);
+        // Only take the auto-map if it reaches more bones than exact names did.
+        if auto.len() > mapping.len() {
+            mapping = auto;
+        }
+    }
 
     let mut rotations = Vec::new();
     let mut translations = Vec::new();
@@ -2147,6 +2227,89 @@ mod tests {
     fn model(relative: &str) -> Vec<u8> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/").to_owned() + relative;
         std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+    }
+
+    #[test]
+    fn skeleton_from_import_reads_a_models_own_rig() {
+        // buffalo.glb is an already-rigged sample: 42 named bones, one root.
+        let skeleton = super::skeleton_from_import(&model("characters/buffalo.glb"))
+            .expect("buffalo is rigged");
+        assert_eq!(skeleton.bones.len(), 42);
+        assert_eq!(skeleton.parents.len(), 42);
+        assert_eq!(skeleton.positions.len(), 42);
+        assert_eq!(skeleton.rotations.len(), 42);
+        // "Body" is the deformation root; its node's parent is the armature,
+        // which is not a joint, so it reads as a root here.
+        assert_eq!(skeleton.bones[0], "Body");
+        assert!(skeleton.parents[0].is_none());
+        // A forest is fine — imported rigs carry IK/control bones whose parents
+        // sit outside the skin. Every parent index that IS set must be in range.
+        assert!(
+            skeleton.parents.iter().any(Option::is_none),
+            "has at least one root"
+        );
+        assert!(skeleton.parents.iter().flatten().all(|&p| p < 42));
+    }
+
+    #[test]
+    fn skeleton_from_import_rejects_an_unrigged_model() {
+        // The plain human mesh carries no skin — nothing to animate.
+        let err = super::skeleton_from_import(&model("models/model-human.glb"));
+        assert!(matches!(err, Err(super::RigError::NoSkin(_))), "{err:?}");
+    }
+
+    #[test]
+    fn a_foreign_named_import_retargets_via_the_bone_tables() {
+        // A Mixamo-named humanoid: its bones ("mixamorig:...") share no names
+        // with the human library, so exact-name mapping finds nothing and the
+        // auto-mapper (mixamo table) must bridge them for any motion to transfer.
+        let bytes = model("test-files/retarget testing/mixamo-sample-rig.glb");
+        let skeleton = super::skeleton_from_import(&bytes).expect("mixamo rig reads");
+        assert!(
+            skeleton
+                .bones
+                .iter()
+                .any(|b| b.to_lowercase().contains("mixamo")),
+            "fixture should carry mixamo bone names"
+        );
+        let out = super::export_glb(
+            &bytes,
+            &skeleton,
+            2.0,
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
+            }),
+        )
+        .expect("retargets and exports");
+        let back = m2m_io::glb::read(&out).expect("reads back");
+        // The model ships its own clip; graft ADDS ours, so find it by name.
+        let chest = back
+            .clips
+            .iter()
+            .find(|c| c.name == "Chest_Open")
+            .expect("our retargeted clip was grafted in");
+        // Proof the mapping worked: with an empty mapping every bone stays at its
+        // rest pose, so all rotation keys are constant. A real mapping moves the
+        // animated bones, so at least one rotation channel varies over time.
+        let animates = chest
+            .channels
+            .iter()
+            .filter(|c| matches!(c.path, m2m_io::glb::Path::Rotation))
+            .any(|c| {
+                let first = &c.values[0..4];
+                c.values
+                    .chunks(4)
+                    .any(|k| k.iter().zip(first).any(|(a, b)| (a - b).abs() > 0.01))
+            });
+        assert!(
+            animates,
+            "no channel animates — the auto-map produced no motion"
+        );
     }
 
     #[test]

@@ -256,6 +256,12 @@ export async function fitSkeleton(template: string, path: string): Promise<Fitte
   return await invoke<FittedSkeleton>('fit_skeleton', { template, path })
 }
 
+/** Reads an already-rigged model's own skeleton, to animate it without a template
+ *  fit (the "Proceed" path for a rigged import). */
+export async function skeletonFromImport(path: string): Promise<FittedSkeleton> {
+  return await invoke<FittedSkeleton>('skeleton_from_import', { path })
+}
+
 /** A user-placed rig marker: a template bone and where its joint should sit. */
 export interface Marker {
   readonly bone: string
