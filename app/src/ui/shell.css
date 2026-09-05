@@ -293,6 +293,38 @@ body {
 .transport .tp-sp { flex: 1; }
 .transport .tp-fps { color: var(--fg-2); font-size: var(--fs-xs); margin-right: var(--s-1); }
 
+/* A labelled slider row in the transport (Overdrive, Trim). */
+.tp-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+}
+.tp-slider label { flex: 0 0 auto; }
+.tp-slider input[type='range'] { flex: 1; }
+.tp-slider .tp-val { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-1); }
+
+/* Animation search + descriptive clip rows. */
+.clip-search {
+  width: 100%;
+  height: var(--s-6);
+  margin: var(--s-2) 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+.clip-item { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.clip-text { display: flex; flex-direction: column; min-width: 0; text-align: left; }
+.clip-name { color: var(--fg-0); }
+.clip-desc { color: var(--fg-2); font-size: var(--fs-xs); text-transform: capitalize; }
+.clip-dur { color: var(--fg-2); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
 .chip {
   min-width: 30px;
   height: var(--s-6);

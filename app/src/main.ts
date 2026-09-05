@@ -62,6 +62,7 @@ import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
 import { markerSetFor, slotForClickedSide } from './state/markers'
+import { clipDescription, clipMatches } from './state/clip-index'
 import markerGuideHuman from './assets/marker-guide-human.png'
 
 /** A rendered guide image per template, showing where the markers go on a real
@@ -150,11 +151,15 @@ let paused = false
 let direction: 1 | -1 = 1
 let fps: 24 | 30 = 30
 let clipDuration = 0
+/** Playback speed (Mixamo's "Overdrive"): 0–100, 50 = 1× (so 0–2× of real time). */
+let overdrive = 50
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
 /** The Animate step's 3-way view over the playing clip. Mesh by default, like
  *  Mixamo (its skull toggle switches to the skeleton). */
 let animateView: 'mesh' | 'skeleton' | 'both' = 'mesh'
+/** Current animation-search query (filters the clip list by name/description/tags). */
+let clipQuery = ''
 
 let viewport: Viewport | null = null
 
@@ -555,16 +560,25 @@ function renderAnimateStep(): string {
   // A moving preview of the clip under the cursor (or the selected one), played
   // on the library character — see what a motion looks like before committing.
   const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
-  const list = clips
-    .map(
-      (c) => `
-        <button class="action template" data-clip="${escape(c.name)}"
+  // Search across the name, its humanised form, and category tags.
+  const matches = clips.filter((c) => clipMatches(c.name, clipQuery))
+  const search = `<input id="clip-search" class="clip-search" type="search" placeholder="Search animations…" value="${escape(
+    clipQuery
+  )}" aria-label="Search animations"/>`
+  const list =
+    matches.length === 0
+      ? `<p style="color:var(--fg-2)">No animation matches “${escape(clipQuery)}”.</p>`
+      : matches
+          .map(
+            (c) => `
+        <button class="action template clip-item" data-clip="${escape(c.name)}"
                 ${c.name === clip ? 'aria-current="true"' : ''}>
-          <span>${escape(c.name)}</span>
-          <span style="color:var(--fg-2)">${c.duration.toFixed(2)}s</span>
+          <span class="clip-text"><span class="clip-name">${escape(c.name)}</span>
+            <span class="clip-desc">${escape(clipDescription(c.name))}</span></span>
+          <span class="clip-dur">${c.duration.toFixed(2)}s</span>
         </button>`
-    )
-    .join('')
+          )
+          .join('')
 
   // 3-way view over the playing clip: mesh, skeleton, or both.
   const seg = (v: 'mesh' | 'skeleton' | 'both', label: string): string =>
@@ -587,7 +601,7 @@ function renderAnimateStep(): string {
     clip === null
       ? 'Click a clip to play it on your rig — it is retargeted, so the motion is moved, not copied (the library and the template do not share a rest pose).'
       : `${escape(clip)} will be written into the export.`
-  return `${preview}${controls}${bones}${list}<p style="color:var(--fg-2)">${caption}</p>`
+  return `${preview}${controls}${bones}${search}${list}<p style="color:var(--fg-2)">${caption}</p>`
 }
 
 /** The playback transport for the Animate step: fps, direction, pause, stop, and
@@ -607,7 +621,12 @@ function renderTransport(): string {
       <button class="tp-btn" id="stop" title="Stop" aria-label="Stop"><i data-lucide="square" width="16" height="16" aria-hidden="true"></i></button>
     </div>
     <input id="timeline" class="timeline" type="range" min="0" max="${frames}" step="1" value="0" aria-label="Timeline (frame)"/>
-    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>`
+    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>
+    <div class="tp-slider">
+      <label for="overdrive">Overdrive</label>
+      <input id="overdrive" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
+      <span id="overdrive-val" class="tp-val">${(overdrive / 50).toFixed(2)}×</span>
+    </div>`
 }
 
 /** Plays the chosen clip in the viewport, or stops it. */
@@ -628,6 +647,7 @@ async function runPreview(): Promise<void> {
     clipDuration = duration
     render() // the timeline max needs the real duration
     startPlayhead()
+    ensureViewport().setPlaybackRate(playbackRate()) // carry Overdrive across clips
   } catch (err) {
     playing = false
     render()
@@ -644,12 +664,17 @@ function stopPreview(): void {
   render()
 }
 
+/** The signed playback rate: direction × the Overdrive speed (50 → 1×). */
+function playbackRate(): number {
+  return direction * (overdrive / 50)
+}
+
 /** Sets the play direction and resumes. */
 function setDirection(value: 1 | -1): void {
   direction = value
   paused = false
   const vp = ensureViewport()
-  vp.setPlaybackDirection(value)
+  vp.setPlaybackRate(playbackRate())
   vp.setPaused(false)
   render()
 }
@@ -1154,6 +1179,20 @@ function render(): void {
     })
   })
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
+  app.querySelector<HTMLInputElement>('#overdrive')?.addEventListener('input', (event) => {
+    overdrive = Number((event.target as HTMLInputElement).value)
+    ensureViewport().setPlaybackRate(playbackRate())
+    const val = document.querySelector<HTMLElement>('#overdrive-val')
+    if (val !== null) val.textContent = `${(overdrive / 50).toFixed(2)}×`
+  })
+  // Live-filter the clip list as the query changes, without a re-render (which
+  // would drop focus). A full re-render re-applies the same filter from clipQuery.
+  app.querySelector<HTMLInputElement>('#clip-search')?.addEventListener('input', (event) => {
+    clipQuery = (event.target as HTMLInputElement).value
+    app.querySelectorAll<HTMLButtonElement>('.clip-item').forEach((btn) => {
+      btn.hidden = !clipMatches(btn.dataset['clip'] ?? '', clipQuery)
+    })
+  })
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
   app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
   app.querySelector<HTMLButtonElement>('#play-pause')?.addEventListener('click', () => togglePause())

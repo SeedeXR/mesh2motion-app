@@ -223,7 +223,8 @@ export interface Viewport {
   /** Pauses or resumes the running clip without tearing it down. */
   setPaused(paused: boolean): void
   /** Plays the clip forward (`1`) or in reverse (`-1`). */
-  setPlaybackDirection(direction: 1 | -1): void
+  /** Sets the signed playback rate: sign = direction, magnitude = speed. */
+  setPlaybackRate(rate: number): void
   /** Jumps the clip to `seconds` and shows that pose. */
   seek(seconds: number): void
   /** The clip's current playback time in seconds (0 when nothing plays). */
@@ -1260,8 +1261,10 @@ export function createViewport(): Viewport {
       lastFrame = performance.now()
     },
 
-    setPlaybackDirection(direction): void {
-      if (action !== null) action.timeScale = direction
+    setPlaybackRate(rate): void {
+      // Signed: sign is the direction (forward/reverse), magnitude is the speed
+      // (the Overdrive slider). 0 freezes without tearing playback down.
+      if (action !== null) action.timeScale = rate
     },
 
     seek(seconds): void {

@@ -30,6 +30,13 @@ Learn from the legacy `SkeletonHelper` lines (thin) — go beyond them.
 
 ## Item 2 — Animate window features
 
+- [x] 2b Overdrive (playback-speed slider, 0-100, 50=1x; timeScale = direction * overdrive/50).
+- [ ] 2f (USER-ADDED): search animations + descriptions/index. clip-index.ts derives
+      a description + category tags from each clip name (human + animal), a search
+      box live-filters the list, and each clip shows its description. Verify.
+- [ ] 2d Trim (start/end frame range).
+- [ ] 2c Character Arm-Space (retarget). 2e Mirror (retarget).
+
 From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 
 - [ ] 2a. 3-way visibility: mesh-only / skeleton-only / both. Needs an ANIMATED skeleton (SkeletonHelper-equivalent on the animated mesh, in the item-1 style), since the fitted skeleton is rest-pose only. Replaces the current "Show bones" checkbox.
@@ -50,6 +57,15 @@ From mixamo-export-modal-options.png. A modal on Export:
 ---
 
 ## Status log
+
+- **2a DONE + committed (94fe74e)**: animated skeleton (gradient octahedra rebuilt
+  each frame from live bone positions, follows the clip) + 3-way Mesh/Skeleton/Both
+  segmented control replacing "Show bones". Verified in compiled .app (all 3 views).
+  Skeleton refs (references/.../skeleton-references/) confirm our bone style. NEXT:
+  2b Overdrive (playback-speed slider → action.timeScale, combined with direction),
+  2d Trim (start/end frame range, playback + export) — both frontend-ish; then the
+  retarget-side 2c Character Arm-Space and 2e Mirror (Rust retarget). Then item 3.
+
 
 - (start) Plan created. Marker fixture committed. Item-4 report delivered (defer).
 - 1a DONE: bone geometry is already octahedral (Mixamo-shaped); the gap was colour.
