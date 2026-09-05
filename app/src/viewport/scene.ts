@@ -362,16 +362,17 @@ export function createViewport(): Viewport {
   // The octahedral bones' material: solid, flat-shaded so each facet catches the
   // light and the bone reads as 3D, drawn over the mesh (depthTest off) so a
   // buried bone stays visible. DoubleSide sidesteps any face-winding surprise.
-  const boneMaterial = new MeshStandardMaterial({
-    // Blender's neutral bone grey — the octahedra read by their shape and
-    // shading, not by a colour that competes with the orange joint handles.
-    color: 0xb4b8be,
-    flatShading: true,
-    roughness: 0.6,
-    metalness: 0.0,
+  const boneMaterial = new MeshBasicMaterial({
+    // Mixamo-style skeleton: a per-vertex blue→violet hierarchy-depth gradient
+    // (set in skeletonOctahedra) rather than flat Blender grey, so the skeleton
+    // reads as the primary rig. Unlit + `toneMapped:false` (the weight overlay's
+    // trick) so the bright studio IBL cannot wash the saturated hues to white —
+    // which is exactly what MeshStandard did here.
+    vertexColors: true,
+    toneMapped: false,
     depthTest: false,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.95,
     side: DoubleSide
   })
 
@@ -480,9 +481,14 @@ export function createViewport(): Viewport {
     positions: readonly (readonly [number, number, number])[],
     parents: readonly (number | null)[]
   ): void {
-    const { positions: verts, indices } = skeletonOctahedra(positions, parents, boneWidth(positions))
+    const { positions: verts, indices, colors } = skeletonOctahedra(
+      positions,
+      parents,
+      boneWidth(positions)
+    )
     geometry.setIndex(new BufferAttribute(indices, 1))
     geometry.setAttribute('position', new BufferAttribute(verts, 3))
+    geometry.setAttribute('color', new BufferAttribute(colors, 3))
     geometry.computeVertexNormals()
     geometry.computeBoundingSphere()
   }

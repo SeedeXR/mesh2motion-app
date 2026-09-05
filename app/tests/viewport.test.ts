@@ -246,6 +246,18 @@ describe('skeletonOctahedra', () => {
     expect(Array.from(positions.slice(3, 6))).toEqual([0, 1, 0]) // tail tip = joint
   })
 
+  test('bones carry a hierarchy-depth colour gradient (root violet → tip sky)', () => {
+    // Two bones: bone 1 at depth 1 (violet), bone 2 at depth 2 = maxDepth (sky).
+    const { colors } = skeletonOctahedra(line, [null, 0, 1], 0.1)
+    expect(colors).toHaveLength(2 * 6 * 3) // one rgb per vertex
+    const bone1 = Array.from(colors.slice(0, 3)) // depth 1 / 2 → halfway
+    const bone2 = Array.from(colors.slice(6 * 3, 6 * 3 + 3)) // depth 2 / 2 → tip
+    expect(bone2[0]).toBeCloseTo(0.22) // tip (sky) colour
+    expect(bone2[1]).toBeCloseTo(0.741)
+    expect(bone2[2]).toBeCloseTo(0.973)
+    expect(bone1[0]).toBeGreaterThan(bone2[0]!) // shallower bone is more violet (higher R)
+  })
+
   test('a skeleton of only roots draws nothing', () => {
     const { positions, indices } = skeletonOctahedra(line, [null, null, null], 0.1)
     expect(positions).toHaveLength(0)

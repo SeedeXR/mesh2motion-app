@@ -212,9 +212,20 @@ export function skeletonOctahedra(
   positions: readonly (readonly [number, number, number])[],
   parents: readonly (number | null)[],
   minWidth: number
-): { positions: Float32Array; indices: Uint32Array } {
+): { positions: Float32Array; indices: Uint32Array; colors: Float32Array } {
+  // Mixamo colours its skeleton with a hierarchy-depth gradient — deep violet at
+  // the root, running to sky blue at the extremities. Depth is each bone's steps
+  // from its root; a colour is lerped by depth/maxDepth so the same gradient
+  // reads on a human, a fox or a bird without any per-template knowledge.
+  const depth = boneDepths(parents)
+  const maxDepth = Math.max(1, ...depth)
+  // root violet (0x8b5cf6) -> tip sky (0x38bdf8), in linear-ish 0..1 rgb.
+  const root: readonly [number, number, number] = [0.545, 0.361, 0.965]
+  const tip: readonly [number, number, number] = [0.22, 0.741, 0.973]
+
   const verts: number[] = []
   const indices: number[] = []
+  const colors: number[] = []
   parents.forEach((parent, bone) => {
     if (parent === null) return
     const tail = positions[bone]
@@ -261,8 +272,36 @@ export function skeletonOctahedra(
       h, r0, r1, h, r1, r2, h, r2, r3, h, r3, r0, // head fan
       t, r1, r0, t, r2, r1, t, r3, r2, t, r0, r3 // tail fan
     )
+    const f = (depth[bone] ?? 0) / maxDepth
+    for (let i = 0; i < 6; i++) {
+      colors.push(
+        root[0] + (tip[0] - root[0]) * f,
+        root[1] + (tip[1] - root[1]) * f,
+        root[2] + (tip[2] - root[2]) * f
+      )
+    }
   })
-  return { positions: new Float32Array(verts), indices: new Uint32Array(indices) }
+  return {
+    positions: new Float32Array(verts),
+    indices: new Uint32Array(indices),
+    colors: new Float32Array(colors)
+  }
+}
+
+/** Each bone's depth: its number of steps back to a root, following `parents`.
+ *  A parent cycle stops at the repeat rather than looping forever. */
+function boneDepths(parents: readonly (number | null)[]): number[] {
+  return parents.map((_, bone) => {
+    let depth = 0
+    let cursor = parents[bone]
+    const seen = new Set<number>([bone])
+    while (cursor !== null && cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      depth++
+      cursor = parents[cursor] ?? null
+    }
+    return depth
+  })
 }
 
 /**
