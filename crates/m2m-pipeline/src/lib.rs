@@ -2315,9 +2315,15 @@ mod tests {
         );
     }
 
-    /// Every manifest describes its OWN rig exactly: no chain names a bone the
-    /// rig lacks, and no rig bone goes unclaimed. This is the guard that adding a
-    /// creature (rig + manifest) keeps the two in agreement.
+    /// Every manifest's chains agree with its OWN rig: no chain names a bone the
+    /// rig lacks, no bone is doubly claimed, every chain is a real parent-to-child
+    /// run, and there is exactly one root. The guard that adding a creature keeps
+    /// rig and manifest in agreement.
+    ///
+    /// `UnclaimedBone` is tolerated: a native animal rig carries detail bones
+    /// (whiskers, toes, face) no gait chain names. `fit_template` still places
+    /// them — every rig bone gets the uniform scale+translation, only chained ones
+    /// get per-chain refinement — so an unchained bone follows its parent.
     #[test]
     fn every_manifest_matches_its_rig() {
         for template in m2m_rig::template::all().expect("manifests parse") {
@@ -2339,8 +2345,12 @@ mod tests {
                     (name(j), parent)
                 })
                 .collect();
-            let problems = template.check(&m2m_rig::template::Skeleton::new(pairs));
-            assert!(problems.is_empty(), "{}: {problems:?}", template.name);
+            let structural: Vec<_> = template
+                .check(&m2m_rig::template::Skeleton::new(pairs))
+                .into_iter()
+                .filter(|p| !matches!(p, m2m_rig::template::TemplateProblem::UnclaimedBone { .. }))
+                .collect();
+            assert!(structural.is_empty(), "{}: {structural:?}", template.name);
         }
     }
 
@@ -2350,7 +2360,7 @@ mod tests {
         // a user picked that creature, which is the worst time to find out.
         let offered = templates().expect("the shipped manifests parse");
 
-        assert_eq!(offered.len(), 16);
+        assert_eq!(offered.len(), 17);
         for template in &offered {
             assert!(template.available, "{} has no bundled rig", template.name);
             assert!(template.bones > 0, "{} claims no bones", template.name);
@@ -2360,7 +2370,7 @@ mod tests {
                 template.name
             );
         }
-        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 764);
+        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 813);
     }
 
     #[test]
@@ -3118,24 +3128,43 @@ mod tests {
         assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));
     }
 
-    /// The wired cat library ships the five felid gaits, named `cat_*`, and no
-    /// raw `*_source_*` passthrough survived the split.
+    /// Every wired animal library loads, offers exactly its expected clips (named
+    /// `<animal>_*`, no raw `*_source_*` passthrough), and each clip is non-empty.
     #[test]
-    fn the_cat_library_ships_the_felid_gaits() {
-        let clips = super::library_clips(&model("animations/cat-animations.glb")).expect("lists");
-        let mut names: Vec<&str> = clips.iter().map(|c| c.name.as_str()).collect();
-        names.sort_unstable();
-        assert_eq!(
-            names,
-            [
-                "cat_gallop",
-                "cat_idle",
-                "cat_stalk",
-                "cat_trot",
-                "cat_walk"
-            ]
-        );
-        assert!(clips.iter().all(|c| c.duration > 0.0 && c.tracks > 0));
+    fn wired_animal_libraries_offer_their_clips() {
+        let expected: &[(&str, &[&str])] = &[
+            (
+                "cat",
+                &[
+                    "cat_gallop",
+                    "cat_idle",
+                    "cat_stalk",
+                    "cat_trot",
+                    "cat_walk",
+                ],
+            ),
+            (
+                "leopard",
+                &[
+                    "leopard_gallop",
+                    "leopard_idle",
+                    "leopard_stalk",
+                    "leopard_trot",
+                    "leopard_walk",
+                ],
+            ),
+        ];
+        for (animal, clips) in expected {
+            let bytes = model(&format!("animations/{animal}-animations.glb"));
+            let listed = super::library_clips(&bytes).unwrap_or_else(|e| panic!("{animal}: {e}"));
+            let mut names: Vec<&str> = listed.iter().map(|c| c.name.as_str()).collect();
+            names.sort_unstable();
+            assert_eq!(&names, clips, "{animal} clip set");
+            assert!(
+                listed.iter().all(|c| c.duration > 0.0 && c.tracks > 0),
+                "{animal} has an empty clip"
+            );
+        }
     }
 
     /// An animated export keeps the clip's TIME AXIS, not merely its keys.

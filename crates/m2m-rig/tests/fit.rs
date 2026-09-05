@@ -951,13 +951,14 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
         names,
         [
             "bird", "buffalo", "cat", "crow", "dragon", "elephant", "fox", "giraffe", "horse",
-            "human", "hyena", "kaiju", "rhino", "shark", "snake", "spider",
+            "human", "hyena", "kaiju", "leopard", "rhino", "shark", "snake", "spider",
         ]
     );
 
-    // Each bone claimed exactly once. cat adds the fox skeleton's 49 (715 -> 764).
+    // Manifest-claimed bones. cat adds the fox skeleton's 49 (715 -> 764); the
+    // leopard manifest chains 49 of its 326 (the rest are unclaimed detail bones).
     let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
-    assert_eq!(bones, 764);
+    assert_eq!(bones, 813);
 }
 
 /// The embedded manifests are the files on disk, not a stale copy.

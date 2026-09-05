@@ -42,8 +42,14 @@ tolerates unclaimed bones.
 - [x] A1. Tooling (`wire_animals` example) + proof on **cat**: rig-cat.glb (12KB) +
       cat-animations.glb (5 felid gaits `cat_*`) + cat.glb mesh (LFS) + cat.json.
       All suites green; validated in the compiled .app (fits + plays cat clips).
-- [ ] A2. Add **leopard**, **butterfly** (new animals). Relax the manifest guard for
-      unclaimed detail bones; author butterfly chains from its 3-bone structure.
+- [x] A2a. **leopard** wired + verified in the compiled .app (fits, plays leopard gaits,
+      whiskers/coat intact). Guard relaxed to allow UnclaimedBone (326 bones, 49 chained;
+      the fitter's uniform pass places the rest). Guard also caught leopard's tail Part-bones
+      (fixed via traversal). Library test is now data-driven (cat + leopard).
+- [ ] A2b. **butterfly** DEFERRED — structurally incompatible with the template system:
+      3 root bones (all children of a non-joint armature) and no spine, so the fitter
+      (needs one root + a spine) can't fit it. Options: a template-system change (allow
+      multi-root/spineless), or ship it as a Proceed-only sample. Raised with the user.
 - [ ] A3. Refresh existing 6 (**buffalo, rhino, giraffe, hyena, elephant, crow**) to the
       native rigs+libraries. Rewrite their manifests to native names; update the fit tests
       that assert the old canonical bone names/counts.
