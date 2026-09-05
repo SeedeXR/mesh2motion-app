@@ -1,13 +1,13 @@
 {
-  "_note": "Golden marker placement for model-human.glb, placed by hand in the app's marker step (M2M_AUTOMARK_CAPTURE). bone -> [x, y, z] in the model's world space. Used by the marker-solve fixture test.",
+  "_note": "Golden marker placement for model-human.glb, placed by hand in the app's marker step (M2M_AUTOMARK_CAPTURE). bone -> [x, y, z] in the model's world space. The `_l` bones sit at +X (the model's left, which is where the template's `_l` bones fit and where the app now routes a left-side click); `_r` at -X. Used by the marker-solve fixture test.",
   "markers": {
     "head": [-0.001412293099368559, 1.5839720332250757, 0.1069465142708328],
-    "hand_l": [-0.7457702640523483, 1.4320863064593752, -0.026229280040061642],
-    "hand_r": [0.7457702640523483, 1.4320863064593752, -0.026229280040061642],
-    "lowerarm_l": [-0.47376846229120184, 1.4393806930015292, -0.03228940678524994],
-    "lowerarm_r": [0.47376846229120184, 1.4393806930015292, -0.03228940678524994],
-    "calf_l": [-0.09354483517166184, 0.51338671180556, 0.06586072846197943],
-    "calf_r": [0.09354483517166184, 0.51338671180556, 0.06586072846197943],
+    "hand_l": [0.7457702640523483, 1.4320863064593752, -0.026229280040061642],
+    "hand_r": [-0.7457702640523483, 1.4320863064593752, -0.026229280040061642],
+    "lowerarm_l": [0.47376846229120184, 1.4393806930015292, -0.03228940678524994],
+    "lowerarm_r": [-0.47376846229120184, 1.4393806930015292, -0.03228940678524994],
+    "calf_l": [0.09354483517166184, 0.51338671180556, 0.06586072846197943],
+    "calf_r": [-0.09354483517166184, 0.51338671180556, 0.06586072846197943],
     "pelvis": [-0.003975212135574362, 0.943789955215399, 0.09930091475839076]
   }
 }

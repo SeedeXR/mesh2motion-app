@@ -45,3 +45,18 @@ export const MARKER_SETS: Readonly<Record<string, readonly MarkerSlot[]>> = {
 export function markerSetFor(template: string): readonly MarkerSlot[] | null {
   return MARKER_SETS[template] ?? null
 }
+
+/**
+ * The slot a click on a paired marker should actually fill.
+ *
+ * For a sided marker, the correct slot is the one whose side matches the side of
+ * the model the click landed on — the model's left is `+X` of `centreX`, where
+ * the template's `_l` bones fit — so "Wrist L" always maps to the model's left
+ * regardless of which of the L/R pair happened to be active. A midline slot
+ * (no side) fills itself.
+ */
+export function slotForClickedSide(slot: MarkerSlot, pointX: number, centreX: number): string {
+  if (slot.side === undefined || slot.pair === undefined) return slot.id
+  const clickedSide: 'l' | 'r' = pointX >= centreX ? 'l' : 'r'
+  return slot.side === clickedSide ? slot.id : slot.pair
+}

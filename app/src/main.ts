@@ -57,7 +57,7 @@ import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
-import { markerSetFor } from './state/markers'
+import { markerSetFor, slotForClickedSide } from './state/markers'
 import markerGuideHuman from './assets/marker-guide-human.png'
 
 /** A rendered guide image per template, showing where the markers go on a real
@@ -757,11 +757,17 @@ function setMarkerAt(slotId: string, point: [number, number, number]): void {
 }
 
 /** Places the active marker from a click on the model, then advances to the
- *  next empty slot. */
+ *  next empty slot. A paired marker is routed to the L or R slot by which side
+ *  of the model the click landed on, so the sides can't be placed swapped. */
 function onMarkerPick(point: [number, number, number]): void {
   if (activeSlot === null) return
-  setMarkerAt(activeSlot, point)
   const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === activeSlot)
+  const target =
+    slot !== undefined
+      ? slotForClickedSide(slot, point[0], ensureViewport().symmetryX())
+      : activeSlot
+  setMarkerAt(target, point)
   activeSlot = set?.find((s) => !markerPositions.has(s.id))?.id ?? null
   drawMarkers()
   render()
