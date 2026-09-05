@@ -133,6 +133,15 @@ fn dev_automark_solve() -> bool {
     std::env::var("M2M_AUTOMARK_SOLVE").is_ok()
 }
 
+/// Dev/testing harness: `M2M_AUTOMARK_CAPTURE=<template>` opens that template's
+/// marker step with NO markers placed and reveals a "Save markers" button, so a
+/// person can place them by hand and their positions can be captured as a test
+/// fixture. Returns the template name, or null when unset.
+#[tauri::command]
+fn dev_automark_capture() -> Option<String> {
+    std::env::var("M2M_AUTOMARK_CAPTURE").ok()
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -539,6 +548,7 @@ pub fn run() {
             dev_autopaint,
             dev_automark,
             dev_automark_solve,
+            dev_automark_capture,
             log_line,
             import_model,
             load_model,

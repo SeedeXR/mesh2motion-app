@@ -33,6 +33,7 @@ import {
   devAutopaint,
   devAutomark,
   devAutomarkSolve,
+  devAutomarkCapture,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -121,6 +122,9 @@ const markerPositions = new Map<string, [number, number, number]>()
 let activeSlot: string | null = null
 /** Whether placing one side's marker mirrors it to the other. */
 let useSymmetry = true
+/** Dev/testing: reveal a "Save markers" button so a hand placement can be
+ *  captured as a fixture (set by the M2M_AUTOMARK_CAPTURE harness). */
+let markerCapture = false
 
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
@@ -449,7 +453,8 @@ function renderMarkerPanel(): string {
     <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${
       fitting ? 'Solving\u2026' : `Solve rig (${placed}/${total})`
     }</button>
-    <button id="autofit" class="action">Auto-fit instead</button>`
+    <button id="autofit" class="action">Auto-fit instead</button>
+    ${markerCapture ? `<button id="save-markers" class="action" ${placed > 0 ? '' : 'disabled'}>Save markers (test)</button>` : ''}`
 }
 
 /** The rendered guide image for a template, or nothing when it has none. */
@@ -783,6 +788,19 @@ function drawMarkers(): void {
   )
 }
 
+/** Logs the placed markers as bone → position JSON, for capturing a hand
+ *  placement as a test fixture (the console is mirrored to the dev terminal). */
+function logMarkers(): void {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null) return
+  const byBone: Record<string, [number, number, number]> = {}
+  for (const slot of set) {
+    const p = markerPositions.get(slot.id)
+    if (p !== undefined) byBone[slot.bone] = p
+  }
+  console.log(`[markers:${chosen}] ${JSON.stringify(byBone)}`)
+}
+
 /** Solves the rig from the placed markers and draws the fitted skeleton. */
 async function runMarkerFit(): Promise<void> {
   const set = chosen === null ? null : markerSetFor(chosen)
@@ -1053,6 +1071,7 @@ function render(): void {
     useSymmetry = (event.target as HTMLInputElement).checked
   })
   app.querySelector<HTMLButtonElement>('#solve')?.addEventListener('click', () => void runMarkerFit())
+  app.querySelector<HTMLButtonElement>('#save-markers')?.addEventListener('click', () => logMarkers())
   app.querySelector<HTMLButtonElement>('#autofit')?.addEventListener('click', () => {
     if (chosen !== null) void runFit(chosen)
   })
@@ -1191,6 +1210,16 @@ async function maybeAutoload(): Promise<void> {
   if (path === null) return
   const button = document.querySelector<HTMLButtonElement>('#import')
   if (button !== null) await runImport(button)
+
+  // Testing capture: open a template's marker step EMPTY so a person can place
+  // the markers by hand, with a "Save markers" button to log them as a fixture.
+  const captureTemplate = await devAutomarkCapture().catch(() => null)
+  if (captureTemplate !== null) {
+    markerCapture = true
+    chooseTemplate(captureTemplate)
+    return
+  }
+
   // Optionally auto-fit a template so the Fit step (and its auto-placement) can
   // be screenshotted without clicking through the workflow.
   let template: string | null = null

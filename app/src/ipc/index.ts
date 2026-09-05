@@ -71,6 +71,12 @@ export async function devAutomarkSolve(): Promise<boolean> {
   return await invoke<boolean>('dev_automark_solve')
 }
 
+/** Dev/testing harness: a template to open in an empty marker step for hand
+ *  placement + capture, or null. */
+export async function devAutomarkCapture(): Promise<string | null> {
+  return await invoke<string | null>('dev_automark_capture')
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }

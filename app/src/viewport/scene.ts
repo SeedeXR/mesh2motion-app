@@ -40,7 +40,7 @@ import {
   SRGBColorSpace,
   ShaderMaterial,
   Spherical,
-  SphereGeometry,
+  IcosahedronGeometry,
   Sprite,
   SpriteMaterial,
   TOUCH,
@@ -353,16 +353,28 @@ export function createViewport(): Viewport {
   // attaches to whichever the user clicks. The edited positions feed straight
   // back to binding — the callback is how they get there.
   let jointHandles: Mesh[] = []
-  let handleGeometry: SphereGeometry | null = null
+  let handleGeometry: IcosahedronGeometry | null = null
   // Three shared handle materials so a joint can signal its state by colour, in
   // Blender's grey key: light grey at rest (a distinct grabbable knob against
   // the grey bones), white on hover (the cursor is over it, click to grab),
   // amber when selected (the gizmo is on it and arrow-keys nudge it — one warm
   // highlight so the active joint is unmistakable). Drawn over the mesh
   // (depthTest off) so a buried joint stays visible and grabbable.
-  const handleRest = new MeshBasicMaterial({ color: 0xd0d4da, depthTest: false, transparent: true })
-  const handleHover = new MeshBasicMaterial({ color: 0xf2f4f6, depthTest: false, transparent: true })
-  const handleSelected = new MeshBasicMaterial({ color: 0xffb454, depthTest: false, transparent: true })
+  // Flat-shaded and lit, so the low-poly facets (see handleGeometry) catch the
+  // light and each handle reads as a solid 3D knob you can orient, not a flat
+  // disc — which an unlit MeshBasic sphere looks like.
+  const handleMat = (color: number): MeshStandardMaterial =>
+    new MeshStandardMaterial({
+      color,
+      flatShading: true,
+      roughness: 0.5,
+      metalness: 0.0,
+      depthTest: false,
+      transparent: true
+    })
+  const handleRest = handleMat(0xd0d4da)
+  const handleHover = handleMat(0xf2f4f6)
+  const handleSelected = handleMat(0xffb454)
   let hoveredHandle: Mesh | null = null
   let selectedHandle: Mesh | null = null
   // Arrow-key nudge distance (one press), sized to the skeleton so it is a fine
@@ -629,16 +641,17 @@ export function createViewport(): Viewport {
     onJointEdit = onEdit
 
     const maxRadius = handleRadius(positions)
-    // A unit sphere scaled per joint, so each handle is sized to its local joint
-    // spacing (see localHandleRadius) — the finger handles no longer merge into
-    // one unpickable clump. 16×12 segments so a handle reads as a smooth ball,
-    // not a facetted lump — the designer-friendly touch.
-    handleGeometry = new SphereGeometry(1, 16, 12)
+    // A unit low-poly sphere scaled per joint, so each handle is sized to its
+    // local joint spacing (see localHandleRadius) — the finger handles no longer
+    // merge into one unpickable clump. An icosahedron (detail 1, ~80 facets) with
+    // flat shading reads as a solid, orientable 3D knob rather than a flat disc,
+    // which makes dragging it in x/y/z easier to judge.
+    handleGeometry = new IcosahedronGeometry(1, 1)
     // A nudge of ~15% of the full handle radius is a fine touch that still moves
     // visibly; Shift makes it finer still for the dense joints.
     nudgeStep = maxRadius * 0.15
     positions.forEach((p, index) => {
-      const handle = new Mesh(handleGeometry as SphereGeometry, handleRest)
+      const handle = new Mesh(handleGeometry as IcosahedronGeometry, handleRest)
       handle.position.set(p[0], p[1], p[2])
       const base = localHandleRadius(positions, index, maxRadius)
       // The resting size; hover and select grow from it (see paintHandle) so the
