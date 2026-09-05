@@ -180,6 +180,15 @@ fn dev_autoexport() -> Option<String> {
     std::env::var("M2M_AUTOEXPORT").ok()
 }
 
+/// Dev/testing harness: when `M2M_AUTO_ORBIT` is set, the Animate flow dispatches
+/// a synthetic left-drag across the viewport so camera orbit can be verified in a
+/// screenshot (WKWebView drops synthetic OS mouse events, so the drag must be
+/// JS-dispatched PointerEvents from inside the webview).
+#[tauri::command]
+fn dev_auto_orbit() -> bool {
+    std::env::var("M2M_AUTO_ORBIT").is_ok()
+}
+
 /// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
 /// places a few markers by synthetic clicks and saves them, so the save path can
 /// be verified end-to-end before a person is asked to place them for real.
@@ -656,6 +665,7 @@ pub fn run() {
             dev_animate_mirror,
             dev_animate_arm_space,
             dev_autoexport,
+            dev_auto_orbit,
             log_line,
             import_model,
             load_model,

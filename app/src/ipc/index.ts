@@ -97,6 +97,11 @@ export async function devAutoexport(): Promise<string | null> {
   return await invoke<string | null>('dev_autoexport')
 }
 
+/** Dev/testing: dispatch a synthetic left-drag in Animate to verify camera orbit. */
+export async function devAutoOrbit(): Promise<boolean> {
+  return await invoke<boolean>('dev_auto_orbit')
+}
+
 /** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
 export async function devAnimateMirror(): Promise<boolean> {
   return await invoke<boolean>('dev_animate_mirror')

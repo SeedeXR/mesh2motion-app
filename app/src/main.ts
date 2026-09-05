@@ -41,6 +41,7 @@ import {
   devAnimateMirror,
   devAnimateArmSpace,
   devAutoexport,
+  devAutoOrbit,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -780,11 +781,11 @@ function renderExportStep(): string {
       : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
 
   return `<button class="action primary" id="open-export" ${exporting ? 'disabled' : ''}>${
-    exporting ? 'Writing\u2026' : 'Download\u2026'
+    exporting ? 'Writing\u2026' : 'Export\u2026'
   }</button>${done}${renderExportModal()}`
 }
 
-/** The Mixamo-style "Download Settings" modal (a native <dialog>). */
+/** The Mixamo-style export-settings modal (a native <dialog>). */
 function renderExportModal(): string {
   const opt = (value: string, label: string, on: boolean): string =>
     `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`
@@ -799,7 +800,7 @@ function renderExportModal(): string {
       : ''
 
   return `<dialog class="export-modal" id="export-modal">
-    <h2>Download Settings</h2>
+    <h2>Export Settings</h2>
     <div class="export-grid">
       <div class="export-field">
         <label for="ex-format">Format</label>
@@ -835,7 +836,7 @@ function renderExportModal(): string {
     ${trimNote}
     <div class="export-actions">
       <button class="action" id="ex-cancel">Cancel</button>
-      <button class="action primary" id="ex-download">Download</button>
+      <button class="action primary" id="ex-download">Export</button>
     </div>
   </dialog>`
 }
@@ -1613,10 +1614,38 @@ async function maybeAutoload(): Promise<void> {
   await runPreview()
   render()
 
+  // Dev/testing: dispatch a synthetic left-drag so camera orbit in Animate can be
+  // verified in a screenshot (a real OS drag can't reach the webview).
+  if (await devAutoOrbit().catch(() => false)) {
+    const canvas = ensureViewport().canvas
+    const rect = canvas.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const fire = (type: string, x: number, y: number, buttons: number): void => {
+      const ev = new PointerEvent(type, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        buttons,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true
+      })
+      canvas.dispatchEvent(ev)
+      window.dispatchEvent(ev)
+    }
+    fire('pointerdown', cx, cy, 1)
+    for (let i = 1; i <= 8; i++) fire('pointermove', cx + i * 35, cy, 1)
+    fire('pointerup', cx + 280, cy, 0)
+    render()
+  }
+
   // Dev/screenshot: jump to Export and open the Download modal so it can be shot.
   const autoexport = await devAutoexport().catch(() => null)
   if (autoexport !== null) {
     if (autoexport === 'without' || autoexport === 'with') exportSkin = autoexport === 'with'
+    stopPreview() // settle the viewport so no playback re-render closes the modal
     activeStep = STEPS.findIndex((s) => s.id === StepId.Export)
     render()
     document.querySelector<HTMLDialogElement>('#export-modal')?.showModal()

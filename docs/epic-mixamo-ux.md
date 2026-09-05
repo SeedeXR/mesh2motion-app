@@ -74,7 +74,8 @@ From mixamo-export-modal-options.png. A modal on Export:
       new export_model args (skin/fps/keyframe_reduction/trim_start/trim_end) + IPC.
       Reducer is error-bounded (keeps playback within tolerance — no motion degradation).
       Unit-tested: finish_clip (trim/resample/reduce), without-skin, trim end-to-end.
-- [ ] 3c. Verify compiled build (Download modal) + tests; commit.
+- [x] 3c. Verified the modal in the compiled .app (M2M_AUTOEXPORT hook). Button/title say
+      "Export" not "Download" (user preference). Committed. **ITEM 3 DONE → epic 1–3 complete.**
 
 ---
 
@@ -95,6 +96,14 @@ From mixamo-export-modal-options.png. A modal on Export:
   nothing to pick, so left-drag did nothing and orbit-on-MMB wasn't discoverable. Fix:
   `setLeftOrbit(true)` in the Animate step lets plain left-drag orbit; off elsewhere. Both
   landed together (main.ts/scene.ts span both changes). NEXT: item 3 (Export modal).
+- **ITEM 3 DONE (32c5768)** + follow-ups: (a) user asked the button say "Export" not
+  "Download" — renamed the button, modal title and primary button. (b) user re-reported "can't
+  rotate the animated model". Investigated: left-drag orbit in Animate ALREADY works (50ee079);
+  proved it with a new M2M_AUTO_ORBIT dev hook (synthetic left-drag → the character visibly
+  orbited to a side view in the compiled .app). The user was on a pre-50ee079 build. Orbit
+  gestures: left-drag (Animate), middle-drag or ⌥+drag (everywhere), two-finger trackpad = zoom.
+  **Epic items 1–3 all complete.** Remaining: follow-ups F1 (skip rigging if already rigged),
+  F2 (animals: bone precision + reference image). Item 4 stays deferred.
 - (start) Plan created. Marker fixture committed. Item-4 report delivered (defer).
 - 1a DONE: bone geometry is already octahedral (Mixamo-shaped); the gap was colour.
 - 1b DONE + committed (4047708): blue→violet depth gradient, MeshBasic material.
