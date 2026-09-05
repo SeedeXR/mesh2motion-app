@@ -151,6 +151,34 @@ fn dev_automark_capture() -> Option<String> {
     std::env::var("M2M_AUTOMARK_CAPTURE").ok()
 }
 
+/// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
+/// places a few markers by synthetic clicks and saves them, so the save path can
+/// be verified end-to-end before a person is asked to place them for real.
+#[tauri::command]
+fn dev_capture_selftest() -> bool {
+    std::env::var("M2M_CAPTURE_SELFTEST").is_ok()
+}
+
+/// Dev/testing: writes a JSON fixture into the repo's `e2e/` directory — a
+/// hand-placed marker set captured for regression testing. Returns the path
+/// written. Dev-only: the target resolves from the crate's compile-time
+/// manifest dir, so it exists only in a source checkout.
+#[tauri::command]
+fn dev_save_fixture(name: String, contents: String) -> Result<String, String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("invalid fixture name: {name:?}"));
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../e2e");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{name}.json"));
+    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -559,6 +587,8 @@ pub fn run() {
             dev_automark_solve,
             dev_automark_hover,
             dev_automark_capture,
+            dev_capture_selftest,
+            dev_save_fixture,
             log_line,
             import_model,
             load_model,
@@ -597,6 +627,23 @@ mod ipc_tests {
                 panic!("delivered as JSON ({} chars), not raw bytes", json.len())
             }
         }
+    }
+
+    /// The marker-capture save writes a fixture and refuses a name that could
+    /// escape the `e2e/` directory.
+    #[test]
+    fn dev_save_fixture_round_trips_and_rejects_bad_names() {
+        assert!(super::dev_save_fixture("../evil".into(), "{}".into()).is_err());
+        assert!(super::dev_save_fixture("a/b".into(), "{}".into()).is_err());
+        assert!(super::dev_save_fixture(String::new(), "{}".into()).is_err());
+
+        let path = super::dev_save_fixture(
+            "dev-save-fixture-selftest".into(),
+            "{\"ok\":true}".into(),
+        )
+        .expect("writes");
+        assert_eq!(std::fs::read_to_string(&path).expect("reads back"), "{\"ok\":true}");
+        std::fs::remove_file(&path).ok();
     }
 
     /// The bundle config actually ships the animation libraries the app looks

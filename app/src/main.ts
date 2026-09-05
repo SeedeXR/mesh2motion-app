@@ -35,6 +35,8 @@ import {
   devAutomarkSolve,
   devAutomarkHover,
   devAutomarkCapture,
+  devCaptureSelftest,
+  devSaveFixture,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -126,6 +128,8 @@ let useSymmetry = true
 /** Dev/testing: reveal a "Save markers" button so a hand placement can be
  *  captured as a fixture (set by the M2M_AUTOMARK_CAPTURE harness). */
 let markerCapture = false
+/** Confirmation shown under the "Save markers" button after a save. */
+let markerSaveStatus: string | null = null
 
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
@@ -458,7 +462,8 @@ function renderMarkerPanel(): string {
       fitting ? 'Solving\u2026' : `Solve rig (${placed}/${total})`
     }</button>
     <button id="autofit" class="action">Auto-fit instead</button>
-    ${markerCapture ? `<button id="save-markers" class="action" ${placed > 0 ? '' : 'disabled'}>Save markers (test)</button>` : ''}`
+    ${markerCapture ? `<button id="save-markers" class="action" ${placed > 0 ? '' : 'disabled'}>Save markers (test)</button>` : ''}
+    ${markerCapture && markerSaveStatus !== null ? `<p class="marker-save-status" style="color:var(--fg-2);word-break:break-all">${escape(markerSaveStatus)}</p>` : ''}`
 }
 
 /** The rendered guide image for a template, or nothing when it has none. */
@@ -804,17 +809,35 @@ function drawMarkers(): void {
   )
 }
 
-/** Logs the placed markers as bone → position JSON, for capturing a hand
- *  placement as a test fixture (the console is mirrored to the dev terminal). */
-function logMarkers(): void {
+/** Saves the placed markers, and which model they were placed on, as a JSON
+ *  fixture in the repo's `e2e/` directory for regression testing. Shows a
+ *  confirmation (or the error) under the button so a save is never in doubt. */
+async function saveMarkers(): Promise<void> {
   const set = markerSetFor(chosen ?? '')
-  if (set === null) return
+  if (set === null || chosen === null) return
   const byBone: Record<string, [number, number, number]> = {}
   for (const slot of set) {
     const p = markerPositions.get(slot.id)
     if (p !== undefined) byBone[slot.bone] = p
   }
+  const state = {
+    model: loaded?.name ?? null,
+    modelPath: loaded?.path ?? null,
+    template: chosen,
+    markers: byBone
+  }
+  // Console too, mirrored to the dev terminal, as a redundant record.
   console.log(`[markers:${chosen}] ${JSON.stringify(byBone)}`)
+  const base = (loaded?.name ?? chosen)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+  try {
+    const path = await devSaveFixture(`${base}-markers`, JSON.stringify(state, null, 2))
+    markerSaveStatus = `Saved ${Object.keys(byBone).length} markers → ${path}`
+  } catch (err) {
+    markerSaveStatus = `Save failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+  render()
 }
 
 /** Solves the rig from the placed markers and draws the fitted skeleton. */
@@ -1087,7 +1110,7 @@ function render(): void {
     useSymmetry = (event.target as HTMLInputElement).checked
   })
   app.querySelector<HTMLButtonElement>('#solve')?.addEventListener('click', () => void runMarkerFit())
-  app.querySelector<HTMLButtonElement>('#save-markers')?.addEventListener('click', () => logMarkers())
+  app.querySelector<HTMLButtonElement>('#save-markers')?.addEventListener('click', () => void saveMarkers())
   app.querySelector<HTMLButtonElement>('#autofit')?.addEventListener('click', () => {
     if (chosen !== null) void runFit(chosen)
   })
@@ -1244,6 +1267,25 @@ async function maybeAutoload(): Promise<void> {
   if (captureTemplate !== null) {
     markerCapture = true
     chooseTemplate(captureTemplate)
+    // Self-test: place a couple of markers by synthetic clicks on the model and
+    // save, to prove the place→save→fixture path end-to-end before a person is
+    // asked to place them for real.
+    if (await devCaptureSelftest().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      const drop = (fx: number, fy: number): void =>
+        void canvas.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            clientX: rect.left + rect.width * fx,
+            clientY: rect.top + rect.height * fy,
+            button: 0,
+            bubbles: true
+          })
+        )
+      drop(0.5, 0.35) // upper body — the first (chin) slot
+      drop(0.5, 0.55) // lower body — the next slot advances automatically
+      await saveMarkers()
+    }
     return
   }
 

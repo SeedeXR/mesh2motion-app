@@ -82,6 +82,17 @@ export async function devAutomarkCapture(): Promise<string | null> {
   return await invoke<string | null>('dev_automark_capture')
 }
 
+/** Dev/testing: place a few markers and save automatically, to verify the save. */
+export async function devCaptureSelftest(): Promise<boolean> {
+  return await invoke<boolean>('dev_capture_selftest')
+}
+
+/** Dev/testing: writes a JSON fixture into the repo's `e2e/` dir. Returns the
+ *  path written. Throws if the Rust side rejects the name or the write fails. */
+export async function devSaveFixture(name: string, contents: string): Promise<string> {
+  return await invoke<string>('dev_save_fixture', { name, contents })
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }
