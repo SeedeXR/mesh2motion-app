@@ -2231,24 +2231,27 @@ mod tests {
 
     #[test]
     fn skeleton_from_import_reads_a_models_own_rig() {
-        // buffalo.glb is an already-rigged sample: 42 named bones, one root.
-        let skeleton = super::skeleton_from_import(&model("characters/buffalo.glb"))
-            .expect("buffalo is rigged");
-        assert_eq!(skeleton.bones.len(), 42);
-        assert_eq!(skeleton.parents.len(), 42);
-        assert_eq!(skeleton.positions.len(), 42);
-        assert_eq!(skeleton.rotations.len(), 42);
-        // "Body" is the deformation root; its node's parent is the armature,
-        // which is not a joint, so it reads as a root here.
-        assert_eq!(skeleton.bones[0], "Body");
-        assert!(skeleton.parents[0].is_none());
-        // A forest is fine — imported rigs carry IK/control bones whose parents
-        // sit outside the skin. Every parent index that IS set must be in range.
+        // A non-LFS rigged sample (characters/*.glb are LFS, absent in CI).
+        let skeleton = super::skeleton_from_import(&model(
+            "test-files/retarget testing/mixamo-sample-rig.glb",
+        ))
+        .expect("the sample is rigged");
+        let n = skeleton.bones.len();
+        assert!(n > 0);
+        assert_eq!(skeleton.parents.len(), n);
+        assert_eq!(skeleton.positions.len(), n);
+        assert_eq!(skeleton.rotations.len(), n);
+        // At least one root, every set parent index in range, and the rig's OWN
+        // names carried through (not a template convention).
         assert!(
             skeleton.parents.iter().any(Option::is_none),
             "has at least one root"
         );
-        assert!(skeleton.parents.iter().flatten().all(|&p| p < 42));
+        assert!(skeleton.parents.iter().flatten().all(|&p| p < n));
+        assert!(skeleton
+            .bones
+            .iter()
+            .any(|b| b.to_lowercase().contains("mixamo")));
     }
 
     #[test]
