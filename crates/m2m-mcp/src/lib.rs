@@ -153,6 +153,8 @@ impl Server {
                 clip: c,
                 mirror: false,
                 arm_space: 50.0,
+                options: pipeline::ClipOptions::full(),
+                skin: true,
             });
         let glb = pipeline::export_glb(model, fitted, self.session.falloff, animation)
             .map_err(|e| e.to_string())?;
@@ -300,6 +302,8 @@ impl Server {
                 clip: c,
                 mirror: false,
                 arm_space: 50.0,
+                options: pipeline::ClipOptions::full(),
+                skin: true,
             });
         let bytes = match format.as_str() {
             "glb" => pipeline::export_glb(model, fitted, self.session.falloff, animation),

@@ -30,6 +30,8 @@ fn animated_export(template: &str, mesh_path: &str, library_path: &str, clip: &s
             clip,
             mirror: false,
             arm_space: 50.0,
+            options: rig::ClipOptions::full(),
+            skin: true,
         }),
     )
     .expect("exports")

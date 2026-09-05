@@ -40,6 +40,7 @@ import {
   devAnimateView,
   devAnimateMirror,
   devAnimateArmSpace,
+  devAutoexport,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -142,6 +143,15 @@ let binding = false
 /** The file the rigged model was last written to. */
 let exported: string | null = null
 let exporting = false
+
+/** Download-modal settings (Mixamo's "Download Settings"). Format and the clip
+ *  options are chosen here; Trim comes from the Animate step's range. */
+let exportFormat: 'glb' | 'fbx' = 'glb'
+let exportSkin = true
+let exportFps: 24 | 30 | 60 = 30
+let keyframeReduction: 'none' | 'low' | 'high' = 'none'
+/** Reduction level → tolerance (radians) the Rust reducer bounds error to. */
+const REDUCTION_TOL: Record<'none' | 'low' | 'high', number> = { none: 0, low: 0.01, high: 0.05 }
 
 /** The chosen creature's clips, once fetched, and the one selected. */
 let clips: ClipSummary[] | null = null
@@ -762,31 +772,89 @@ function renderExportStep(): string {
     return '<p style="color:var(--fg-2)">Bind the weights first — an export carries the skeleton and the weights, not just the mesh.</p>'
   }
 
-  const buttons = (['glb', 'fbx'] as const)
-    .map(
-      (format) =>
-        `<button class="action export" data-format="${format}" ${exporting ? 'disabled' : ''}>${
-          exporting ? 'Writing\u2026' : `Export as .${format}`
-        }</button>`
-    )
-    .join('')
   const done =
     exported === null
       ? `<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file${
           clip === null ? '' : `, with ${escape(clip)}`
-        }. Both formats carry the same rig.</p>`
+        }.</p>`
       : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
 
-  return `${buttons}${done}`
+  return `<button class="action primary" id="open-export" ${exporting ? 'disabled' : ''}>${
+    exporting ? 'Writing\u2026' : 'Download\u2026'
+  }</button>${done}${renderExportModal()}`
 }
 
-/** Writes the rigged model to a file the user picks. */
-async function runExport(format: 'glb' | 'fbx'): Promise<void> {
+/** The Mixamo-style "Download Settings" modal (a native <dialog>). */
+function renderExportModal(): string {
+  const opt = (value: string, label: string, on: boolean): string =>
+    `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`
+  // "Without Skin" (skeleton + animation only) needs an animation to be useful.
+  const noClip = clip === null
+  const trimmed = trimStart > 0 || trimEnd < 1
+  const trimNote =
+    clip !== null && trimmed
+      ? `<p class="export-note">Trim: frames ${Math.round(
+          trimStart * totalFrames(clipDuration, exportFps)
+        )}\u2013${Math.round(trimEnd * totalFrames(clipDuration, exportFps))} (from Animate) will be exported.</p>`
+      : ''
+
+  return `<dialog class="export-modal" id="export-modal">
+    <h2>Download Settings</h2>
+    <div class="export-grid">
+      <div class="export-field">
+        <label for="ex-format">Format</label>
+        <select id="ex-format">
+          ${opt('fbx', 'FBX Binary (.fbx)', exportFormat === 'fbx')}
+          ${opt('glb', 'glTF Binary (.glb)', exportFormat === 'glb')}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-skin">Skin</label>
+        <select id="ex-skin" ${noClip ? 'disabled title="Pick an animation to export without skin"' : ''}>
+          ${opt('with', 'With Skin', exportSkin)}
+          ${opt('without', 'Without Skin', !exportSkin)}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-fps">Frames per Second</label>
+        <select id="ex-fps">
+          ${opt('24', '24', exportFps === 24)}
+          ${opt('30', '30', exportFps === 30)}
+          ${opt('60', '60', exportFps === 60)}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-keyframe">Keyframe Reduction</label>
+        <select id="ex-keyframe">
+          ${opt('none', 'none', keyframeReduction === 'none')}
+          ${opt('low', 'low', keyframeReduction === 'low')}
+          ${opt('high', 'high', keyframeReduction === 'high')}
+        </select>
+      </div>
+    </div>
+    ${trimNote}
+    <div class="export-actions">
+      <button class="action" id="ex-cancel">Cancel</button>
+      <button class="action primary" id="ex-download">Download</button>
+    </div>
+  </dialog>`
+}
+
+/** Writes the rigged model to a file the user picks, with the modal's options. */
+async function runExport(): Promise<void> {
   if (loaded === null || fitted === null || exporting) return
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip, mirrored, armSpace)
+    // "Without Skin" only applies with a clip; a bare-mesh export keeps its skin.
+    const skin = clip === null ? true : exportSkin
+    const saved = await exportModel(loaded.path, fitted, 2.0, exportFormat, chosen ?? '', clip, mirrored, armSpace, {
+      skin,
+      fps: exportFps,
+      keyframe: REDUCTION_TOL[keyframeReduction],
+      trimStart,
+      trimEnd
+    })
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -1202,10 +1270,23 @@ function render(): void {
     ensureViewport().setSkeletonVisible(true)
   }
 
-  app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
-    const format = button.dataset['format']
-    if (format !== 'glb' && format !== 'fbx') return
-    button.addEventListener('click', () => void runExport(format))
+  // Download modal: open it, keep its selects in state, cancel or download.
+  const bindSelect = (selector: string, set: (value: string) => void): void => {
+    const el = app.querySelector<HTMLSelectElement>(selector)
+    el?.addEventListener('change', () => set(el.value))
+  }
+  const exportModal = app.querySelector<HTMLDialogElement>('#export-modal')
+  app.querySelector<HTMLButtonElement>('#open-export')?.addEventListener('click', () => exportModal?.showModal())
+  app.querySelector<HTMLButtonElement>('#ex-cancel')?.addEventListener('click', () => exportModal?.close())
+  bindSelect('#ex-format', (v) => { exportFormat = v === 'fbx' ? 'fbx' : 'glb' })
+  bindSelect('#ex-skin', (v) => { exportSkin = v !== 'without' })
+  bindSelect('#ex-fps', (v) => { exportFps = v === '24' ? 24 : v === '60' ? 60 : 30 })
+  bindSelect('#ex-keyframe', (v) => {
+    keyframeReduction = v === 'low' ? 'low' : v === 'high' ? 'high' : 'none'
+  })
+  app.querySelector<HTMLButtonElement>('#ex-download')?.addEventListener('click', () => {
+    exportModal?.close()
+    void runExport()
   })
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
@@ -1531,6 +1612,15 @@ async function maybeAutoload(): Promise<void> {
   await ensureLibrary(template)
   await runPreview()
   render()
+
+  // Dev/screenshot: jump to Export and open the Download modal so it can be shot.
+  const autoexport = await devAutoexport().catch(() => null)
+  if (autoexport !== null) {
+    if (autoexport === 'without' || autoexport === 'with') exportSkin = autoexport === 'with'
+    activeStep = STEPS.findIndex((s) => s.id === StepId.Export)
+    render()
+    document.querySelector<HTMLDialogElement>('#export-modal')?.showModal()
+  }
 }
 // Fire-and-forget at the entry module's end; nothing runs after it.
 await maybeAutoload()

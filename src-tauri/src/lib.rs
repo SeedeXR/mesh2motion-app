@@ -172,6 +172,14 @@ fn dev_animate_arm_space() -> Option<String> {
     std::env::var("M2M_ANIMATE_ARMSPACE").ok()
 }
 
+/// Dev/screenshot harness: `M2M_AUTOEXPORT` set (optionally to `with`/`without`)
+/// jumps to the Export step and opens the Download modal after the auto-clip
+/// flow, so the modal can be screenshotted. Returns the skin choice, or null.
+#[tauri::command]
+fn dev_autoexport() -> Option<String> {
+    std::env::var("M2M_AUTOEXPORT").ok()
+}
+
 /// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
 /// places a few markers by synthetic clicks and saves them, so the save path can
 /// be verified end-to-end before a person is asked to place them for real.
@@ -412,6 +420,11 @@ async fn preview_animation(
                 clip: &clip,
                 mirror,
                 arm_space,
+                // Preview plays the whole clip at its own keys with the mesh
+                // shown; the export options (trim/fps/reduction/skin) are honoured
+                // only by export_model.
+                options: rig::ClipOptions::full(),
+                skin: true,
             };
             let glb = rig::export_glb(&source, &skeleton, falloff, Some(animation))
                 .map_err(|e| e.to_string())?;
@@ -537,6 +550,11 @@ async fn export_model(
     clip: Option<String>,
     mirror: bool,
     arm_space: f32,
+    skin: bool,
+    fps: u32,
+    keyframe_reduction: f32,
+    trim_start: f32,
+    trim_end: f32,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("export_model", || {
@@ -567,6 +585,12 @@ async fn export_model(
                 None => None,
             };
             progress(&app, "export_model", "solving", 0.4);
+            let options = rig::ClipOptions {
+                trim_start,
+                trim_end,
+                fps,
+                keyframe_reduction,
+            };
             let animation =
                 library
                     .as_deref()
@@ -576,6 +600,10 @@ async fn export_model(
                         clip: name,
                         mirror,
                         arm_space,
+                        options,
+                        // "Without Skin" only applies alongside an animation; a
+                        // no-clip export always carries the mesh.
+                        skin,
                     });
             let bytes = match extension {
                 "fbx" => rig::export_fbx(&source, &skeleton, falloff, animation),
@@ -627,6 +655,7 @@ pub fn run() {
             dev_animate_view,
             dev_animate_mirror,
             dev_animate_arm_space,
+            dev_autoexport,
             log_line,
             import_model,
             load_model,

@@ -592,25 +592,10 @@ fn rigged_document(
         })
         .collect();
 
-    let inverse_bind_matrices = (0..skeleton.bones.len())
-        .map(|bone| {
-            glam::Mat4::from_rotation_translation(world_rotation[bone], position(bone))
-                .inverse()
-                .to_cols_array()
-        })
-        .collect();
-
-    let mesh_node = nodes.len();
-    nodes.push(m2m_io::glb::Node {
-        name: "mesh".into(),
-        parent: None,
-        transform: m2m_io::glb::Trs {
-            translation: [0.0, 0.0, 0.0],
-            rotation: [0.0, 0.0, 0.0, 1.0],
-            scale: [1.0, 1.0, 1.0],
-        },
-        skin: Some(0),
-    });
+    // "Without Skin": no mesh geometry, so the export is skeleton + animation
+    // only (the bone nodes above plus `clips`). Skip the mesh node, primitive,
+    // skin and material entirely.
+    let has_mesh = !mesh.positions.is_empty();
 
     // The source material, as a glb material (the mime comes from the file name
     // the shading reader assigned). Empty for the weight overlay.
@@ -637,27 +622,54 @@ fn rigged_document(
         .collect();
     let material = (!materials.is_empty()).then_some(0);
 
+    let (primitives, skins) = if has_mesh {
+        let inverse_bind_matrices = (0..skeleton.bones.len())
+            .map(|bone| {
+                glam::Mat4::from_rotation_translation(world_rotation[bone], position(bone))
+                    .inverse()
+                    .to_cols_array()
+            })
+            .collect();
+        let mesh_node = nodes.len();
+        nodes.push(m2m_io::glb::Node {
+            name: "mesh".into(),
+            parent: None,
+            transform: m2m_io::glb::Trs {
+                translation: [0.0, 0.0, 0.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            },
+            skin: Some(0),
+        });
+        (
+            vec![m2m_io::glb::Primitive {
+                mesh: 0,
+                node: Some(mesh_node),
+                positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
+                // The weight overlay passes empty shading; an FBX-source export
+                // passes the source's normals, UVs and material (aligned to this
+                // merged mesh), so the rebuilt glb keeps all of them.
+                normals: shading.normals,
+                uvs: shading.uvs,
+                material,
+                indices: mesh.indices.clone(),
+                joints: weights.indices.clone(),
+                weights: weights.weights.clone(),
+                colors,
+            }],
+            vec![m2m_io::glb::Skin {
+                joints: (0..skeleton.bones.len()).collect(),
+                inverse_bind_matrices,
+            }],
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     m2m_io::glb::Document {
-        primitives: vec![m2m_io::glb::Primitive {
-            mesh: 0,
-            node: Some(mesh_node),
-            positions: mesh.positions.iter().flat_map(|p| p.to_array()).collect(),
-            // The weight overlay passes empty shading; an FBX-source export
-            // passes the source's normals, UVs and material (aligned to this
-            // merged mesh), so the rebuilt glb keeps all of them.
-            normals: shading.normals,
-            uvs: shading.uvs,
-            material,
-            indices: mesh.indices.clone(),
-            joints: weights.indices.clone(),
-            weights: weights.weights.clone(),
-            colors,
-        }],
+        primitives,
         materials,
-        skins: vec![m2m_io::glb::Skin {
-            joints: (0..skeleton.bones.len()).collect(),
-            inverse_bind_matrices,
-        }],
+        skins,
         nodes,
         clips,
         report: m2m_io::glb::GlbReport::default(),
@@ -713,6 +725,344 @@ pub struct Animation<'a> {
     /// Character Arm-Space: 0–100, 50 neutral. Below 50 narrows the arms toward
     /// the body, above 50 widens them.
     pub arm_space: f32,
+    /// Export-only clip options (trim range, resample fps, keyframe reduction).
+    /// Preview ignores them (it passes [`ClipOptions::full`]); export honours them.
+    pub options: ClipOptions,
+    /// Include the character mesh + skin weights (`true`, the default), or export
+    /// the skeleton + animation only (`false` — "Without Skin", for retargeting
+    /// onto another mesh). Preview always passes `true`.
+    pub skin: bool,
+}
+
+/// Export-time shaping of the retargeted clip. `full()` is the identity (the
+/// whole clip, original keys), used by preview and unrigged/no-clip exports.
+#[derive(Debug, Clone, Copy)]
+pub struct ClipOptions {
+    /// Keep only `[start, end]` of the clip, as fractions of its duration
+    /// (0.0–1.0). The kept span is rebased to start at t=0.
+    pub trim_start: f32,
+    pub trim_end: f32,
+    /// Resample to this many keys per second (0 = keep the original keys).
+    pub fps: u32,
+    /// Drop rotation keys within this angle (radians) of the interpolation of
+    /// their neighbours (0 = keep every key).
+    pub keyframe_reduction: f32,
+}
+
+impl ClipOptions {
+    /// The identity: whole clip, original keys, no reduction.
+    pub fn full() -> Self {
+        Self {
+            trim_start: 0.0,
+            trim_end: 1.0,
+            fps: 0,
+            keyframe_reduction: 0.0,
+        }
+    }
+}
+
+/// Floats per key for a channel; morph weights infer it from the data.
+fn key_stride(ch: &m2m_io::glb::Channel) -> usize {
+    ch.path
+        .stride()
+        .unwrap_or_else(|| ch.values.len().checked_div(ch.times.len()).unwrap_or(1))
+        .max(1)
+}
+
+/// The channel's value at time `t`, interpolated (rotations via glam's
+/// shortest-arc nlerp, everything else componentwise-linear), clamped at the
+/// ends. Returns `key_stride` floats.
+fn sample_key(ch: &m2m_io::glb::Channel, t: f32) -> Vec<f32> {
+    let s = key_stride(ch);
+    let n = ch.times.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let key = |i: usize| &ch.values[i * s..i * s + s];
+    if t <= ch.times[0] {
+        return key(0).to_vec();
+    }
+    if t >= ch.times[n - 1] {
+        return key(n - 1).to_vec();
+    }
+    let hi = ch.times.partition_point(|&x| x <= t).max(1);
+    let (i, j) = (hi - 1, hi);
+    let (a, b) = (ch.times[i], ch.times[j]);
+    let u = if b > a { (t - a) / (b - a) } else { 0.0 };
+    let (ka, kb) = (key(i), key(j));
+    if matches!(ch.path, m2m_io::glb::Path::Rotation) && s == 4 {
+        let qa = glam::Quat::from_xyzw(ka[0], ka[1], ka[2], ka[3]);
+        let qb = glam::Quat::from_xyzw(kb[0], kb[1], kb[2], kb[3]);
+        let q = qa.lerp(qb, u);
+        vec![q.x, q.y, q.z, q.w]
+    } else {
+        (0..s).map(|c| ka[c] * (1.0 - u) + kb[c] * u).collect()
+    }
+}
+
+/// Keeps only `[start, end]` seconds of a channel, with clean interpolated
+/// boundary keys, and rebases the kept keys so they start at t=0.
+fn trim_channel(ch: &m2m_io::glb::Channel, start: f32, end: f32) -> m2m_io::glb::Channel {
+    let s = key_stride(ch);
+    let mut times = vec![0.0];
+    let mut values = sample_key(ch, start);
+    for (i, &t) in ch.times.iter().enumerate() {
+        if t > start && t < end {
+            times.push(t - start);
+            values.extend_from_slice(&ch.values[i * s..i * s + s]);
+        }
+    }
+    times.push((end - start).max(0.0));
+    values.extend(sample_key(ch, end));
+    m2m_io::glb::Channel {
+        node: ch.node,
+        path: ch.path,
+        times,
+        values,
+    }
+}
+
+/// Rebuilds a channel as uniform keys at `fps` per second across `[0, duration]`.
+fn resample_channel(ch: &m2m_io::glb::Channel, duration: f32, fps: u32) -> m2m_io::glb::Channel {
+    let steps = ((duration * fps as f32).round() as usize).max(1);
+    let mut times = Vec::with_capacity(steps + 1);
+    let mut values = Vec::new();
+    for k in 0..=steps {
+        let t = k as f32 / steps as f32 * duration;
+        times.push(t);
+        values.extend(sample_key(ch, t));
+    }
+    m2m_io::glb::Channel {
+        node: ch.node,
+        path: ch.path,
+        times,
+        values,
+    }
+}
+
+/// Drops keys the interpolation of their kept neighbours already reproduces
+/// within `tol` (radians for rotations, world units otherwise) — a greedy
+/// collinear-key simplifier. First and last keys are always kept.
+///
+/// A key is dropped only when the LINEAR playback that will replace it — the
+/// interpolation between the surrounding *kept* keys, exactly what glTF/FBX
+/// players do — stays within `tol` of the original at every dropped key. That
+/// bounds the real reconstruction error, so a constant-velocity single-axis
+/// sweep (whose nlerp playback would otherwise drift) is preserved, not
+/// flattened to its endpoints.
+// ponytail: O(n²) run growth; clips have tens of keys per bone, so fine.
+fn reduce_channel(ch: &m2m_io::glb::Channel, tol: f32) -> m2m_io::glb::Channel {
+    let s = key_stride(ch);
+    let n = ch.times.len();
+    if n <= 2 || tol <= 0.0 {
+        return ch.clone();
+    }
+    let is_rot = matches!(ch.path, m2m_io::glb::Path::Rotation) && s == 4;
+    let key = |i: usize| &ch.values[i * s..i * s + s];
+    let quat = |i: usize| {
+        let k = key(i);
+        glam::Quat::from_xyzw(k[0], k[1], k[2], k[3])
+    };
+    // Error at key `mid` if playback interpolates between keys `a` and `b`.
+    let error = |a: usize, b: usize, mid: usize| -> f32 {
+        let (ta, tb) = (ch.times[a], ch.times[b]);
+        let u = if tb > ta {
+            (ch.times[mid] - ta) / (tb - ta)
+        } else {
+            0.0
+        };
+        if is_rot {
+            quat(a).lerp(quat(b), u).angle_between(quat(mid))
+        } else {
+            (0..s)
+                .map(|c| (key(a)[c] * (1.0 - u) + key(b)[c] * u - key(mid)[c]).abs())
+                .fold(0.0, f32::max)
+        }
+    };
+
+    // Grow a run from the last kept key as far as every interior key it would
+    // drop still reconstructs within tol; commit the last key that held.
+    let mut keep = vec![0usize];
+    let mut anchor = 0;
+    let mut end = 1;
+    while end < n {
+        let fits = (anchor + 1..end).all(|mid| error(anchor, end, mid) <= tol);
+        if fits && end < n - 1 {
+            end += 1;
+        } else if fits {
+            keep.push(end); // reached the final key
+            break;
+        } else {
+            keep.push(end - 1);
+            anchor = end - 1;
+        }
+    }
+    if *keep.last().unwrap() != n - 1 {
+        keep.push(n - 1);
+    }
+
+    let mut times = Vec::new();
+    let mut values = Vec::new();
+    for &i in &keep {
+        times.push(ch.times[i]);
+        values.extend_from_slice(key(i));
+    }
+    m2m_io::glb::Channel {
+        node: ch.node,
+        path: ch.path,
+        times,
+        values,
+    }
+}
+
+/// Shapes a retargeted clip for export: trim to a fraction range (rebased to
+/// zero), resample to a fixed fps, then thin near-redundant keys. Identity when
+/// [`ClipOptions::full`]. Feeds both the glb and fbx exporters.
+fn finish_clip(mut clip: m2m_io::glb::Clip, opts: ClipOptions) -> m2m_io::glb::Clip {
+    let dur = clip.duration.max(0.0);
+    let start = opts.trim_start.clamp(0.0, 1.0) * dur;
+    let end = (opts.trim_end.clamp(0.0, 1.0) * dur).max(start);
+    let trimming = start > f32::EPSILON || end < dur - f32::EPSILON;
+    let new_dur = if trimming { end - start } else { dur };
+
+    for ch in &mut clip.channels {
+        if trimming {
+            *ch = trim_channel(ch, start, end);
+        }
+        if opts.fps > 0 {
+            *ch = resample_channel(ch, new_dur, opts.fps);
+        }
+        if opts.keyframe_reduction > 0.0 {
+            *ch = reduce_channel(ch, opts.keyframe_reduction);
+        }
+    }
+    clip.duration = new_dur;
+    clip
+}
+
+#[cfg(test)]
+mod clip_options_tests {
+    use super::{finish_clip, ClipOptions};
+    use m2m_io::glb::{Channel, Clip, Path};
+
+    /// A one-second rotation channel with `keys` evenly spaced keys, rotating
+    /// from identity to `end_z` radians about Z (so interior keys are NOT
+    /// collinear unless the caller makes them so).
+    fn rot_clip(keys: usize, end_z: f32) -> Clip {
+        let mut times = Vec::new();
+        let mut values = Vec::new();
+        for i in 0..keys {
+            let u = i as f32 / (keys - 1) as f32;
+            times.push(u); // duration 1.0s
+            let q = glam::Quat::from_rotation_z(u * end_z);
+            values.extend_from_slice(&[q.x, q.y, q.z, q.w]);
+        }
+        Clip {
+            name: "t".into(),
+            duration: 1.0,
+            channels: vec![Channel {
+                node: 0,
+                path: Path::Rotation,
+                times,
+                values,
+            }],
+        }
+    }
+
+    #[test]
+    fn full_options_leave_the_clip_untouched() {
+        let clip = rot_clip(5, 1.0);
+        let out = finish_clip(clip.clone(), ClipOptions::full());
+        assert_eq!(out, clip);
+    }
+
+    #[test]
+    fn trim_keeps_the_middle_and_rebases_to_zero() {
+        // Keep [0.25, 0.75] of a 1s clip → 0.5s, starting at t=0.
+        let out = finish_clip(
+            rot_clip(5, 1.0),
+            ClipOptions {
+                trim_start: 0.25,
+                trim_end: 0.75,
+                fps: 0,
+                keyframe_reduction: 0.0,
+            },
+        );
+        assert!(
+            (out.duration - 0.5).abs() < 1e-5,
+            "duration {}",
+            out.duration
+        );
+        let ch = &out.channels[0];
+        assert_eq!(*ch.times.first().unwrap(), 0.0);
+        assert!((ch.times.last().unwrap() - 0.5).abs() < 1e-5);
+        // Interior key at old t=0.5 rebases to 0.25.
+        assert!(ch.times.iter().any(|t| (t - 0.25).abs() < 1e-5));
+    }
+
+    #[test]
+    fn resample_lays_down_uniform_keys_at_the_chosen_fps() {
+        // 1s clip at 24fps → 24 intervals → 25 keys.
+        let out = finish_clip(
+            rot_clip(5, 1.0),
+            ClipOptions {
+                trim_start: 0.0,
+                trim_end: 1.0,
+                fps: 24,
+                keyframe_reduction: 0.0,
+            },
+        );
+        assert_eq!(out.channels[0].times.len(), 25);
+        assert_eq!(out.channels[0].values.len(), 25 * 4);
+    }
+
+    #[test]
+    fn reduction_drops_redundant_keys_and_stays_within_tolerance() {
+        // A motionless track (nine identical keys) collapses to its two ends.
+        let still = finish_clip(
+            rot_clip(9, 0.0),
+            ClipOptions {
+                trim_start: 0.0,
+                trim_end: 1.0,
+                fps: 0,
+                keyframe_reduction: 0.05,
+            },
+        );
+        assert_eq!(still.channels[0].times.len(), 2);
+
+        // A real sweep is thinned, but every ORIGINAL key must still be
+        // reproduced within tolerance by the reduced track's linear playback —
+        // the property that keeps reduction from degrading the motion.
+        let tol = 0.05;
+        let source = rot_clip(9, 3.0);
+        let reduced = finish_clip(
+            source.clone(),
+            ClipOptions {
+                trim_start: 0.0,
+                trim_end: 1.0,
+                fps: 0,
+                keyframe_reduction: tol,
+            },
+        );
+        let rc = &reduced.channels[0];
+        assert!(
+            rc.times.len() < 9 && rc.times.len() >= 2,
+            "len {}",
+            rc.times.len()
+        );
+        let sc = &source.channels[0];
+        for i in 0..sc.times.len() {
+            let orig = &sc.values[i * 4..i * 4 + 4];
+            let played = super::sample_key(rc, sc.times[i]);
+            let a = glam::Quat::from_xyzw(orig[0], orig[1], orig[2], orig[3]);
+            let b = glam::Quat::from_xyzw(played[0], played[1], played[2], played[3]);
+            assert!(
+                a.angle_between(b) <= tol + 1e-4,
+                "key {i} drifts {}",
+                a.angle_between(b)
+            );
+        }
+    }
 }
 
 pub fn export_glb(
@@ -722,18 +1072,37 @@ pub fn export_glb(
     animation: Option<Animation>,
 ) -> Result<Vec<u8>, RigError> {
     check_bone_order(skeleton)?;
-    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
+    let skin = animation.is_none_or(|a| a.skin);
 
     let clip = match animation {
-        Some(a) => Some(retarget_clip(
-            &m2m_io::glb::read(a.library)?,
-            skeleton,
-            a.clip,
-            a.mirror,
-            a.arm_space,
-        )?),
+        Some(a) => Some(finish_clip(
+            retarget_clip(
+                &m2m_io::glb::read(a.library)?,
+                skeleton,
+                a.clip,
+                a.mirror,
+                a.arm_space,
+            )?,
+            a.options,
+        )),
         None => None,
     };
+
+    // "Without Skin": skeleton + animation only, no mesh. Rebuild from an empty
+    // mesh (same path for glTF and FBX sources) so there is nothing to skin.
+    if !skin {
+        let document = rigged_document(
+            skeleton,
+            &m2m_core::mesh::Mesh::default(),
+            &m2m_core::skinning::SkinWeights::default(),
+            Vec::new(),
+            FbxShading::default(),
+            clip.into_iter().collect(),
+        );
+        return Ok(m2m_io::glb::write(&document)?);
+    }
+
+    let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
     // Only a glTF source can be augmented in place. An FBX is rebuilt, keeping
     // the normals and UVs the reader carried through (materials/textures are not
@@ -1480,13 +1849,16 @@ pub fn export_fbx(
     // The clip, in FBX's own terms. Owned here so the borrowed `Curve`s and
     // `Channel`s below outlive the `Scene`.
     let moved = match animation {
-        Some(a) => Some(retarget_clip(
-            &m2m_io::glb::read(a.library)?,
-            skeleton,
-            a.clip,
-            a.mirror,
-            a.arm_space,
-        )?),
+        Some(a) => Some(finish_clip(
+            retarget_clip(
+                &m2m_io::glb::read(a.library)?,
+                skeleton,
+                a.clip,
+                a.mirror,
+                a.arm_space,
+            )?,
+            a.options,
+        )),
         None => None,
     };
     let built = moved
@@ -1536,11 +1908,24 @@ pub fn export_fbx(
         })
         .unwrap_or_default();
 
+    // "Without Skin": skeleton + animation only — drop the mesh, its skin and
+    // materials, keep the bones and clips. (`mesh`/`weights`/`clusters` above are
+    // still solved; the rig validation they carry is cheap next to the export.)
+    let skin_on = animation.is_none_or(|a| a.skin);
+    let (meshes_ref, skins_ref, materials_ref): (
+        &[build::Mesh],
+        &[build::Skin],
+        &[build::Material],
+    ) = if skin_on {
+        (&meshes, &skins, &fbx_materials)
+    } else {
+        (&[], &[], &[])
+    };
     let scene = build::Scene {
-        meshes: &meshes,
+        meshes: meshes_ref,
         bones: &bones,
-        skins: &skins,
-        materials: &fbx_materials,
+        skins: skins_ref,
+        materials: materials_ref,
         clips: &clips,
         // 30fps. Nothing here is animated, but the field is not optional and a
         // wrong frame rate would misread any clip added later.
@@ -2579,6 +2964,8 @@ mod tests {
                 clip: "Chest_Open",
                 mirror: false,
                 arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
             }),
         )
         .expect("exports");
@@ -2620,6 +3007,90 @@ mod tests {
         assert!(out.channels.iter().all(|c| joint_nodes.contains(&c.node)));
     }
 
+    /// "Without Skin" exports the skeleton + animation and no character mesh.
+    #[test]
+    fn without_skin_export_drops_the_mesh_but_keeps_bones_and_clip() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let bytes = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: false,
+            }),
+        )
+        .expect("exports");
+        let back = m2m_io::glb::read(&bytes).expect("reads back");
+        assert!(back.primitives.is_empty(), "no mesh primitive without skin");
+        assert!(back.skins.is_empty(), "no skin without a mesh");
+        assert_eq!(back.clips.len(), 1, "the animation is still there");
+        // One node per bone, and no extra mesh node.
+        assert_eq!(back.nodes.len(), skeleton.bones.len());
+    }
+
+    /// Trim exports only the chosen fraction of the clip, rebased to start at 0.
+    #[test]
+    fn trim_export_shortens_the_clip_to_the_range() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let full = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
+            }),
+        )
+        .expect("exports");
+        let full_dur = m2m_io::glb::read(&full).expect("reads").clips[0].duration;
+
+        let trimmed = super::export_glb(
+            &model("models/model-human.glb"),
+            &skeleton,
+            2.0,
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+                options: super::ClipOptions {
+                    trim_start: 0.25,
+                    trim_end: 0.75,
+                    fps: 0,
+                    keyframe_reduction: 0.0,
+                },
+                skin: true,
+            }),
+        )
+        .expect("exports");
+        let out = &m2m_io::glb::read(&trimmed).expect("reads").clips[0];
+        assert!(
+            (out.duration - full_dur * 0.5).abs() < 1e-2,
+            "trimmed {} vs half of {}",
+            out.duration,
+            full_dur
+        );
+        // Rebased: the earliest key is at t=0.
+        let first = out
+            .channels
+            .iter()
+            .flat_map(|c| c.times.first().copied())
+            .fold(f32::MAX, f32::min);
+        assert!(
+            first.abs() < 1e-4,
+            "clip should start at 0, starts at {first}"
+        );
+    }
+
     /// The retargeted animation keeps the skeleton together — it does not fling
     /// bones across the scene.
     ///
@@ -2643,6 +3114,8 @@ mod tests {
                 clip: "Chest_Open",
                 mirror: false,
                 arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
             }),
         )
         .expect("exports");
@@ -2721,6 +3194,8 @@ mod tests {
                 clip: "Chest_Open",
                 mirror: false,
                 arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
             }),
         )
         .expect("exports");
@@ -2801,6 +3276,8 @@ mod tests {
                 clip: "Moonwalk",
                 mirror: false,
                 arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
             }),
         )
         .expect_err("refused");
@@ -2903,6 +3380,8 @@ mod tests {
                 clip: "Chest_Open",
                 mirror: false,
                 arm_space: 50.0,
+                options: super::ClipOptions::full(),
+                skin: true,
             }),
         )
         .expect("exports");

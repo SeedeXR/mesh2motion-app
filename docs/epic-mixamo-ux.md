@@ -64,9 +64,17 @@ From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 
 From mixamo-export-modal-options.png. A modal on Export:
 
-- [ ] 3a. Format (glb / fbx), Skin (with / without), Frames per Second, Keyframe Reduction (none/…).
-- [ ] 3b. Wire options into the export command (skin toggle, fps, keyframe reduction).
-- [ ] 3c. Verify compiled build + tests; commit.
+- [x] 3a. Native `<dialog>` "Download Settings" modal: Format (glb/fbx), Skin (with/without),
+      Frames per Second (24/30/60), Keyframe Reduction (none/low/high). Opened by a "Download…"
+      button; shows the Trim range (from Animate) it will export.
+- [x] 3b. Wired into export: a shared `finish_clip` pass (trim→resample fps→reduce) shapes the
+      retargeted clip for BOTH glb and fbx; skin toggle makes `rigged_document` mesh-optional
+      (glb) and drops meshes/skins in the fbx Scene → skeleton+animation only. Trim honoured
+      from the Animate [trimStart,trimEnd]. Threaded via ClipOptions on the Animation struct +
+      new export_model args (skin/fps/keyframe_reduction/trim_start/trim_end) + IPC.
+      Reducer is error-bounded (keeps playback within tolerance — no motion degradation).
+      Unit-tested: finish_clip (trim/resample/reduce), without-skin, trim end-to-end.
+- [ ] 3c. Verify compiled build (Download modal) + tests; commit.
 
 ---
 

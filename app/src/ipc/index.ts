@@ -92,6 +92,11 @@ export async function devAnimateArmSpace(): Promise<string | null> {
   return await invoke<string | null>('dev_animate_arm_space')
 }
 
+/** Dev/screenshot: open the Export Download modal (value 'with'/'without'/''), or null. */
+export async function devAutoexport(): Promise<string | null> {
+  return await invoke<string | null>('dev_autoexport')
+}
+
 /** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
 export async function devAnimateMirror(): Promise<boolean> {
   return await invoke<boolean>('dev_animate_mirror')
@@ -300,6 +305,17 @@ export async function bindWeights(
  * Resolves to the saved file's name, or `null` when the user cancels. The
  * weights are recomputed on the Rust side rather than sent back and forth.
  */
+/** Export-time options from the Download modal. `trimStart`/`trimEnd` are
+ *  fractions (0–1) of the clip; `fps` of 0 keeps the original keys; `keyframe`
+ *  is the reduction tolerance (0 = keep every key). */
+export interface ExportOptions {
+  readonly skin: boolean
+  readonly fps: number
+  readonly keyframe: number
+  readonly trimStart: number
+  readonly trimEnd: number
+}
+
 export async function exportModel(
   path: string,
   skeleton: FittedSkeleton,
@@ -308,7 +324,8 @@ export async function exportModel(
   template: string,
   clip: string | null,
   mirror = false,
-  armSpace = 50
+  armSpace = 50,
+  options: ExportOptions = { skin: true, fps: 0, keyframe: 0, trimStart: 0, trimEnd: 1 }
 ): Promise<string | null> {
   return await invoke<string | null>('export_model', {
     path,
@@ -318,7 +335,12 @@ export async function exportModel(
     template,
     clip,
     mirror,
-    armSpace
+    armSpace,
+    skin: options.skin,
+    fps: options.fps,
+    keyframeReduction: options.keyframe,
+    trimStart: options.trimStart,
+    trimEnd: options.trimEnd
   })
 }
 
