@@ -153,6 +153,11 @@ let fps: 24 | 30 = 30
 let clipDuration = 0
 /** Playback speed (Mixamo's "Overdrive"): 0–100, 50 = 1× (so 0–2× of real time). */
 let overdrive = 50
+/** Trim: the fraction of the clip to keep, [start, end] in 0–1. Playback loops
+ *  within it and the export is trimmed to it. Kept as fractions so it survives
+ *  clip and fps changes. */
+let trimStart = 0
+let trimEnd = 1
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
 /** The Animate step's 3-way view over the playing clip. Mesh by default, like
@@ -626,6 +631,20 @@ function renderTransport(): string {
       <label for="overdrive">Overdrive</label>
       <input id="overdrive" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
       <span id="overdrive-val" class="tp-val">${(overdrive / 50).toFixed(2)}×</span>
+    </div>
+    <div class="tp-slider">
+      <label>Trim</label>
+      <div class="trim-range">
+        <input id="trim-start" type="range" min="0" max="100" step="1" value="${Math.round(
+          trimStart * 100
+        )}" aria-label="Trim start"/>
+        <input id="trim-end" type="range" min="0" max="100" step="1" value="${Math.round(
+          trimEnd * 100
+        )}" aria-label="Trim end"/>
+      </div>
+      <span id="trim-val" class="tp-val">${Math.round(trimStart * 100)}–${Math.round(
+        trimEnd * 100
+      )}%</span>
     </div>`
 }
 
@@ -693,6 +712,16 @@ function startPlayhead(): void {
   const tick = (): void => {
     const frames = totalFrames(clipDuration, fps)
     const frame = Math.min(frameOfTime(ensureViewport().playbackTime(), fps), frames)
+    // Keep playback inside the trim range, in whichever direction it runs.
+    const startF = Math.round(trimStart * frames)
+    const endF = Math.round(trimEnd * frames)
+    if (endF > startF && !paused) {
+      if (direction >= 0 && (frame >= endF || frame < startF)) {
+        ensureViewport().seek(timeOfFrame(startF, fps))
+      } else if (direction < 0 && (frame <= startF || frame > endF)) {
+        ensureViewport().seek(timeOfFrame(endF, fps))
+      }
+    }
     const slider = document.querySelector<HTMLInputElement>('#timeline')
     if (slider !== null && document.activeElement !== slider) slider.value = String(frame)
     const label = document.querySelector<HTMLSpanElement>('#frame')
@@ -1184,6 +1213,30 @@ function render(): void {
     ensureViewport().setPlaybackRate(playbackRate())
     const val = document.querySelector<HTMLElement>('#overdrive-val')
     if (val !== null) val.textContent = `${(overdrive / 50).toFixed(2)}×`
+  })
+  const showTrim = (): void => {
+    const val = document.querySelector<HTMLElement>('#trim-val')
+    if (val !== null) {
+      val.textContent = `${Math.round(trimStart * 100)}–${Math.round(trimEnd * 100)}%`
+    }
+  }
+  app.querySelector<HTMLInputElement>('#trim-start')?.addEventListener('input', (event) => {
+    const input = event.target as HTMLInputElement
+    trimStart = Number(input.value) / 100
+    if (trimStart > trimEnd) {
+      trimStart = trimEnd
+      input.value = String(Math.round(trimStart * 100))
+    }
+    showTrim()
+  })
+  app.querySelector<HTMLInputElement>('#trim-end')?.addEventListener('input', (event) => {
+    const input = event.target as HTMLInputElement
+    trimEnd = Number(input.value) / 100
+    if (trimEnd < trimStart) {
+      trimEnd = trimStart
+      input.value = String(Math.round(trimEnd * 100))
+    }
+    showTrim()
   })
   // Live-filter the clip list as the query changes, without a re-render (which
   // would drop focus). A full re-render re-applies the same filter from clipQuery.
