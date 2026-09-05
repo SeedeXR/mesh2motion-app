@@ -71,6 +71,11 @@ export async function devAutomarkSolve(): Promise<boolean> {
   return await invoke<boolean>('dev_automark_solve')
 }
 
+/** Dev/screenshot harness: hover the model so the precision-preview loupe shows. */
+export async function devAutomarkHover(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark_hover')
+}
+
 /** Dev/testing harness: a template to open in an empty marker step for hand
  *  placement + capture, or null. */
 export async function devAutomarkCapture(): Promise<string | null> {

@@ -33,6 +33,7 @@ import {
   devAutopaint,
   devAutomark,
   devAutomarkSolve,
+  devAutomarkHover,
   devAutomarkCapture,
   onRigProgress,
   forwardConsoleToTerminal,
@@ -1269,6 +1270,20 @@ async function maybeAutoload(): Promise<void> {
     activeSlot = null
     render()
     drawMarkers()
+    // Optionally hover the model so the precision-preview loupe shows, for a
+    // screenshot. A real OS hover can't be delivered into a WKWebView, so drive
+    // it with a synthetic pointer-move at the model's chest.
+    if (await devAutomarkHover().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      canvas.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height * 0.42,
+          bubbles: true
+        })
+      )
+    }
     // Optionally run the solve too, so the fitted skeleton can be screenshotted.
     if (await devAutomarkSolve().catch(() => false)) await runMarkerFit()
     return

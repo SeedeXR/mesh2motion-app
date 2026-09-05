@@ -133,6 +133,15 @@ fn dev_automark_solve() -> bool {
     std::env::var("M2M_AUTOMARK_SOLVE").is_ok()
 }
 
+/// Dev/screenshot harness: when `M2M_AUTOMARK_HOVER` is set, the marker harness
+/// dispatches a synthetic pointer-move over the model so the precision-preview
+/// loupe can be screenshotted (WKWebView drops synthetic OS mouse events, so a
+/// real hover can't be driven from outside).
+#[tauri::command]
+fn dev_automark_hover() -> bool {
+    std::env::var("M2M_AUTOMARK_HOVER").is_ok()
+}
+
 /// Dev/testing harness: `M2M_AUTOMARK_CAPTURE=<template>` opens that template's
 /// marker step with NO markers placed and reveals a "Save markers" button, so a
 /// person can place them by hand and their positions can be captured as a test
@@ -548,6 +557,7 @@ pub fn run() {
             dev_autopaint,
             dev_automark,
             dev_automark_solve,
+            dev_automark_hover,
             dev_automark_capture,
             log_line,
             import_model,

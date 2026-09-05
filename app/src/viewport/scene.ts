@@ -68,6 +68,15 @@ import {
 
 const FOV_DEGREES = 45
 
+// The marker-placement "precision preview": a magnified inset (Mixamo's loupe)
+// pinned to the viewport's top-left, showing a close-up of the joint under the
+// pointer so a marker can be dropped exactly. Fixed pixel size — this flow is a
+// desktop interaction. ponytail: make it responsive if it ever ships on small
+// screens.
+const LOUPE_SIZE = 180
+const LOUPE_MARGIN = 12
+const LOUPE_ZOOM = 9
+
 /**
  * Rewrites OrbitControls' button map on each pointer-down to mimic Blender.
  *
@@ -288,6 +297,15 @@ export function createViewport(): Viewport {
   scene.background = new Color(0x14161a)
 
   const camera = new PerspectiveCamera(FOV_DEGREES, 1, 0.01, 100)
+  // The precision-preview loupe renders the scene a second time, from the same
+  // angle but pulled in toward the marked joint, into a square inset.
+  const loupeCamera = new PerspectiveCamera(FOV_DEGREES, 1, 0.01, 100)
+  let loupeActive = false
+  let loupeShown = false
+  const loupeTarget = new Vector3()
+  const loupeDir = new Vector3()
+  const loupeSize = new Vector2()
+  let loupeEl: HTMLDivElement | null = null
   const controls = new OrbitControls(camera, renderer.domElement)
   // Damping gives the gentle glide a trackpad flick expects (the standing loop
   // draws every frame anyway, so its follow-up frames cost nothing). Zooming to
@@ -421,6 +439,7 @@ export function createViewport(): Viewport {
     controls.update()
     grid.update(camera)
     renderer.render(scene, camera)
+    if (loupeActive && loupeShown) renderLoupe()
     renders++
   })
 
@@ -935,6 +954,56 @@ export function createViewport(): Viewport {
     return hit === undefined ? null : ((hit.object.userData['slot'] as string | undefined) ?? null)
   }
 
+  /** Ensures the loupe's border/crosshair overlay exists and is attached to the
+   *  canvas's current parent — `render()` rebuilds that container each frame, so
+   *  the div must be re-parented, not just created once. */
+  function ensureLoupeEl(): void {
+    const parent = renderer.domElement.parentElement
+    if (parent === null) return
+    if (loupeEl === null) {
+      loupeEl = document.createElement('div')
+      loupeEl.className = 'marker-loupe'
+      loupeEl.hidden = true
+    }
+    if (loupeEl.parentElement !== parent) parent.appendChild(loupeEl)
+  }
+
+  /** Points the loupe at a surface point (or hides it when off the mesh). */
+  function setLoupeTarget(point: [number, number, number] | null): void {
+    if (!loupeActive) return
+    if (point === null) {
+      loupeShown = false
+    } else {
+      loupeTarget.set(point[0], point[1], point[2])
+      loupeShown = true
+    }
+    if (loupeEl !== null) loupeEl.hidden = !loupeShown
+  }
+
+  /** Renders the magnified close-up into the top-left inset (scissored so it
+   *  overwrites just that corner of the frame the main pass already drew). */
+  function renderLoupe(): void {
+    const size = renderer.getSize(loupeSize)
+    // Top-left corner: the top-right already holds the persistent viewport-nav
+    // toolbar. (WebGL's viewport origin is bottom-left, so "top" is size.y - …)
+    const x = LOUPE_MARGIN
+    const y = size.y - LOUPE_SIZE - LOUPE_MARGIN
+    loupeDir.copy(camera.position).sub(loupeTarget)
+    const dist = loupeDir.length() || 1
+    loupeCamera.position
+      .copy(loupeTarget)
+      .addScaledVector(loupeDir.multiplyScalar(1 / dist), dist / LOUPE_ZOOM)
+    loupeCamera.up.copy(camera.up)
+    loupeCamera.lookAt(loupeTarget)
+    loupeCamera.updateProjectionMatrix()
+    renderer.setScissorTest(true)
+    renderer.setScissor(x, y, LOUPE_SIZE, LOUPE_SIZE)
+    renderer.setViewport(x, y, LOUPE_SIZE, LOUPE_SIZE)
+    renderer.render(scene, loupeCamera)
+    renderer.setScissorTest(false)
+    renderer.setViewport(0, 0, size.x, size.y)
+  }
+
   function onMarkerPointerDown(event: PointerEvent): void {
     if (markerHandlers === null || event.button !== 0) return
     // Grab an existing marker to move it; otherwise drop the active one.
@@ -952,13 +1021,19 @@ export function createViewport(): Viewport {
 
   function onMarkerPointerMove(event: PointerEvent): void {
     if (markerHandlers === null) return
+    const point = markerSurfacePoint(event)
+    setLoupeTarget(point)
     if (draggingMarker !== null) {
-      const point = markerSurfacePoint(event)
       if (point !== null) markerHandlers.onMove(draggingMarker, point)
       return
     }
     // A grab cursor over a marker, so it reads as draggable.
     renderer.domElement.style.cursor = markerUnderPointer(event) !== null ? 'grab' : ''
+  }
+
+  /** Hide the loupe when the pointer leaves the model area entirely. */
+  function onMarkerPointerLeave(): void {
+    setLoupeTarget(null)
   }
 
   function onMarkerPointerUp(): void {
@@ -1160,11 +1235,15 @@ export function createViewport(): Viewport {
       // Idempotent: the app re-arms on every render, so drop any prior listeners.
       dom.removeEventListener('pointerdown', onMarkerPointerDown)
       dom.removeEventListener('pointermove', onMarkerPointerMove)
+      dom.removeEventListener('pointerleave', onMarkerPointerLeave)
       window.removeEventListener('pointerup', onMarkerPointerUp)
       dom.addEventListener('pointerdown', onMarkerPointerDown)
       dom.addEventListener('pointermove', onMarkerPointerMove)
+      dom.addEventListener('pointerleave', onMarkerPointerLeave)
       // On window, so releasing off the canvas still ends a drag.
       window.addEventListener('pointerup', onMarkerPointerUp)
+      loupeActive = true
+      ensureLoupeEl()
     },
 
     setMarkers(markers: readonly { id: string; position: readonly [number, number, number]; color: number }[]): void {
@@ -1197,9 +1276,13 @@ export function createViewport(): Viewport {
       const dom = renderer.domElement
       dom.removeEventListener('pointerdown', onMarkerPointerDown)
       dom.removeEventListener('pointermove', onMarkerPointerMove)
+      dom.removeEventListener('pointerleave', onMarkerPointerLeave)
       window.removeEventListener('pointerup', onMarkerPointerUp)
       dom.style.cursor = ''
       controls.enabled = true
+      loupeActive = false
+      loupeShown = false
+      if (loupeEl !== null) loupeEl.hidden = true
       for (const sprite of markerSprites) {
         scene.remove(sprite)
         sprite.material.dispose()
