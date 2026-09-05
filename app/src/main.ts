@@ -616,6 +616,8 @@ function renderAnimateStep(): string {
  *  a scrubbable frame timeline. */
 function renderTransport(): string {
   const frames = totalFrames(clipDuration, fps)
+  const startF = Math.round(trimStart * frames)
+  const endF = Math.round(trimEnd * frames)
   const dirOn = (d: 1 | -1): string => (!paused && direction === d ? 'on' : '')
   return `
     <div class="transport" role="group" aria-label="Playback">
@@ -630,24 +632,17 @@ function renderTransport(): string {
     </div>
     <input id="timeline" class="timeline" type="range" min="0" max="${frames}" step="1" value="0" aria-label="Timeline (frame)"/>
     <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>
-    <div class="tp-slider">
-      <label for="overdrive">Overdrive</label>
-      <input id="overdrive" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
-      <span id="overdrive-val" class="tp-val">${(overdrive / 50).toFixed(2)}×</span>
+    <div class="anim-ctl">
+      <div class="anim-head"><span>Overdrive</span><span id="overdrive-val" class="anim-val">${overdrive}</span></div>
+      <input id="overdrive" class="anim-slider" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
     </div>
-    <div class="tp-slider">
-      <label>Trim</label>
+    <div class="anim-ctl">
+      <div class="anim-head"><span>Trim</span><span class="anim-sub">${frames} total frames</span></div>
       <div class="trim-range">
-        <input id="trim-start" type="range" min="0" max="100" step="1" value="${Math.round(
-          trimStart * 100
-        )}" aria-label="Trim start"/>
-        <input id="trim-end" type="range" min="0" max="100" step="1" value="${Math.round(
-          trimEnd * 100
-        )}" aria-label="Trim end"/>
+        <input id="trim-start" type="range" min="0" max="${frames}" step="1" value="${startF}" aria-label="Trim start (frame)"/>
+        <input id="trim-end" type="range" min="0" max="${frames}" step="1" value="${endF}" aria-label="Trim end (frame)"/>
       </div>
-      <span id="trim-val" class="tp-val">${Math.round(trimStart * 100)}–${Math.round(
-        trimEnd * 100
-      )}%</span>
+      <div class="anim-ends"><span id="trim-start-val">${startF}</span><span id="trim-end-val">${endF}</span></div>
     </div>
     <label class="toggle"><input type="checkbox" id="mirror" ${
       mirrored ? 'checked' : ''
@@ -1218,29 +1213,34 @@ function render(): void {
     overdrive = Number((event.target as HTMLInputElement).value)
     ensureViewport().setPlaybackRate(playbackRate())
     const val = document.querySelector<HTMLElement>('#overdrive-val')
-    if (val !== null) val.textContent = `${(overdrive / 50).toFixed(2)}×`
+    if (val !== null) val.textContent = String(overdrive)
   })
+  // Trim works in frames (like Mixamo's "N total frames"), stored as fractions.
+  const trimFrames = (): number => Math.max(1, totalFrames(clipDuration, fps))
   const showTrim = (): void => {
-    const val = document.querySelector<HTMLElement>('#trim-val')
-    if (val !== null) {
-      val.textContent = `${Math.round(trimStart * 100)}–${Math.round(trimEnd * 100)}%`
-    }
+    const f = trimFrames()
+    const s = document.querySelector<HTMLElement>('#trim-start-val')
+    const e = document.querySelector<HTMLElement>('#trim-end-val')
+    if (s !== null) s.textContent = String(Math.round(trimStart * f))
+    if (e !== null) e.textContent = String(Math.round(trimEnd * f))
   }
   app.querySelector<HTMLInputElement>('#trim-start')?.addEventListener('input', (event) => {
     const input = event.target as HTMLInputElement
-    trimStart = Number(input.value) / 100
+    const f = trimFrames()
+    trimStart = Number(input.value) / f
     if (trimStart > trimEnd) {
       trimStart = trimEnd
-      input.value = String(Math.round(trimStart * 100))
+      input.value = String(Math.round(trimStart * f))
     }
     showTrim()
   })
   app.querySelector<HTMLInputElement>('#trim-end')?.addEventListener('input', (event) => {
     const input = event.target as HTMLInputElement
-    trimEnd = Number(input.value) / 100
+    const f = trimFrames()
+    trimEnd = Number(input.value) / f
     if (trimEnd < trimStart) {
       trimEnd = trimStart
-      input.value = String(Math.round(trimEnd * 100))
+      input.value = String(Math.round(trimEnd * f))
     }
     showTrim()
   })

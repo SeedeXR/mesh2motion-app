@@ -35,8 +35,11 @@ Learn from the legacy `SkeletonHelper` lines (thin) — go beyond them.
       a description + category tags from each clip name (human + animal), a search
       box live-filters the list, and each clip shows its description. Verify.
 - [x] 2d Trim (dual-thumb range, playback loops within it; export honoring wired for item 3).
-- [ ] 2e Mirror (retarget L/R mirror — Rust retarget flag + frontend checkbox + IPC). Simpler than 2c; do first.
-- [ ] 2c Character Arm-Space (retarget arm spacing — Rust, a slider). More involved.
+- [x] 2e Mirror (mirror_clip in rig swaps L/R + reflects; threaded via new Animation struct through pipeline/Tauri/IPC; frontend checkbox re-retargets). Unit-tested. Committed ed5d527.
+- [ ] 2c Character Arm-Space (retarget arm spacing — Rust). TRICKY: the spread axis is
+      bone-frame dependent; plan to add arm_space to the Animation struct and apply a
+      spread rotation to upperarm_l/_r tracks in retarget_clip, then verify visually and
+      adjust the axis/sign. May need 1-2 compile-verify iterations.
 
 From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 

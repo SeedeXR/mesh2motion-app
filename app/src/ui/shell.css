@@ -293,23 +293,34 @@ body {
 .transport .tp-sp { flex: 1; }
 .transport .tp-fps { color: var(--fg-2); font-size: var(--fs-xs); margin-right: var(--s-1); }
 
-/* A labelled slider row in the transport (Overdrive, Trim). */
-.tp-slider {
+/* Mixamo-style stacked control: a header (label left, value right) over a
+   full-width slider. Shared by Overdrive, Character Arm-Space and Trim so they
+   line up consistently. */
+.anim-ctl { margin-top: var(--s-3); }
+.anim-head {
   display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-top: var(--s-2);
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--s-1);
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+}
+.anim-head .anim-sub { color: var(--fg-2); }
+.anim-val { color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.anim-slider { width: 100%; margin: 0; display: block; }
+.anim-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
   font-size: var(--fs-xs);
   color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
 }
-.tp-slider label { flex: 0 0 auto; }
-.tp-slider input[type='range'] { flex: 1; }
-.tp-slider .tp-val { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-1); }
 
 /* Trim: two range thumbs overlaid on one track (a dual-handle range). Both are
    full-width and transparent-tracked; only the thumbs take pointer events, so
    each handle drags independently over the whole track. */
-.trim-range { position: relative; flex: 1; height: var(--s-6); }
+.trim-range { position: relative; width: 100%; height: var(--s-5); }
 .trim-range::before {
   content: '';
   position: absolute;
