@@ -8,9 +8,10 @@ use glam::{Mat4, Quat, Vec3};
 use m2m_core::mesh::Mesh;
 use m2m_core::voxel::{VoxelGrid, VoxelState};
 use m2m_rig::fit::{
-    ankle_height, body_axis, fit_uniform, ground_bone, refine_spine, BodyAxis, Landmarks, RestPose,
+    ankle_height, body_axis, fit_from_markers, fit_uniform, ground_bone, refine_spine, BodyAxis,
+    Landmarks, Marker, RestPose,
 };
-use m2m_rig::template::{ChainKind, LimbRole, Posture, Template};
+use m2m_rig::template::{Chain, ChainKind, LimbRole, Posture, Template};
 
 fn asset(relative: &str) -> Vec<u8> {
     // Rig `.glb` files moved to `assets/rigs/` (P3-3d); other fixtures stay in legacy.
@@ -1106,4 +1107,151 @@ fn the_spine_snap_pulls_joints_in_without_moving_them_along_the_body() {
         }
         assert!(moved > 0, "{creature}: the snap moved nothing");
     }
+}
+
+// --- Marker-placement fitting (fit_from_markers) ---------------------------
+
+/// Each bone's parent as an index into the skin's joint list, the way the
+/// pipeline builds it — the space `fit_from_markers` expects `parents` in.
+fn parents_of(relative: &str) -> Vec<Option<usize>> {
+    let bytes = asset(relative);
+    let document = m2m_io::glb::read(&bytes).expect("reads");
+    let skin = document.skins.first().expect("the template has a skin");
+    let mut joint_of = vec![None; document.nodes.len()];
+    for (slot, &node) in skin.joints.iter().enumerate() {
+        joint_of[node] = Some(slot);
+    }
+    skin.joints
+        .iter()
+        .map(|&node| document.nodes[node].parent.and_then(|p| joint_of[p]))
+        .collect()
+}
+
+/// A one-chain template of the given bones, so a synthetic solve has something
+/// to walk. The kind does not matter to the marker solver — it reads `chains`
+/// only to group bones — so `Spine` stands in.
+fn chain_template(bones: &[&str]) -> Template {
+    Template {
+        name: "synthetic".into(),
+        skeleton: "none.glb".into(),
+        guidance: String::new(),
+        chains: vec![Chain {
+            name: "chain".into(),
+            kind: ChainKind::Spine,
+            bones: bones.iter().map(|b| (*b).to_owned()).collect(),
+            side: None,
+            role: None,
+            posture: None,
+        }],
+    }
+}
+
+#[test]
+fn markers_need_at_least_two_bones_to_fix_a_scale() {
+    let rest = RestPose {
+        bones: vec!["a".into(), "b".into()],
+        positions: vec![Vec3::ZERO, Vec3::Y],
+    };
+    let template = chain_template(&["a", "b"]);
+    let parents = vec![None, Some(0)];
+    let one = [Marker {
+        bone: "a".into(),
+        position: [0.0, 0.0, 0.0],
+    }];
+    assert!(fit_from_markers(&template, &rest, &parents, &one, None).is_none());
+}
+
+#[test]
+fn a_marked_bone_lands_exactly_on_its_marker() {
+    // The one guarantee the whole flow rests on: a joint a person placed is
+    // where the rig puts it. Arbitrary targets, so nothing but the exact-snap
+    // could pass.
+    let rest = rest_pose_of("rigs/rig-human.glb");
+    let parents = parents_of("rigs/rig-human.glb");
+    let template = template("human.json");
+
+    let targets = [
+        ("pelvis", Vec3::new(0.1, 0.9, 0.0)),
+        ("head", Vec3::new(0.0, 1.7, 0.05)),
+        ("hand_l", Vec3::new(0.8, 1.4, 0.0)),
+        ("hand_r", Vec3::new(-0.8, 1.4, 0.0)),
+        ("calf_l", Vec3::new(0.15, 0.45, 0.02)),
+        ("calf_r", Vec3::new(-0.15, 0.45, 0.02)),
+    ];
+    let markers: Vec<Marker> = targets
+        .iter()
+        .map(|(bone, position)| Marker {
+            bone: (*bone).to_owned(),
+            position: position.to_array(),
+        })
+        .collect();
+
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
+    for (bone, target) in targets {
+        let at = fitted.position_of(bone).expect("bone is placed");
+        assert!(
+            at.distance(target) < 1e-4,
+            "{bone} landed at {at:?}, not on its marker {target:?}",
+        );
+    }
+}
+
+#[test]
+fn an_unmarked_tip_rigid_follows_its_nearest_marker() {
+    // A finger is not marked; it must travel with the hand that carries it, not
+    // stay at the bare uniform placement. Measured as: the finger's correction
+    // off the pure scale+translation equals the hand's.
+    let rest = rest_pose_of("rigs/rig-human.glb");
+    let parents = parents_of("rigs/rig-human.glb");
+    let template = template("human.json");
+
+    let hand_target = Vec3::new(0.8, 1.4, 0.0);
+    let markers = vec![
+        Marker {
+            bone: "pelvis".into(),
+            position: [0.0, 0.9, 0.0],
+        },
+        Marker {
+            bone: "hand_l".into(),
+            position: hand_target.to_array(),
+        },
+    ];
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
+
+    let transformed = |bone: &str| rest.position_of(bone).unwrap() * fitted.scale + fitted.offset;
+    let hand_delta = fitted.position_of("hand_l").unwrap() - transformed("hand_l");
+    let finger_delta = fitted.position_of("index_03_l").unwrap() - transformed("index_03_l");
+    assert!(
+        hand_delta.distance(finger_delta) < 1e-4,
+        "finger correction {finger_delta:?} does not follow the hand's {hand_delta:?}",
+    );
+}
+
+#[test]
+fn an_intermediate_joint_interpolates_between_two_markers() {
+    // Equally spaced bones, ends marked off the pure similarity: the middle must
+    // sit on the line between the two markers, not jump to either.
+    let rest = RestPose {
+        bones: vec!["root".into(), "mid".into(), "tip".into()],
+        positions: vec![Vec3::ZERO, Vec3::Y, Vec3::new(0.0, 2.0, 0.0)],
+    };
+    let parents = vec![None, Some(0), Some(1)];
+    let template = chain_template(&["root", "mid", "tip"]);
+    let markers = vec![
+        Marker {
+            bone: "root".into(),
+            position: [0.0, 0.0, 0.0],
+        },
+        Marker {
+            bone: "tip".into(),
+            position: [1.0, 4.0, 0.0],
+        },
+    ];
+    let fitted = fit_from_markers(&template, &rest, &parents, &markers, None).expect("fits");
+    let mid = fitted.position_of("mid").unwrap();
+    // Midpoint of the two markers, since the rest spacing is uniform.
+    assert!(
+        mid.distance(Vec3::new(0.5, 2.0, 0.0)) < 1e-5,
+        "mid landed at {mid:?}, not between the markers",
+    );
 }

@@ -186,32 +186,134 @@ export function presetCameraPosition(
 }
 
 /**
- * Line-segment endpoints for a fitted skeleton, two points per bone-to-parent
- * link.
+ * Blender-style octahedral "bone" geometry for a fitted skeleton — one
+ * octahedron per bone-to-parent link, merged into a single indexed mesh.
  *
  * A template skeleton is not a glTF skeleton: it arrives as bone positions and
  * parent indices, with no scene graph and no `Bone` objects, so three's
- * `SkeletonHelper` has nothing to attach to. This builds the same picture from
- * the plain data.
+ * `SkeletonHelper` has nothing to attach to. This builds the picture from the
+ * plain data — but as solid octahedra, not lines, so the eye reads each bone's
+ * direction and length (which a line throws away) the way Blender's default
+ * armature display does.
  *
- * Root bones contribute no segment — a bone with no parent has nothing to draw
- * a line to. A parent index outside the list is skipped rather than read: it
- * would otherwise put `undefined` into a `Float32Array` as `NaN` and take the
- * whole overlay off screen.
+ * Each bone runs from its PARENT joint — the head, where the octahedron is
+ * widest — to the joint itself — the tail, the far tip — so the taper points
+ * down the chain. The ring sits at 10% of the bone length from the head with a
+ * radius of `max(10% of length, minWidth)`, matching Blender while `minWidth`
+ * keeps short bones from collapsing to a sliver.
+ *
+ * Root bones (no parent) contribute nothing — a bone with no parent has no head
+ * to draw from — and a parent index outside the list, or a zero-length bone, is
+ * skipped rather than read, so no `NaN` reaches the buffer and takes the overlay
+ * off screen. The caller builds a `BufferGeometry` from `positions` + `indices`
+ * and computes normals for the shading.
  */
-export function skeletonSegments(
+export function skeletonOctahedra(
   positions: readonly (readonly [number, number, number])[],
-  parents: readonly (number | null)[]
-): Float32Array {
-  const points: number[] = []
+  parents: readonly (number | null)[],
+  minWidth: number
+): { positions: Float32Array; indices: Uint32Array; colors: Float32Array } {
+  // Mixamo colours its skeleton with a hierarchy-depth gradient — deep violet at
+  // the root, running to sky blue at the extremities. Depth is each bone's steps
+  // from its root; a colour is lerped by depth/maxDepth so the same gradient
+  // reads on a human, a fox or a bird without any per-template knowledge.
+  const depth = boneDepths(parents)
+  const maxDepth = Math.max(1, ...depth)
+  // A reference/motion root sits at the floor (our human rig's `root` at y≈0,
+  // below the hips). The connector from it runs up the centre of the legs — a
+  // long bone Mixamo never draws. Skip a parentless root's connector only when
+  // that root is in the bottom of the skeleton, so an imported rig whose root is
+  // a real mid-body joint (Hips) keeps all its bones.
+  const ys = positions.map((p) => p[1])
+  const minY = ys.length > 0 ? Math.min(...ys) : 0
+  const rootFloor = minY + 0.15 * ((ys.length > 0 ? Math.max(...ys) : 0) - minY)
+  // root violet (0x8b5cf6) -> tip sky (0x38bdf8), in linear-ish 0..1 rgb.
+  const root: readonly [number, number, number] = [0.545, 0.361, 0.965]
+  const tip: readonly [number, number, number] = [0.22, 0.741, 0.973]
+
+  const verts: number[] = []
+  const indices: number[] = []
+  const colors: number[] = []
   parents.forEach((parent, bone) => {
     if (parent === null) return
-    const from = positions[bone]
-    const to = positions[parent]
-    if (from === undefined || to === undefined) return
-    points.push(from[0], from[1], from[2], to[0], to[1], to[2])
+    // Skip a floor-reference root's connector (see rootFloor above): Mixamo
+    // shows no bone from the floor up to the hips.
+    const parentPos = positions[parent]
+    if (parents[parent] === null && parentPos !== undefined && parentPos[1] < rootFloor) return
+    const tail = positions[bone]
+    const head = positions[parent]
+    if (head === undefined || tail === undefined) return
+    const ax = tail[0] - head[0]
+    const ay = tail[1] - head[1]
+    const az = tail[2] - head[2]
+    const length = Math.hypot(ax, ay, az)
+    if (length < 1e-6) return
+    const dx = ax / length
+    const dy = ay / length
+    const dz = az / length
+    // A reference axis not parallel to the bone, so the cross product below is
+    // well-conditioned; swap to X only when the bone is almost vertical.
+    const [rx, ry] = Math.abs(dy) < 0.99 ? [0, 1] : [1, 0]
+    // u ⟂ bone (unit), v = bone × u (unit): the ring plane's two axes.
+    let ux = dy * 0 - dz * ry
+    let uy = dz * rx - dx * 0
+    let uz = dx * ry - dy * rx
+    const ul = Math.hypot(ux, uy, uz) || 1
+    ux /= ul
+    uy /= ul
+    uz /= ul
+    const vx = dy * uz - dz * uy
+    const vy = dz * ux - dx * uz
+    const vz = dx * uy - dy * ux
+
+    const radius = Math.max(length * 0.075, minWidth)
+    const cx = head[0] + dx * length * 0.1
+    const cy = head[1] + dy * length * 0.1
+    const cz = head[2] + dz * length * 0.1
+    const base = verts.length / 3
+    verts.push(
+      head[0], head[1], head[2], // 0 head tip
+      tail[0], tail[1], tail[2], // 1 tail tip
+      cx + ux * radius, cy + uy * radius, cz + uz * radius, // 2 +u
+      cx + vx * radius, cy + vy * radius, cz + vz * radius, // 3 +v
+      cx - ux * radius, cy - uy * radius, cz - uz * radius, // 4 -u
+      cx - vx * radius, cy - vy * radius, cz - vz * radius // 5 -v
+    )
+    const [h, t, r0, r1, r2, r3] = [base, base + 1, base + 2, base + 3, base + 4, base + 5]
+    indices.push(
+      h, r0, r1, h, r1, r2, h, r2, r3, h, r3, r0, // head fan
+      t, r1, r0, t, r2, r1, t, r3, r2, t, r0, r3 // tail fan
+    )
+    const f = (depth[bone] ?? 0) / maxDepth
+    for (let i = 0; i < 6; i++) {
+      colors.push(
+        root[0] + (tip[0] - root[0]) * f,
+        root[1] + (tip[1] - root[1]) * f,
+        root[2] + (tip[2] - root[2]) * f
+      )
+    }
   })
-  return new Float32Array(points)
+  return {
+    positions: new Float32Array(verts),
+    indices: new Uint32Array(indices),
+    colors: new Float32Array(colors)
+  }
+}
+
+/** Each bone's depth: its number of steps back to a root, following `parents`.
+ *  A parent cycle stops at the repeat rather than looping forever. */
+function boneDepths(parents: readonly (number | null)[]): number[] {
+  return parents.map((_, bone) => {
+    let depth = 0
+    let cursor = parents[bone]
+    const seen = new Set<number>([bone])
+    while (cursor !== null && cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      depth++
+      cursor = parents[cursor] ?? null
+    }
+    return depth
+  })
 }
 
 /**

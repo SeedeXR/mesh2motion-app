@@ -586,3 +586,22 @@ fn a_required_appearance_extension_loads_but_a_geometry_one_does_not() {
         "a required geometry extension the reader cannot read must still fail"
     );
 }
+
+/// Malformed shading a fuzzer found must not panic the reader.
+///
+/// Keeping shading for export made the reader touch two things it never read
+/// before, each with an unchecked panic in the `gltf` crate:
+/// - a malformed `TEXCOORD_0` accessor panicked its accessor iterator
+///   (`accessor/util.rs:371`) — fixed by validating the accessor's type/dims;
+/// - a malformed image (a `bufferView` with no `mimeType`) panicked its image
+///   API (`image.rs:128`) — fixed by reading materials from the raw JSON with
+///   bounds-checked access instead.
+///
+/// The reader's contract is that a malformed file returns an error, never a
+/// panic, so this reads each exact input and only requires that it not panic.
+#[test]
+fn malformed_shading_does_not_panic() {
+    // Ok or Err both satisfy the contract; a panic does not.
+    let _ = glb::read(include_bytes!("fixtures/glb-texcoord-accessor-panic.bin"));
+    let _ = glb::read(include_bytes!("fixtures/glb-image-source-panic.bin"));
+}

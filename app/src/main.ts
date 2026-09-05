@@ -29,11 +29,21 @@ import {
   buildInfo,
   devAutoload,
   devAutofit,
+  devAutoclip,
+  devAutopaint,
+  devAutomark,
+  devAutomarkSolve,
+  devAutomarkHover,
+  devAutomarkCapture,
+  devCaptureSelftest,
+  devSaveFixture,
+  devAnimateView,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
   fitSkeleton,
+  fitFromMarkers,
   previewAnimation,
   importModel,
   isDesktop,
@@ -44,12 +54,20 @@ import {
   type ClipSummary,
   type FittedSkeleton,
   type ImportedFile,
+  type Marker,
   type SkeletonTemplate
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
+import { markerSetFor, slotForClickedSide } from './state/markers'
+import { clipDescription, clipMatches } from './state/clip-index'
+import markerGuideHuman from './assets/marker-guide-human.png'
+
+/** A rendered guide image per template, showing where the markers go on a real
+ *  model — the reference's placement thumbnail. Only templates with one show it. */
+const MARKER_GUIDES: Readonly<Record<string, string>> = { human: markerGuideHuman }
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -100,6 +118,21 @@ let fitted: FittedSkeleton | null = null
 /** Set while a fit is running — voxelising takes a moment. */
 let fitting = false
 
+/** Marker-placement flow: on while a person is placing markers, before the
+ *  skeleton is solved. Off for the auto-fit flow and once solved. */
+let markerMode = false
+/** Placed marker positions, by slot id (see state/markers.ts). */
+const markerPositions = new Map<string, [number, number, number]>()
+/** The slot the next viewport click fills, or null. */
+let activeSlot: string | null = null
+/** Whether placing one side's marker mirrors it to the other. */
+let useSymmetry = true
+/** Dev/testing: reveal a "Save markers" button so a hand placement can be
+ *  captured as a fixture (set by the M2M_AUTOMARK_CAPTURE harness). */
+let markerCapture = false
+/** Confirmation shown under the "Save markers" button after a save. */
+let markerSaveStatus: string | null = null
+
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
 let binding = false
@@ -118,8 +151,15 @@ let paused = false
 let direction: 1 | -1 = 1
 let fps: 24 | 30 = 30
 let clipDuration = 0
+/** Playback speed (Mixamo's "Overdrive"): 0–100, 50 = 1× (so 0–2× of real time). */
+let overdrive = 50
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
+/** The Animate step's 3-way view over the playing clip. Mesh by default, like
+ *  Mixamo (its skull toggle switches to the skeleton). */
+let animateView: 'mesh' | 'skeleton' | 'both' = 'mesh'
+/** Current animation-search query (filters the clip list by name/description/tags). */
+let clipQuery = ''
 
 let viewport: Viewport | null = null
 
@@ -346,18 +386,97 @@ function poseRow(): string {
   return label === null ? '' : `<dt>Pose</dt><dd>${label}</dd>`
 }
 
-/** The Fit Skeleton step: reports the automatic fit and detected pose, and the
- * viewport lets the user drag joints to adjust it. */
+/** The Fit Skeleton step: marker placement (its default) or, once solved, the
+ * fit report with the viewport letting the user drag joints to adjust it. */
 function renderEditStep(): string {
+  if (markerMode) return renderMarkerPanel()
   if (fitted === null) {
     return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
   }
+  const refit = `<button id="refit" class="action" ${fitting ? 'disabled' : ''}>${
+    fitting ? 'Fitting\u2026' : 'Auto-fit again'
+  }</button>`
+  const replace =
+    chosen !== null && markerSetFor(chosen) !== null
+      ? '<button id="replace-markers" class="action">Re-place markers</button>'
+      : ''
   return `<dl class="facts">
       <dt>Bones</dt><dd>${fitted.bones.length}</dd>
       <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
       ${poseRow()}
     </dl>
-    <p style="color:var(--fg-2)">The skeleton is placed automatically. Drag a joint handle in the viewport to adjust any bone that sits outside the mesh, then bind.</p>`
+    ${refit}${replace}
+    <p style="color:var(--fg-2)">Drag a joint handle to nudge any bone that sits outside the mesh, then bind. Re-place markers to solve again from scratch, or auto-fit to let the mesh place it.</p>`
+}
+
+/** The marker-placement panel (the Mixamo Place-markers step): a guide diagram,
+ * a grouped set of ring markers, the symmetry toggle and the solve / auto-fit
+ * choice. Clicking a ring arms it for the next viewport click. */
+function renderMarkerPanel(): string {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (set === null) return ''
+
+  // Group the slots the way the reference does: single markers on their own row,
+  // left/right pairs on one row side by side.
+  const groups: { label: string; slots: typeof set }[] = []
+  const done = new Set<string>()
+  for (const slot of set) {
+    if (done.has(slot.id)) continue
+    if (slot.pair !== undefined) {
+      const pair = set.find((s) => s.id === slot.pair)
+      const slots = pair === undefined ? [slot] : [slot, pair]
+      slots.forEach((s) => done.add(s.id))
+      groups.push({ label: `${slot.label.replace(/ [LR]$/, '')}s`, slots })
+    } else {
+      done.add(slot.id)
+      groups.push({ label: slot.label, slots: [slot] })
+    }
+  }
+
+  const rows = groups
+    .map((group) => {
+      const rings = group.slots
+        .map((slot) => {
+          const hex = `#${slot.color.toString(16).padStart(6, '0')}`
+          const state = markerPositions.has(slot.id) ? 'placed' : ''
+          const active = slot.id === activeSlot ? 'aria-current="true"' : ''
+          return `<button class="marker-ring ${state}" data-slot="${slot.id}" ${active}
+                     style="--ring:${hex}" title="${escape(slot.label)}" aria-label="${escape(slot.label)}"></button>`
+        })
+        .join('')
+      return `<div class="marker-row"><span class="marker-label">${escape(group.label)}</span><span class="marker-rings">${rings}</span></div>`
+    })
+    .join('')
+
+  const placed = set.filter((s) => markerPositions.has(s.id)).length
+  const total = set.length
+  const canSolve = placed >= 2 && !fitting
+  const active = set.find((s) => s.id === activeSlot)
+  const hint = active?.hint === undefined ? '' : ` \u2014 ${escape(active.hint)}`
+  const prompt =
+    active === undefined
+      ? 'All markers placed \u2014 press Solve to build the rig.'
+      : `Click the <b>${escape(active.label)}</b> on your model${hint}.${useSymmetry ? ' The other side mirrors.' : ''}`
+
+  return `
+    <p style="color:var(--fg-2)">Face the model forward in a T-pose (use the move / rotate tools), then place a marker on each joint and Solve.</p>
+    ${guideImage(chosen)}
+    <p class="marker-prompt">${prompt}</p>
+    <div class="marker-grid">${rows}</div>
+    <label class="toggle"><input type="checkbox" id="symmetry" ${useSymmetry ? 'checked' : ''}/> Use symmetry</label>
+    <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${
+      fitting ? 'Solving\u2026' : `Solve rig (${placed}/${total})`
+    }</button>
+    <button id="autofit" class="action">Auto-fit instead</button>
+    ${markerCapture ? `<button id="save-markers" class="action" ${placed > 0 ? '' : 'disabled'}>Save markers (test)</button>` : ''}
+    ${markerCapture && markerSaveStatus !== null ? `<p class="marker-save-status" style="color:var(--fg-2);word-break:break-all">${escape(markerSaveStatus)}</p>` : ''}`
+}
+
+/** The rendered guide image for a template, or nothing when it has none. */
+function guideImage(template: string | null): string {
+  const src = template === null ? undefined : MARKER_GUIDES[template]
+  if (src === undefined) return ''
+  return `<img class="marker-guide" src="${src}" alt="Where the markers go on a T-posed model" />`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */
@@ -441,28 +560,48 @@ function renderAnimateStep(): string {
   // A moving preview of the clip under the cursor (or the selected one), played
   // on the library character — see what a motion looks like before committing.
   const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
-  const list = clips
-    .map(
-      (c) => `
-        <button class="action template" data-clip="${escape(c.name)}"
+  // Search across the name, its humanised form, and category tags.
+  const matches = clips.filter((c) => clipMatches(c.name, clipQuery))
+  const search = `<input id="clip-search" class="clip-search" type="search" placeholder="Search animations…" value="${escape(
+    clipQuery
+  )}" aria-label="Search animations"/>`
+  const list =
+    matches.length === 0
+      ? `<p style="color:var(--fg-2)">No animation matches “${escape(clipQuery)}”.</p>`
+      : matches
+          .map(
+            (c) => `
+        <button class="action template clip-item" data-clip="${escape(c.name)}"
                 ${c.name === clip ? 'aria-current="true"' : ''}>
-          <span>${escape(c.name)}</span>
-          <span style="color:var(--fg-2)">${c.duration.toFixed(2)}s</span>
+          <span class="clip-text"><span class="clip-name">${escape(c.name)}</span>
+            <span class="clip-desc">${escape(clipDescription(c.name))}</span></span>
+          <span class="clip-dur">${c.duration.toFixed(2)}s</span>
         </button>`
-    )
-    .join('')
+          )
+          .join('')
 
-  if (clip === null) {
-    return `${preview}${list}<p style="color:var(--fg-2)">Hover a clip to preview it, then pick one. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
-  }
+  // 3-way view over the playing clip: mesh, skeleton, or both.
+  const seg = (v: 'mesh' | 'skeleton' | 'both', label: string): string =>
+    `<button class="seg-btn${animateView === v ? ' on' : ''}" data-view="${v}" aria-pressed="${
+      animateView === v
+    }">${label}</button>`
+  const bones = `<div class="seg" role="group" aria-label="View">${seg('mesh', 'Mesh')}${seg(
+    'skeleton',
+    'Skeleton'
+  )}${seg('both', 'Both')}</div>`
 
-  if (!playing) {
-    return `${preview}${list}
-      <button id="preview" class="action">Preview ${escape(clip)}</button>
-      <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
-  }
-  return `${preview}${list}${renderTransport()}
-    <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+  // Playback controls sit directly under the preview, above the (long, scrolling)
+  // clip list, so stop / forward / reverse stay reachable without scrolling.
+  const controls = playing
+    ? renderTransport()
+    : clip !== null
+      ? `<button id="preview" class="action">Play ${escape(clip)}</button>`
+      : ''
+  const caption =
+    clip === null
+      ? 'Click a clip to play it on your rig — it is retargeted, so the motion is moved, not copied (the library and the template do not share a rest pose).'
+      : `${escape(clip)} will be written into the export.`
+  return `${preview}${controls}${bones}${search}${list}<p style="color:var(--fg-2)">${caption}</p>`
 }
 
 /** The playback transport for the Animate step: fps, direction, pause, stop, and
@@ -482,7 +621,12 @@ function renderTransport(): string {
       <button class="tp-btn" id="stop" title="Stop" aria-label="Stop"><i data-lucide="square" width="16" height="16" aria-hidden="true"></i></button>
     </div>
     <input id="timeline" class="timeline" type="range" min="0" max="${frames}" step="1" value="0" aria-label="Timeline (frame)"/>
-    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>`
+    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>
+    <div class="tp-slider">
+      <label for="overdrive">Overdrive</label>
+      <input id="overdrive" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
+      <span id="overdrive-val" class="tp-val">${(overdrive / 50).toFixed(2)}×</span>
+    </div>`
 }
 
 /** Plays the chosen clip in the viewport, or stops it. */
@@ -503,6 +647,7 @@ async function runPreview(): Promise<void> {
     clipDuration = duration
     render() // the timeline max needs the real duration
     startPlayhead()
+    ensureViewport().setPlaybackRate(playbackRate()) // carry Overdrive across clips
   } catch (err) {
     playing = false
     render()
@@ -519,12 +664,17 @@ function stopPreview(): void {
   render()
 }
 
+/** The signed playback rate: direction × the Overdrive speed (50 → 1×). */
+function playbackRate(): number {
+  return direction * (overdrive / 50)
+}
+
 /** Sets the play direction and resumes. */
 function setDirection(value: 1 | -1): void {
   direction = value
   paused = false
   const vp = ensureViewport()
-  vp.setPlaybackDirection(value)
+  vp.setPlaybackRate(playbackRate())
   vp.setPaused(false)
   render()
 }
@@ -615,9 +765,147 @@ async function ensureTemplates(): Promise<void> {
   render()
 }
 
+/** A template was chosen: place markers (its default flow) or, for a template
+ *  with no marker set, fall straight through to automatic fitting. */
+function chooseTemplate(name: string): void {
+  if (markerSetFor(name) !== null) void enterMarkerMode(name)
+  else void runFit(name)
+}
+
+/** Enters the marker-placement flow for a template: clears any prior rig, shows
+ *  the bare model, and arms the viewport to place markers on it. */
+async function enterMarkerMode(name: string): Promise<void> {
+  chosen = name
+  markerMode = true
+  markerPositions.clear()
+  activeSlot = markerSetFor(name)?.[0]?.id ?? null
+  // Drop any skeleton from a previous solve so only the bare mesh and the
+  // markers show while placing (the "Re-place markers" case; a no-op on first
+  // entry, when nothing is drawn yet).
+  ensureViewport().clearFittedSkeleton()
+  fitted = null
+  bound = null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  furthestStep = Math.max(furthestStep, activeStep)
+  render()
+}
+
+/** Sets a slot's marker to a point, mirroring to its pair when symmetry is on. */
+function setMarkerAt(slotId: string, point: [number, number, number]): void {
+  const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === slotId)
+  if (set === null || slot === undefined) return
+  markerPositions.set(slot.id, point)
+  if (useSymmetry && slot.pair !== undefined) {
+    const mirror = 2 * ensureViewport().symmetryX() - point[0]
+    markerPositions.set(slot.pair, [mirror, point[1], point[2]])
+  }
+}
+
+/** Places the active marker from a click on the model, then advances to the
+ *  next empty slot. A paired marker is routed to the L or R slot by which side
+ *  of the model the click landed on, so the sides can't be placed swapped. */
+function onMarkerPick(point: [number, number, number]): void {
+  if (activeSlot === null) return
+  const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === activeSlot)
+  const target =
+    slot !== undefined
+      ? slotForClickedSide(slot, point[0], ensureViewport().symmetryX())
+      : activeSlot
+  setMarkerAt(target, point)
+  activeSlot = set?.find((s) => !markerPositions.has(s.id))?.id ?? null
+  drawMarkers()
+  render()
+}
+
+/** Moves an already-placed marker as it is dragged on the model. */
+function onMarkerMove(id: string, point: [number, number, number]): void {
+  setMarkerAt(id, point)
+  drawMarkers()
+}
+
+/** Draws the placed markers in the viewport. */
+function drawMarkers(): void {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null) return
+  ensureViewport().setMarkers(
+    set
+      .filter((s) => markerPositions.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        position: markerPositions.get(s.id) as [number, number, number],
+        color: s.color
+      }))
+  )
+}
+
+/** Saves the placed markers, and which model they were placed on, as a JSON
+ *  fixture in the repo's `e2e/` directory for regression testing. Shows a
+ *  confirmation (or the error) under the button so a save is never in doubt. */
+async function saveMarkers(): Promise<void> {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null || chosen === null) return
+  const byBone: Record<string, [number, number, number]> = {}
+  for (const slot of set) {
+    const p = markerPositions.get(slot.id)
+    if (p !== undefined) byBone[slot.bone] = p
+  }
+  const state = {
+    model: loaded?.name ?? null,
+    modelPath: loaded?.path ?? null,
+    template: chosen,
+    markers: byBone
+  }
+  // Console too, mirrored to the dev terminal, as a redundant record.
+  console.log(`[markers:${chosen}] ${JSON.stringify(byBone)}`)
+  const base = (loaded?.name ?? chosen)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+  try {
+    const path = await devSaveFixture(`${base}-markers`, JSON.stringify(state, null, 2))
+    markerSaveStatus = `Saved ${Object.keys(byBone).length} markers → ${path}`
+  } catch (err) {
+    markerSaveStatus = `Save failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+  render()
+}
+
+/** Solves the rig from the placed markers and draws the fitted skeleton. */
+async function runMarkerFit(): Promise<void> {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (chosen === null || set === null || loaded === null || fitting) return
+  const path = loaded.path
+  const markers: Marker[] = set
+    .filter((s) => markerPositions.has(s.id))
+    .map((s) => ({ bone: s.bone, position: markerPositions.get(s.id) as [number, number, number] }))
+  if (markers.length < 2) return
+  fitting = true
+  render()
+  try {
+    const viewport = ensureViewport()
+    viewport.endMarkerPlacement()
+    markerMode = false
+    fitted = await fitFromMarkers(chosen, markers, path)
+    bound = null
+    clips = null
+    clip = null
+    viewport.showFittedSkeleton(fitted.positions, fitted.parents, onJointEdited)
+    furthestStep = Math.max(furthestStep, 3)
+    record()
+  } finally {
+    fitting = false
+    render()
+  }
+}
+
 /** Places the chosen template's skeleton and draws it. */
 async function runFit(name: string): Promise<void> {
   if (loaded === null || fitting) return
+  if (markerMode) {
+    ensureViewport().endMarkerPlacement()
+    markerMode = false
+  }
   chosen = name
   fitting = true
   render()
@@ -834,6 +1122,46 @@ function render(): void {
 
   app.querySelector<HTMLButtonElement>('#paint')?.addEventListener('click', () => void runPaint())
 
+  // Auto-fit again re-runs the automatic placement — handy after orienting or
+  // moving the model on the grid.
+  app
+    .querySelector<HTMLButtonElement>('#refit')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void runFit(chosen)
+    })
+
+  // Marker-placement flow: ring selection, symmetry, solve / auto-fit.
+  app.querySelectorAll<HTMLButtonElement>('.marker-ring').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeSlot = button.dataset['slot'] ?? null
+      render()
+    })
+  })
+  app.querySelector<HTMLInputElement>('#symmetry')?.addEventListener('change', (event) => {
+    useSymmetry = (event.target as HTMLInputElement).checked
+  })
+  app.querySelector<HTMLButtonElement>('#solve')?.addEventListener('click', () => void runMarkerFit())
+  app.querySelector<HTMLButtonElement>('#save-markers')?.addEventListener('click', () => void saveMarkers())
+  app.querySelector<HTMLButtonElement>('#autofit')?.addEventListener('click', () => {
+    if (chosen !== null) void runFit(chosen)
+  })
+  app
+    .querySelector<HTMLButtonElement>('#replace-markers')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void enterMarkerMode(chosen)
+    })
+
+  // While placing markers, keep the viewport armed to pick and the placed
+  // markers drawn — render() re-runs this binding, and both calls are idempotent.
+  if (step.id === StepId.EditSkeleton && markerMode) {
+    ensureViewport().beginMarkerPlacement({ onPlace: onMarkerPick, onMove: onMarkerMove })
+    drawMarkers()
+  }
+  // Editing the rig needs its bones visible again after the Animate step hid them.
+  if (step.id === StepId.EditSkeleton && !markerMode) {
+    ensureViewport().setSkeletonVisible(true)
+  }
+
   app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
     const format = button.dataset['format']
     if (format !== 'glb' && format !== 'fbx') return
@@ -841,7 +1169,30 @@ function render(): void {
   })
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
+  app.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+    const v = button.dataset['view']
+    if (v !== 'mesh' && v !== 'skeleton' && v !== 'both') return
+    button.addEventListener('click', () => {
+      animateView = v
+      ensureViewport().setAnimateView(v)
+      render()
+    })
+  })
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
+  app.querySelector<HTMLInputElement>('#overdrive')?.addEventListener('input', (event) => {
+    overdrive = Number((event.target as HTMLInputElement).value)
+    ensureViewport().setPlaybackRate(playbackRate())
+    const val = document.querySelector<HTMLElement>('#overdrive-val')
+    if (val !== null) val.textContent = `${(overdrive / 50).toFixed(2)}×`
+  })
+  // Live-filter the clip list as the query changes, without a re-render (which
+  // would drop focus). A full re-render re-applies the same filter from clipQuery.
+  app.querySelector<HTMLInputElement>('#clip-search')?.addEventListener('input', (event) => {
+    clipQuery = (event.target as HTMLInputElement).value
+    app.querySelectorAll<HTMLButtonElement>('.clip-item').forEach((btn) => {
+      btn.hidden = !clipMatches(btn.dataset['clip'] ?? '', clipQuery)
+    })
+  })
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
   app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
   app.querySelector<HTMLButtonElement>('#play-pause')?.addEventListener('click', () => togglePause())
@@ -866,22 +1217,27 @@ function render(): void {
       button.addEventListener('mouseenter', () => clipPreview?.play(clipName))
       button.addEventListener('focus', () => clipPreview?.play(clipName))
       button.addEventListener('click', () => {
-        // Switching clips stops any playback of the old one.
+        // Clicking a clip loads and plays it right away (Mixamo-style), stopping
+        // any playback of the old one first.
         stopPreview()
         clip = clipName
         exported = null
         clipPreview?.play(clipName)
         record()
-        render()
+        void runPreview()
       })
       return
     }
     if (name === undefined) return
-    button.addEventListener('click', () => void runFit(name))
+    button.addEventListener('click', () => chooseTemplate(name))
   })
 
   if (step.id === StepId.Animate) {
     void ensureClips()
+    // The rest-pose fitted skeleton has no place here; the animated skeleton (if
+    // shown) follows the clip instead. Apply the chosen 3-way view.
+    ensureViewport().setSkeletonVisible(false)
+    ensureViewport().setAnimateView(animateView)
     // Mount the persistent preview canvas and load the creature's library once.
     const slot = app.querySelector<HTMLElement>('#clip-preview')
     if (slot !== null && chosen !== null) {
@@ -956,6 +1312,35 @@ async function maybeAutoload(): Promise<void> {
   if (path === null) return
   const button = document.querySelector<HTMLButtonElement>('#import')
   if (button !== null) await runImport(button)
+
+  // Testing capture: open a template's marker step EMPTY so a person can place
+  // the markers by hand, with a "Save markers" button to log them as a fixture.
+  const captureTemplate = await devAutomarkCapture().catch(() => null)
+  if (captureTemplate !== null) {
+    markerCapture = true
+    chooseTemplate(captureTemplate)
+    // Self-test: place a couple of markers by synthetic clicks on the model and
+    // save, to prove the place→save→fixture path end-to-end before a person is
+    // asked to place them for real.
+    if (await devCaptureSelftest().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      const drop = (fx: number, fy: number): void =>
+        void canvas.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            clientX: rect.left + rect.width * fx,
+            clientY: rect.top + rect.height * fy,
+            button: 0,
+            bubbles: true
+          })
+        )
+      drop(0.5, 0.35) // upper body — the first (chin) slot
+      drop(0.5, 0.55) // lower body — the next slot advances automatically
+      await saveMarkers()
+    }
+    return
+  }
+
   // Optionally auto-fit a template so the Fit step (and its auto-placement) can
   // be screenshotted without clicking through the workflow.
   let template: string | null = null
@@ -967,6 +1352,91 @@ async function maybeAutoload(): Promise<void> {
   if (template === null) return
   await runFit(template)
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  render()
+
+  // Optionally drive the marker-placement flow: seed the markers from the
+  // auto-fit joints (a stand-in for clicking each one) and rest in placement
+  // mode, so the marker Fit step can be screenshotted.
+  if (await devAutomark().catch(() => false)) {
+    const truth = new Map<string, [number, number, number]>()
+    if (fitted !== null) {
+      const positions = fitted.positions
+      fitted.bones.forEach((bone, i) => {
+        const p = positions[i]
+        if (p !== undefined) truth.set(bone, [p[0], p[1], p[2]])
+      })
+    }
+    await enterMarkerMode(template)
+    for (const slot of markerSetFor(template) ?? []) {
+      let at = truth.get(slot.bone)
+      // The chin slot maps to the `head` bone, which sits at the forehead; the
+      // chin/jaw is lower. For the guide render, drop it to jaw level (midway
+      // between the head and neck bones) so the guide matches where to place it.
+      if (slot.id === 'chin') {
+        const head = truth.get('head')
+        const neck = truth.get('neck_01')
+        if (head !== undefined && neck !== undefined) {
+          at = [head[0], (head[1] + neck[1]) / 2, head[2]]
+        }
+      }
+      if (at !== undefined) markerPositions.set(slot.id, at)
+    }
+    activeSlot = null
+    render()
+    drawMarkers()
+    // Optionally hover the model so the precision-preview loupe shows, for a
+    // screenshot. A real OS hover can't be delivered into a WKWebView, so drive
+    // it with a synthetic pointer-move at the model's chest.
+    if (await devAutomarkHover().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      // Dead-centre lands on the torso for any full-body framing (a fixed
+      // fraction lower down can miss the mesh when the model frames smaller).
+      canvas.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          bubbles: true
+        })
+      )
+    }
+    // Optionally run the solve too, so the fitted skeleton can be screenshotted.
+    if (await devAutomarkSolve().catch(() => false)) await runMarkerFit()
+    return
+  }
+
+  // Optionally bind and show the weight-paint overlay, for the Bind step.
+  if (await devAutopaint().catch(() => false)) {
+    await runBind()
+    activeStep = STEPS.findIndex((s) => s.id === StepId.BindWeights)
+    render()
+    await runPaint()
+    render()
+    return
+  }
+
+  // Optionally bind and preview a clip so the Animate step (retargeted preview +
+  // clip thumbnails) can be screenshotted without clicking through.
+  let autoclip: string | null = null
+  try {
+    autoclip = await devAutoclip()
+  } catch {
+    return
+  }
+  if (autoclip === null) return
+  await runBind()
+  await ensureClips()
+  clip = clips?.find((c) => c.name === autoclip)?.name ?? clips?.[0]?.name ?? null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  // Dev/screenshot: preselect the 3-way view so the animated skeleton can be shot.
+  const view = await devAnimateView().catch(() => null)
+  if (view === 'mesh' || view === 'skeleton' || view === 'both') {
+    animateView = view
+    ensureViewport().setAnimateView(view)
+  }
+  render()
+  await ensureLibrary(template)
+  await runPreview()
   render()
 }
 // Fire-and-forget at the entry module's end; nothing runs after it.

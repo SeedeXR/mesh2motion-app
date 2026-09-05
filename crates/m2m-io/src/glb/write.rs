@@ -8,11 +8,14 @@
 //! # What is carried, and what is not
 //!
 //! Positions, triangle indices, the node hierarchy with its local TRS, skins
-//! with their inverse bind matrices, joint indices and weights, and animation
-//! channels. **Not** normals, texture coordinates, materials or textures: the
-//! reader does not read them, so the writer cannot invent them. A file round
-//! tripped through here keeps its rig and its shape and loses its shading,
-//! which matches what the FBX writer does.
+//! with their inverse bind matrices, joint indices and weights, animation
+//! channels, and — when a primitive carries them — normals, UVs, and its
+//! baseColor material with its texture embedded in the BIN chunk. A file rebuilt
+//! through this writer keeps its rig, its shape, and its shading.
+//!
+//! A glTF *source* export still uses [`super::graft`] instead, which keeps the
+//! original file byte-for-byte; this full rebuild is for an FBX source, which
+//! has no glTF to graft onto.
 //!
 //! Everything lands in one buffer — the GLB's BIN chunk — because this writer
 //! deliberately never emits an external URI. See the module docs on why.
@@ -200,6 +203,36 @@ fn write_primitive(
         json::accessor::ComponentType::F32,
     );
 
+    // Normals (Vec3) and UVs (Vec2) when the primitive carries them — the
+    // shading a rigged export keeps from its source. Written only when present,
+    // so a rig template or the weight overlay, which carry neither, are unchanged.
+    if !primitive.normals.is_empty() {
+        let view = bin.push(&as_bytes(&primitive.normals));
+        let acc = accessor(
+            view,
+            primitive.normals.len() / 3,
+            json::accessor::ComponentType::F32,
+            json::accessor::Type::Vec3,
+        );
+        attributes.insert(
+            Checked::Valid(json::mesh::Semantic::Normals),
+            push(accessors, acc),
+        );
+    }
+    if !primitive.uvs.is_empty() {
+        let view = bin.push(&as_bytes(&primitive.uvs));
+        let acc = accessor(
+            view,
+            primitive.uvs.len() / 2,
+            json::accessor::ComponentType::F32,
+            json::accessor::Type::Vec2,
+        );
+        attributes.insert(
+            Checked::Valid(json::mesh::Semantic::TexCoords(0)),
+            push(accessors, acc),
+        );
+    }
+
     let view = bin.push(&as_bytes(&primitive.indices));
     let indices = accessor(
         view,
@@ -210,12 +243,76 @@ fn write_primitive(
     Ok(json::mesh::Primitive {
         attributes,
         indices: Some(push(accessors, indices)),
-        material: None,
+        material: primitive.material.map(|m| json::Index::new(m as u32)),
         mode: Checked::Valid(json::mesh::Mode::Triangles),
         targets: None,
         extensions: None,
         extras: Default::default(),
     })
+}
+
+/// Writes the document's materials, each an optional embedded baseColor texture
+/// plus its factor. The image bytes go into the BIN chunk, so the file stays
+/// self-contained. One shared sampler serves every texture.
+fn write_materials(
+    document: &Document,
+    bin: &mut Bin,
+) -> (
+    Vec<json::Material>,
+    Vec<json::Texture>,
+    Vec<json::Image>,
+    Vec<json::texture::Sampler>,
+) {
+    let mut materials = Vec::new();
+    let mut textures = Vec::new();
+    let mut images = Vec::new();
+    let mut samplers = Vec::new();
+    for material in &document.materials {
+        let base_color_texture = material.base_color_image.as_ref().map(|image| {
+            let view = bin.push(&image.data);
+            let image_index = images.len() as u32;
+            images.push(json::Image {
+                buffer_view: Some(view),
+                mime_type: Some(json::image::MimeType(image.mime.clone())),
+                name: None,
+                uri: None,
+                extensions: None,
+                extras: Default::default(),
+            });
+            if samplers.is_empty() {
+                samplers.push(json::texture::Sampler::default());
+            }
+            let texture_index = textures.len() as u32;
+            textures.push(json::Texture {
+                sampler: Some(json::Index::new(0)),
+                source: json::Index::new(image_index),
+                name: None,
+                extensions: None,
+                extras: Default::default(),
+            });
+            json::texture::Info {
+                index: json::Index::new(texture_index),
+                tex_coord: 0,
+                extensions: None,
+                extras: Default::default(),
+            }
+        });
+        materials.push(json::Material {
+            pbr_metallic_roughness: json::material::PbrMetallicRoughness {
+                base_color_factor: json::material::PbrBaseColorFactor(material.base_color_factor),
+                base_color_texture,
+                // These come from FBX Phong/Lambert materials, which are dielectric.
+                // glTF defaults metallicFactor to 1.0 — a full metal renders dark and
+                // desaturated (the "unrealistic FBX colours" bug), so pin it to a
+                // matte non-metal so the base colour reads as the albedo it is.
+                metallic_factor: json::material::StrengthFactor(0.0),
+                roughness_factor: json::material::StrengthFactor(1.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    (materials, textures, images, samplers)
 }
 
 /// Writes the document's skins, each with its optional inverse-bind-matrix
@@ -371,6 +468,7 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
     let skins = write_skins(document, &mut bin, &mut accessors);
     let animations = write_animations(document, &mut bin, &mut accessors)?;
     let (nodes, roots) = write_nodes(document, &mesh_indices);
+    let (materials, textures, images, samplers) = write_materials(document, &mut bin);
 
     let empty_scene = roots.is_empty();
     let root = json::Root {
@@ -381,6 +479,10 @@ pub fn write(document: &Document) -> Result<Vec<u8>, GlbError> {
         },
         accessors,
         animations,
+        materials,
+        textures,
+        images,
+        samplers,
         // glTF requires a buffer's byteLength to be at least one, so a document
         // with no geometry declares no buffer rather than an empty one.
         buffers: if bin.bytes.is_empty() {
