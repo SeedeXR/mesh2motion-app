@@ -165,6 +165,13 @@ fn dev_animate_mirror() -> bool {
     std::env::var("M2M_ANIMATE_MIRROR").is_ok()
 }
 
+/// Dev/screenshot harness: `M2M_ANIMATE_ARMSPACE=<0-100>` sets Character
+/// Arm-Space before the auto-clip previews, to shoot narrow vs wide arms.
+#[tauri::command]
+fn dev_animate_arm_space() -> Option<String> {
+    std::env::var("M2M_ANIMATE_ARMSPACE").ok()
+}
+
 /// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
 /// places a few markers by synthetic clicks and saves them, so the save path can
 /// be verified end-to-end before a person is asked to place them for real.
@@ -382,6 +389,7 @@ async fn weight_overlay(
 /// hands it straight to the same loader it draws the imported mesh with. These
 /// are the very bytes `export_model` writes to disk for a `.glb`, so the
 /// preview and the export cannot drift — one code path, two destinations.
+#[allow(clippy::too_many_arguments)] // Tauri command: args come by name from the webview.
 #[tauri::command]
 async fn preview_animation(
     app: tauri::AppHandle,
@@ -391,6 +399,7 @@ async fn preview_animation(
     template: String,
     clip: String,
     mirror: bool,
+    arm_space: f32,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("preview_animation", || {
@@ -398,7 +407,12 @@ async fn preview_animation(
             let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
             let library = library_bytes(&app, &template)?;
             progress(&app, "preview_animation", "retargeting", 0.4);
-            let animation = rig::Animation { library: &library, clip: &clip, mirror };
+            let animation = rig::Animation {
+                library: &library,
+                clip: &clip,
+                mirror,
+                arm_space,
+            };
             let glb = rig::export_glb(&source, &skeleton, falloff, Some(animation))
                 .map_err(|e| e.to_string())?;
             progress(&app, "preview_animation", "done", 1.0);
@@ -522,6 +536,7 @@ async fn export_model(
     template: String,
     clip: Option<String>,
     mirror: bool,
+    arm_space: f32,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("export_model", || {
@@ -552,10 +567,16 @@ async fn export_model(
                 None => None,
             };
             progress(&app, "export_model", "solving", 0.4);
-            let animation = library
-                .as_deref()
-                .zip(clip.as_deref())
-                .map(|(lib, name)| rig::Animation { library: lib, clip: name, mirror });
+            let animation =
+                library
+                    .as_deref()
+                    .zip(clip.as_deref())
+                    .map(|(lib, name)| rig::Animation {
+                        library: lib,
+                        clip: name,
+                        mirror,
+                        arm_space,
+                    });
             let bytes = match extension {
                 "fbx" => rig::export_fbx(&source, &skeleton, falloff, animation),
                 _ => rig::export_glb(&source, &skeleton, falloff, animation),
@@ -605,6 +626,7 @@ pub fn run() {
             dev_save_fixture,
             dev_animate_view,
             dev_animate_mirror,
+            dev_animate_arm_space,
             log_line,
             import_model,
             load_model,
@@ -653,12 +675,13 @@ mod ipc_tests {
         assert!(super::dev_save_fixture("a/b".into(), "{}".into()).is_err());
         assert!(super::dev_save_fixture(String::new(), "{}".into()).is_err());
 
-        let path = super::dev_save_fixture(
-            "dev-save-fixture-selftest".into(),
-            "{\"ok\":true}".into(),
-        )
-        .expect("writes");
-        assert_eq!(std::fs::read_to_string(&path).expect("reads back"), "{\"ok\":true}");
+        let path =
+            super::dev_save_fixture("dev-save-fixture-selftest".into(), "{\"ok\":true}".into())
+                .expect("writes");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("reads back"),
+            "{\"ok\":true}"
+        );
         std::fs::remove_file(&path).ok();
     }
 

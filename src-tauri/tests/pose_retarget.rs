@@ -21,7 +21,18 @@ fn animated_export(template: &str, mesh_path: &str, library_path: &str, clip: &s
     let model = asset(mesh_path);
     let skeleton = rig::fit(template, &model).expect("fits");
     let library = asset(library_path);
-    rig::export_glb(&model, &skeleton, 2.0, Some(rig::Animation { library: &library, clip, mirror: false })).expect("exports")
+    rig::export_glb(
+        &model,
+        &skeleton,
+        2.0,
+        Some(rig::Animation {
+            library: &library,
+            clip,
+            mirror: false,
+            arm_space: 50.0,
+        }),
+    )
+    .expect("exports")
 }
 
 /// The first clip a library offers, for tests that only need "some real motion".

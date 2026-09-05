@@ -145,7 +145,15 @@ impl Server {
             Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
             None => None,
         };
-        let animation = library.as_deref().zip(clip).map(|(lib, c)| pipeline::Animation { library: lib, clip: c, mirror: false });
+        let animation = library
+            .as_deref()
+            .zip(clip)
+            .map(|(lib, c)| pipeline::Animation {
+                library: lib,
+                clip: c,
+                mirror: false,
+                arm_space: 50.0,
+            });
         let glb = pipeline::export_glb(model, fitted, self.session.falloff, animation)
             .map_err(|e| e.to_string())?;
         let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
@@ -284,7 +292,15 @@ impl Server {
             Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
             None => None,
         };
-        let animation = library.as_deref().zip(clip).map(|(lib, c)| pipeline::Animation { library: lib, clip: c, mirror: false });
+        let animation = library
+            .as_deref()
+            .zip(clip)
+            .map(|(lib, c)| pipeline::Animation {
+                library: lib,
+                clip: c,
+                mirror: false,
+                arm_space: 50.0,
+            });
         let bytes = match format.as_str() {
             "glb" => pipeline::export_glb(model, fitted, self.session.falloff, animation),
             "fbx" => pipeline::export_fbx(model, fitted, self.session.falloff, animation),

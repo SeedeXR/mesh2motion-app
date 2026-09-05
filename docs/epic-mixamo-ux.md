@@ -36,10 +36,11 @@ Learn from the legacy `SkeletonHelper` lines (thin) — go beyond them.
       box live-filters the list, and each clip shows its description. Verify.
 - [x] 2d Trim (dual-thumb range, playback loops within it; export honoring wired for item 3).
 - [x] 2e Mirror (mirror_clip in rig swaps L/R + reflects; threaded via new Animation struct through pipeline/Tauri/IPC; frontend checkbox re-retargets). Unit-tested. Committed ed5d527.
-- [ ] 2c Character Arm-Space (retarget arm spacing — Rust). TRICKY: the spread axis is
-      bone-frame dependent; plan to add arm_space to the Animation struct and apply a
-      spread rotation to upperarm_l/_r tracks in retarget_clip, then verify visually and
-      adjust the axis/sign. May need 1-2 compile-verify iterations.
+- [x] 2c Character Arm-Space (retarget arm spacing — Rust). `spread_arms` rotates
+      upperarm_l/_r about Z by ±angle (angle = (arm_space-50)/50 * 30°); threaded via the
+      Animation struct through pipeline/Tauri/IPC; slider in the transport re-retargets on
+      change. Verified visually in compiled .app: at 0 arms narrow to the body, at 100 they
+      widen. Sign correct first try. Unit-tested (spread_arms_rotates_the_upperarms_oppositely).
 
 From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 
@@ -49,6 +50,15 @@ From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 - [ ] 2d. Trim (start/end frame range) — export/preview honor it.
 - [ ] 2e. Mirror checkbox (retarget mirror).
 - [ ] 2f. Verify compiled build + tests; commit.
+
+## Follow-ups (user-added mid-epic — after item 3)
+
+- [ ] F1. **Skip rigging when already rigged.** If an imported model already carries a
+      usable skeleton, offer a "jump straight to Animate" path / auto-unlock the Animate
+      step instead of forcing marker placement + fit + bind.
+- [ ] F2. **Animals: bone precision + reference.** Animal templates only have autofit —
+      add joint-handle precision adjustment (like humans) and ship a sample rigged-animal
+      reference image to follow.
 
 ## Item 3 — Export / Download modal
 
@@ -71,6 +81,12 @@ From mixamo-export-modal-options.png. A modal on Export:
   retarget-side 2c Character Arm-Space and 2e Mirror (Rust retarget). Then item 3.
 
 
+- **2c DONE (Character Arm-Space)** + bundled fix: **Animate left-drag orbit**. User
+  reported "in animate stage I can't rotate the scene". Cause: controls are Blender-style
+  by decision (MMB orbits; plain left unbound for joint/marker picking) — but Animate has
+  nothing to pick, so left-drag did nothing and orbit-on-MMB wasn't discoverable. Fix:
+  `setLeftOrbit(true)` in the Animate step lets plain left-drag orbit; off elsewhere. Both
+  landed together (main.ts/scene.ts span both changes). NEXT: item 3 (Export modal).
 - (start) Plan created. Marker fixture committed. Item-4 report delivered (defer).
 - 1a DONE: bone geometry is already octahedral (Mixamo-shaped); the gap was colour.
 - 1b DONE + committed (4047708): blue→violet depth gradient, MeshBasic material.

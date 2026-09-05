@@ -39,6 +39,7 @@ import {
   devSaveFixture,
   devAnimateView,
   devAnimateMirror,
+  devAnimateArmSpace,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -161,6 +162,8 @@ let trimStart = 0
 let trimEnd = 1
 /** Mirror the animation left↔right (re-retargets the clip on the Rust side). */
 let mirrored = false
+/** Character Arm-Space: 0–100, 50 neutral. Re-retargets the clip when changed. */
+let armSpace = 50
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
 /** The Animate step's 3-way view over the playing clip. Mesh by default, like
@@ -637,6 +640,10 @@ function renderTransport(): string {
       <input id="overdrive" class="anim-slider" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
     </div>
     <div class="anim-ctl">
+      <div class="anim-head"><span>Character Arm-Space</span><span id="arm-space-val" class="anim-val">${armSpace}</span></div>
+      <input id="arm-space" class="anim-slider" type="range" min="0" max="100" step="1" value="${armSpace}" aria-label="Character Arm-Space"/>
+    </div>
+    <div class="anim-ctl">
       <div class="anim-head"><span>Trim</span><span class="anim-sub">${frames} total frames</span></div>
       <div class="trim-range">
         <input id="trim-start" type="range" min="0" max="${frames}" step="1" value="${startF}" aria-label="Trim start (frame)"/>
@@ -657,7 +664,7 @@ async function runPreview(): Promise<void> {
   direction = 1
   render()
   try {
-    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip, mirrored)
+    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip, mirrored, armSpace)
     const duration = await ensureViewport().playAnimated(glb, clip)
     if (duration === null) {
       playing = false
@@ -779,7 +786,7 @@ async function runExport(format: 'glb' | 'fbx'): Promise<void> {
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip, mirrored)
+    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip, mirrored, armSpace)
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -1104,6 +1111,9 @@ function render(): void {
     const stage = app.querySelector<HTMLElement>('.viewport')
     stage?.querySelector('.viewport-empty')?.remove()
     stage?.prepend(ensureViewport().canvas)
+    // Plain left-drag orbits in Animate (nothing to select there); elsewhere left
+    // stays free for joint/marker picking.
+    ensureViewport().setLeftOrbit(step.id === StepId.Animate)
   }
 
   createIcons({
@@ -1214,6 +1224,19 @@ function render(): void {
     ensureViewport().setPlaybackRate(playbackRate())
     const val = document.querySelector<HTMLElement>('#overdrive-val')
     if (val !== null) val.textContent = String(overdrive)
+  })
+  const armInput = app.querySelector<HTMLInputElement>('#arm-space')
+  armInput?.addEventListener('input', (event) => {
+    armSpace = Number((event.target as HTMLInputElement).value)
+    const val = document.querySelector<HTMLElement>('#arm-space-val')
+    if (val !== null) val.textContent = String(armSpace)
+  })
+  // Baked on the Rust side, so re-retarget only when the drag settles.
+  armInput?.addEventListener('change', () => {
+    if (playing) {
+      stopPreview()
+      void runPreview()
+    }
   })
   // Trim works in frames (like Mixamo's "N total frames"), stored as fractions.
   const trimFrames = (): number => Math.max(1, totalFrames(clipDuration, fps))
@@ -1502,6 +1525,8 @@ async function maybeAutoload(): Promise<void> {
     ensureViewport().setAnimateView(view)
   }
   mirrored = await devAnimateMirror().catch(() => false)
+  const arm = await devAnimateArmSpace().catch(() => null)
+  if (arm !== null && arm !== '') armSpace = Number(arm)
   render()
   await ensureLibrary(template)
   await runPreview()

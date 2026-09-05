@@ -88,7 +88,11 @@ const LOUPE_ZOOM = 9
  * it. Plain left is left unbound for selection (Blender's LMB-select). The
  * capture phase runs this before OrbitControls reads `mouseButtons`.
  */
-function installBlenderNavigation(controls: OrbitControls, dom: HTMLElement): void {
+function installBlenderNavigation(
+  controls: OrbitControls,
+  dom: HTMLElement,
+  leftOrbits: () => boolean
+): void {
   const action = (e: PointerEvent): MOUSE => {
     if (e.shiftKey) return MOUSE.PAN
     if (e.ctrlKey || e.metaKey) return MOUSE.DOLLY
@@ -102,7 +106,10 @@ function installBlenderNavigation(controls: OrbitControls, dom: HTMLElement): vo
       } else if (e.button === 0 && e.altKey) {
         controls.mouseButtons = { LEFT: action(e), MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
       } else if (e.button === 0) {
-        controls.mouseButtons = { LEFT: undefined, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
+        // The Animate step has nothing to select or place, so plain left orbits
+        // there; elsewhere left stays unbound for joint/marker picking.
+        const left = leftOrbits() ? MOUSE.ROTATE : undefined
+        controls.mouseButtons = { LEFT: left, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
       }
     },
     true
@@ -237,6 +244,9 @@ export interface Viewport {
   /** The Animate step's 3-way view over the playing clip: just the mesh, just the
    *  gradient skeleton, or both. */
   setAnimateView(view: 'mesh' | 'skeleton' | 'both'): void
+  /** Lets plain left-drag orbit the camera (the Animate step, where left has no
+   *  selection role). Off elsewhere so left stays free for picking. */
+  setLeftOrbit(enabled: boolean): void
   /**
    * Draws a weight-paint overlay: a colour-baked model shown with its vertex
    * colours, replacing whatever was on screen. Returns to `showFittedSkeleton`
@@ -336,7 +346,10 @@ export function createViewport(): Viewport {
   // pointer-down from the held modifiers just before OrbitControls reads them.
   controls.mouseButtons = { LEFT: undefined, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
   controls.touches = { ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }
-  installBlenderNavigation(controls, renderer.domElement)
+  // Left-drag orbits only in the Animate step (set via setLeftOrbit); elsewhere
+  // left is reserved for selecting joints and placing markers.
+  let leftOrbits = false
+  installBlenderNavigation(controls, renderer.domElement, () => leftOrbits)
 
   // Image-based lighting from a neutral studio room — the same trick the glTF
   // sample viewer and three's editor use. It gives PBR materials soft ambient
@@ -1306,6 +1319,10 @@ export function createViewport(): Viewport {
     setAnimateView(view): void {
       animateView = view
       applyAnimateView()
+    },
+
+    setLeftOrbit(enabled): void {
+      leftOrbits = enabled
     },
 
     setSkeletonVisible(visible): void {

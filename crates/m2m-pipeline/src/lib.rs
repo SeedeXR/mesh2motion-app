@@ -710,6 +710,9 @@ pub struct Animation<'a> {
     pub clip: &'a str,
     /// Mirror the motion left↔right across the sagittal plane.
     pub mirror: bool,
+    /// Character Arm-Space: 0–100, 50 neutral. Below 50 narrows the arms toward
+    /// the body, above 50 widens them.
+    pub arm_space: f32,
 }
 
 pub fn export_glb(
@@ -722,7 +725,13 @@ pub fn export_glb(
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
     let clip = match animation {
-        Some(a) => Some(retarget_clip(&m2m_io::glb::read(a.library)?, skeleton, a.clip, a.mirror)?),
+        Some(a) => Some(retarget_clip(
+            &m2m_io::glb::read(a.library)?,
+            skeleton,
+            a.clip,
+            a.mirror,
+            a.arm_space,
+        )?),
         None => None,
     };
 
@@ -984,6 +993,7 @@ fn retarget_clip(
     skeleton: &FittedSkeleton,
     clip_name: &str,
     mirror: bool,
+    arm_space: f32,
 ) -> Result<m2m_io::glb::Clip, RigError> {
     use m2m_rig::retarget::{RotationTrack, TranslationTrack};
 
@@ -1094,6 +1104,13 @@ fn retarget_clip(
     // Mirror left↔right across the sagittal plane when asked (the Mirror toggle).
     let moved = if mirror {
         m2m_rig::retarget::mirror_clip(&moved, &skeleton.bones)
+    } else {
+        moved
+    };
+    // Character Arm-Space: widen/narrow the arms around the neutral 50 (±30°).
+    let angle = (arm_space - 50.0) / 50.0 * 30.0_f32.to_radians();
+    let moved = if angle != 0.0 {
+        m2m_rig::retarget::spread_arms(&moved, &skeleton.bones, angle)
     } else {
         moved
     };
@@ -1463,7 +1480,13 @@ pub fn export_fbx(
     // The clip, in FBX's own terms. Owned here so the borrowed `Curve`s and
     // `Channel`s below outlive the `Scene`.
     let moved = match animation {
-        Some(a) => Some(retarget_clip(&m2m_io::glb::read(a.library)?, skeleton, a.clip, a.mirror)?),
+        Some(a) => Some(retarget_clip(
+            &m2m_io::glb::read(a.library)?,
+            skeleton,
+            a.clip,
+            a.mirror,
+            a.arm_space,
+        )?),
         None => None,
     };
     let built = moved
@@ -2551,7 +2574,12 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+            }),
         )
         .expect("exports");
 
@@ -2610,7 +2638,12 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+            }),
         )
         .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
@@ -2683,7 +2716,12 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+            }),
         )
         .expect("exports");
         let read_back = m2m_io::glb::read(&bytes).expect("reads back");
@@ -2758,7 +2796,12 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some(super::Animation { library: &library(), clip: "Moonwalk", mirror: false }),
+            Some(super::Animation {
+                library: &library(),
+                clip: "Moonwalk",
+                mirror: false,
+                arm_space: 50.0,
+            }),
         )
         .expect_err("refused");
 
@@ -2855,7 +2898,12 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
+            Some(super::Animation {
+                library: &library(),
+                clip: "Chest_Open",
+                mirror: false,
+                arm_space: 50.0,
+            }),
         )
         .expect("exports");
 

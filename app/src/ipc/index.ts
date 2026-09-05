@@ -87,6 +87,11 @@ export async function devCaptureSelftest(): Promise<boolean> {
   return await invoke<boolean>('dev_capture_selftest')
 }
 
+/** Dev/screenshot: Character Arm-Space to preselect (0-100 as string), or null. */
+export async function devAnimateArmSpace(): Promise<string | null> {
+  return await invoke<string | null>('dev_animate_arm_space')
+}
+
 /** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
 export async function devAnimateMirror(): Promise<boolean> {
   return await invoke<boolean>('dev_animate_mirror')
@@ -302,7 +307,8 @@ export async function exportModel(
   format: 'glb' | 'fbx',
   template: string,
   clip: string | null,
-  mirror = false
+  mirror = false,
+  armSpace = 50
 ): Promise<string | null> {
   return await invoke<string | null>('export_model', {
     path,
@@ -311,7 +317,8 @@ export async function exportModel(
     format,
     template,
     clip,
-    mirror
+    mirror,
+    armSpace
   })
 }
 
@@ -350,7 +357,8 @@ export async function previewAnimation(
   falloff: number,
   template: string,
   clip: string,
-  mirror = false
+  mirror = false,
+  armSpace = 50
 ): Promise<ArrayBuffer> {
   return bulk(
     await invoke<BulkResponse>('preview_animation', {
@@ -359,7 +367,8 @@ export async function previewAnimation(
       falloff,
       template,
       clip,
-      mirror
+      mirror,
+      armSpace
     })
   )
 }
