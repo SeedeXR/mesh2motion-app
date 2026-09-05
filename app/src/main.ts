@@ -147,6 +147,9 @@ let fps: 24 | 30 = 30
 let clipDuration = 0
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
+/** Show the rig's bones in the Animate step. Off by default — like Mixamo, the
+ *  step is about the moving mesh, not the skeleton. */
+let showBones = false
 
 let viewport: Viewport | null = null
 
@@ -557,17 +560,23 @@ function renderAnimateStep(): string {
     )
     .join('')
 
-  if (clip === null) {
-    return `${preview}${list}<p style="color:var(--fg-2)">Hover a clip to preview it, then pick one. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
-  }
+  // Show/hide the rig's bones over the mesh.
+  const bones = `<label class="toggle"><input type="checkbox" id="show-bones"${
+    showBones ? ' checked' : ''
+  }/> Show bones</label>`
 
-  if (!playing) {
-    return `${preview}${list}
-      <button id="preview" class="action">Preview ${escape(clip)}</button>
-      <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
-  }
-  return `${preview}${list}${renderTransport()}
-    <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+  // Playback controls sit directly under the preview, above the (long, scrolling)
+  // clip list, so stop / forward / reverse stay reachable without scrolling.
+  const controls = playing
+    ? renderTransport()
+    : clip !== null
+      ? `<button id="preview" class="action">Play ${escape(clip)}</button>`
+      : ''
+  const caption =
+    clip === null
+      ? 'Click a clip to play it on your rig — it is retargeted, so the motion is moved, not copied (the library and the template do not share a rest pose).'
+      : `${escape(clip)} will be written into the export.`
+  return `${preview}${controls}${bones}${list}<p style="color:var(--fg-2)">${caption}</p>`
 }
 
 /** The playback transport for the Animate step: fps, direction, pause, stop, and
@@ -1094,6 +1103,10 @@ function render(): void {
     ensureViewport().beginMarkerPlacement({ onPlace: onMarkerPick, onMove: onMarkerMove })
     drawMarkers()
   }
+  // Editing the rig needs its bones visible again after the Animate step hid them.
+  if (step.id === StepId.EditSkeleton && !markerMode) {
+    ensureViewport().setSkeletonVisible(true)
+  }
 
   app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
     const format = button.dataset['format']
@@ -1102,6 +1115,10 @@ function render(): void {
   })
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
+  app.querySelector<HTMLInputElement>('#show-bones')?.addEventListener('change', (event) => {
+    showBones = (event.target as HTMLInputElement).checked
+    ensureViewport().setSkeletonVisible(showBones)
+  })
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
   app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
@@ -1127,13 +1144,14 @@ function render(): void {
       button.addEventListener('mouseenter', () => clipPreview?.play(clipName))
       button.addEventListener('focus', () => clipPreview?.play(clipName))
       button.addEventListener('click', () => {
-        // Switching clips stops any playback of the old one.
+        // Clicking a clip loads and plays it right away (Mixamo-style), stopping
+        // any playback of the old one first.
         stopPreview()
         clip = clipName
         exported = null
         clipPreview?.play(clipName)
         record()
-        render()
+        void runPreview()
       })
       return
     }
@@ -1143,6 +1161,8 @@ function render(): void {
 
   if (step.id === StepId.Animate) {
     void ensureClips()
+    // Hide the rig's bones by default here — the step is about the moving mesh.
+    ensureViewport().setSkeletonVisible(showBones)
     // Mount the persistent preview canvas and load the creature's library once.
     const slot = app.querySelector<HTMLElement>('#clip-preview')
     if (slot !== null && chosen !== null) {

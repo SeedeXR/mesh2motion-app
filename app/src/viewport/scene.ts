@@ -230,6 +230,9 @@ export interface Viewport {
   playbackTime(): number
   /** Stops playback and returns to the event-driven, zero-idle-cost renderer. */
   stop(): void
+  /** Shows or hides the fitted-skeleton bones (the Animate step's hide-bones
+   *  toggle). Honoured across play/stop until changed. */
+  setSkeletonVisible(visible: boolean): void
   /**
    * Draws a weight-paint overlay: a colour-baked model shown with its vertex
    * colours, replacing whatever was on screen. Returns to `showFittedSkeleton`
@@ -352,6 +355,10 @@ export function createViewport(): Viewport {
   // child of the model, so it follows the orient gizmo without any extra work.
   let importedSkeleton: Mesh | null = null
   let fittedSkeleton: Mesh | null = null
+  // Whether the fitted-skeleton bones may show. The Animate step turns this off
+  // (Mixamo shows just the moving mesh); it's honoured across play/stop so bones
+  // don't pop back when a clip ends.
+  let skeletonVisible = true
   // The octahedral bones' material: solid, flat-shaded so each facet catches the
   // light and the bone reads as 3D, drawn over the mesh (depthTest off) so a
   // buried bone stays visible. DoubleSide sidesteps any face-winding surprise.
@@ -1188,7 +1195,16 @@ export function createViewport(): Viewport {
         animated = null
       }
       if (model !== null) model.visible = true
-      if (fittedSkeleton !== null) fittedSkeleton.visible = true
+      if (fittedSkeleton !== null) fittedSkeleton.visible = skeletonVisible
+    },
+
+    setSkeletonVisible(visible): void {
+      skeletonVisible = visible
+      // Only touch it when it's the thing on screen — a clip or the paint overlay
+      // hides the bones regardless, and stop() re-reads the flag.
+      if (fittedSkeleton !== null && !playing && overlay === null) {
+        fittedSkeleton.visible = visible
+      }
     },
 
     showFittedSkeleton(positions, parents, onEdit): void {
