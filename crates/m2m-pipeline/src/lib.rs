@@ -1817,6 +1817,79 @@ mod tests {
         );
     }
 
+    /// The golden human case: markers a person placed by hand on `model-human`
+    /// (captured with `M2M_AUTOMARK_CAPTURE`, stored in
+    /// `assets/test-files/human-tpose-markers.json`) solve to a rig whose marked
+    /// joints sit exactly where placed and whose feet stand on the mesh floor.
+    #[test]
+    fn hand_placed_human_markers_solve_to_a_grounded_rig() {
+        use super::{fit_from_markers, mesh_of, Marker};
+        const FIXTURE: &str = include_str!("../../../assets/test-files/human-tpose-markers.json");
+        let json: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture parses");
+        let placed = json["markers"].as_object().expect("markers object");
+        let markers: Vec<Marker> = placed
+            .iter()
+            .map(|(bone, p)| Marker {
+                bone: bone.clone(),
+                position: [
+                    p[0].as_f64().unwrap() as f32,
+                    p[1].as_f64().unwrap() as f32,
+                    p[2].as_f64().unwrap() as f32,
+                ],
+            })
+            .collect();
+
+        let model = model("models/model-human.glb");
+        let fitted = fit_from_markers("human", &markers, &model).expect("fits");
+        let at = |bone: &str| {
+            let i = fitted.bones.iter().position(|b| b == bone).expect("bone");
+            fitted.positions[i]
+        };
+
+        // Every marked joint lands exactly on the placed marker.
+        for (bone, p) in placed {
+            let a = at(bone);
+            let target = [
+                p[0].as_f64().unwrap() as f32,
+                p[1].as_f64().unwrap() as f32,
+                p[2].as_f64().unwrap() as f32,
+            ];
+            let d = ((a[0] - target[0]).powi(2)
+                + (a[1] - target[1]).powi(2)
+                + (a[2] - target[2]).powi(2))
+            .sqrt();
+            assert!(d < 1e-4, "{bone} at {a:?}, not on its marker {target:?}");
+        }
+
+        // Both feet stand on the mesh floor (the grounding, from a real placement).
+        let (mesh_min, _) = mesh_of(&m2m_io::import::load(&model).unwrap())
+            .bounds()
+            .unwrap();
+        for toe in ["ball_leaf_l", "ball_leaf_r"] {
+            assert!(
+                (at(toe)[1] - mesh_min.y).abs() < 0.05,
+                "{toe} at y {} is off the floor {}",
+                at(toe)[1],
+                mesh_min.y
+            );
+        }
+
+        // Sanity of the unmarked run the mesh/rigid-follow placed: the spine climbs
+        // monotonically from the (marked) pelvis up to the neck, and the head sits
+        // above the chin marker.
+        let spine_y = ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01"].map(|b| at(b)[1]);
+        for w in spine_y.windows(2) {
+            assert!(
+                w[1] >= w[0] - 1e-3,
+                "spine is not monotonic upward: {spine_y:?}"
+            );
+        }
+        assert!(
+            at("head")[1] >= at("neck_01")[1],
+            "head sits below the neck"
+        );
+    }
+
     #[test]
     fn exactly_one_bone_is_a_root_and_every_other_parent_is_real() {
         // A skeleton is drawn as segments from each bone to its parent, so a

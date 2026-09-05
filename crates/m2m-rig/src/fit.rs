@@ -413,23 +413,32 @@ pub fn fit_from_markers(
     }
     let marked_set: std::collections::HashSet<usize> = marked.iter().map(|&(i, _)| i).collect();
 
-    // Uniform scale + translation, least squares over the marked correspondences.
+    // Uniform scale from the VERTICAL span of the marked joints, then translation
+    // to line the centroids up. Height is the one axis a left/right mirror can't
+    // flip and the reliable one for an upright figure (the same argument
+    // `fit_uniform` makes) — a least-squares fit over all axes goes negative and
+    // rejects the placement the moment a person marks the sides mirrored to the
+    // template, which is a valid placement, not an error.
     let n = marked.len() as f32;
     let rest_mean = marked.iter().map(|&(i, _)| rest.positions[i]).sum::<Vec3>() / n;
     let target_mean = marked.iter().map(|&(_, t)| t).sum::<Vec3>() / n;
-    let (mut num, mut den) = (0.0f32, 0.0f32);
-    for &(i, t) in &marked {
-        let r = rest.positions[i] - rest_mean;
-        num += r.dot(t - target_mean);
-        den += r.length_squared();
-    }
-    if den <= f32::EPSILON {
+    let y_span = |lo_hi: (f32, f32)| lo_hi.1 - lo_hi.0;
+    let rest_span = y_span(
+        marked
+            .iter()
+            .map(|&(i, _)| rest.positions[i].y)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y))),
+    );
+    let target_span = y_span(
+        marked
+            .iter()
+            .map(|&(_, t)| t.y)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y))),
+    );
+    if rest_span <= f32::EPSILON {
         return None;
     }
-    let scale = num / den;
-    if scale <= f32::EPSILON {
-        return None;
-    }
+    let scale = target_span / rest_span;
     let offset = target_mean - rest_mean * scale;
 
     let transformed: Vec<Vec3> = rest.positions.iter().map(|p| *p * scale + offset).collect();
