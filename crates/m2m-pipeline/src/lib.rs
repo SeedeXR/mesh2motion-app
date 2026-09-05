@@ -701,17 +701,28 @@ pub fn overlay_glb(
 /// keep, so it is rebuilt: it keeps the normals and UVs the reader carried
 /// through, but takes the default material (FBX materials/textures are not read
 /// yet).
+/// An animation to bake into an export: a library, the clip in it, and options.
+#[derive(Debug, Clone, Copy)]
+pub struct Animation<'a> {
+    /// The animation-library `.glb` bytes.
+    pub library: &'a [u8],
+    /// The clip name to retarget from the library.
+    pub clip: &'a str,
+    /// Mirror the motion left↔right across the sagittal plane.
+    pub mirror: bool,
+}
+
 pub fn export_glb(
     model: &[u8],
     skeleton: &FittedSkeleton,
     falloff: f32,
-    animation: Option<(&[u8], &str)>,
+    animation: Option<Animation>,
 ) -> Result<Vec<u8>, RigError> {
     check_bone_order(skeleton)?;
     let (mesh, weights, _) = solve(model, skeleton, falloff)?;
 
     let clip = match animation {
-        Some((library, name)) => Some(retarget_clip(&m2m_io::glb::read(library)?, skeleton, name)?),
+        Some(a) => Some(retarget_clip(&m2m_io::glb::read(a.library)?, skeleton, a.clip, a.mirror)?),
         None => None,
     };
 
@@ -972,6 +983,7 @@ fn retarget_clip(
     library: &m2m_io::glb::Document,
     skeleton: &FittedSkeleton,
     clip_name: &str,
+    mirror: bool,
 ) -> Result<m2m_io::glb::Clip, RigError> {
     use m2m_rig::retarget::{RotationTrack, TranslationTrack};
 
@@ -1079,6 +1091,12 @@ fn retarget_clip(
             tracks: rotations,
         },
     );
+    // Mirror left↔right across the sagittal plane when asked (the Mirror toggle).
+    let moved = if mirror {
+        m2m_rig::retarget::mirror_clip(&moved, &skeleton.bones)
+    } else {
+        moved
+    };
     let scale = m2m_rig::retarget::height_scale(&source.skeleton, &target);
     let moved_translations = m2m_rig::retarget::retarget_translations(
         &source.translations,
@@ -1318,7 +1336,7 @@ pub fn export_fbx(
     model: &[u8],
     skeleton: &FittedSkeleton,
     falloff: f32,
-    animation: Option<(&[u8], &str)>,
+    animation: Option<Animation>,
 ) -> Result<Vec<u8>, RigError> {
     use m2m_io::fbx::build;
 
@@ -1445,7 +1463,7 @@ pub fn export_fbx(
     // The clip, in FBX's own terms. Owned here so the borrowed `Curve`s and
     // `Channel`s below outlive the `Scene`.
     let moved = match animation {
-        Some((library, name)) => Some(retarget_clip(&m2m_io::glb::read(library)?, skeleton, name)?),
+        Some(a) => Some(retarget_clip(&m2m_io::glb::read(a.library)?, skeleton, a.clip, a.mirror)?),
         None => None,
     };
     let built = moved
@@ -2533,7 +2551,7 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some((&library(), "Chest_Open")),
+            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
         )
         .expect("exports");
 
@@ -2592,7 +2610,7 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some((&library(), "Chest_Open")),
+            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
         )
         .expect("exports");
         let back = m2m_io::glb::read(&bytes).expect("reads back");
@@ -2665,7 +2683,7 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some((&library(), "Chest_Open")),
+            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
         )
         .expect("exports");
         let read_back = m2m_io::glb::read(&bytes).expect("reads back");
@@ -2740,7 +2758,7 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some((&library(), "Moonwalk")),
+            Some(super::Animation { library: &library(), clip: "Moonwalk", mirror: false }),
         )
         .expect_err("refused");
 
@@ -2837,7 +2855,7 @@ mod tests {
             &model("models/model-human.glb"),
             &skeleton,
             2.0,
-            Some((&library(), "Chest_Open")),
+            Some(super::Animation { library: &library(), clip: "Chest_Open", mirror: false }),
         )
         .expect("exports");
 

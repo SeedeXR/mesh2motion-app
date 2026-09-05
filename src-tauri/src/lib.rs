@@ -158,6 +158,13 @@ fn dev_animate_view() -> Option<String> {
     std::env::var("M2M_ANIMATE_VIEW").ok()
 }
 
+/// Dev/screenshot harness: when `M2M_ANIMATE_MIRROR` is set, the auto-clip flow
+/// turns the Mirror toggle on before previewing, to shoot the mirrored motion.
+#[tauri::command]
+fn dev_animate_mirror() -> bool {
+    std::env::var("M2M_ANIMATE_MIRROR").is_ok()
+}
+
 /// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
 /// places a few markers by synthetic clicks and saves them, so the save path can
 /// be verified end-to-end before a person is asked to place them for real.
@@ -383,6 +390,7 @@ async fn preview_animation(
     falloff: f32,
     template: String,
     clip: String,
+    mirror: bool,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("preview_animation", || {
@@ -390,7 +398,8 @@ async fn preview_animation(
             let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
             let library = library_bytes(&app, &template)?;
             progress(&app, "preview_animation", "retargeting", 0.4);
-            let glb = rig::export_glb(&source, &skeleton, falloff, Some((&library, &clip)))
+            let animation = rig::Animation { library: &library, clip: &clip, mirror };
+            let glb = rig::export_glb(&source, &skeleton, falloff, Some(animation))
                 .map_err(|e| e.to_string())?;
             progress(&app, "preview_animation", "done", 1.0);
             Ok(tauri::ipc::Response::new(glb))
@@ -500,6 +509,9 @@ async fn bind_weights(
 /// every time a bone moved.
 ///
 /// `Ok(None)` means the user cancelled, which is not an error.
+// A Tauri command takes its arguments by name from the webview, so they stay
+// as flat parameters rather than a bundle the frontend would have to construct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn export_model(
     app: tauri::AppHandle,
@@ -509,6 +521,7 @@ async fn export_model(
     format: String,
     template: String,
     clip: Option<String>,
+    mirror: bool,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("export_model", || {
@@ -539,19 +552,13 @@ async fn export_model(
                 None => None,
             };
             progress(&app, "export_model", "solving", 0.4);
+            let animation = library
+                .as_deref()
+                .zip(clip.as_deref())
+                .map(|(lib, name)| rig::Animation { library: lib, clip: name, mirror });
             let bytes = match extension {
-                "fbx" => rig::export_fbx(
-                    &source,
-                    &skeleton,
-                    falloff,
-                    library.as_deref().zip(clip.as_deref()),
-                ),
-                _ => rig::export_glb(
-                    &source,
-                    &skeleton,
-                    falloff,
-                    library.as_deref().zip(clip.as_deref()),
-                ),
+                "fbx" => rig::export_fbx(&source, &skeleton, falloff, animation),
+                _ => rig::export_glb(&source, &skeleton, falloff, animation),
             }
             .map_err(|e| e.to_string())?;
             progress(&app, "export_model", "writing", 0.8);
@@ -597,6 +604,7 @@ pub fn run() {
             dev_capture_selftest,
             dev_save_fixture,
             dev_animate_view,
+            dev_animate_mirror,
             log_line,
             import_model,
             load_model,

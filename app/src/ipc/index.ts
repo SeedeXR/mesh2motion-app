@@ -87,6 +87,11 @@ export async function devCaptureSelftest(): Promise<boolean> {
   return await invoke<boolean>('dev_capture_selftest')
 }
 
+/** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
+export async function devAnimateMirror(): Promise<boolean> {
+  return await invoke<boolean>('dev_animate_mirror')
+}
+
 /** Dev/screenshot: the Animate 3-way view to preselect (mesh/skeleton/both), or null. */
 export async function devAnimateView(): Promise<string | null> {
   return await invoke<string | null>('dev_animate_view')
@@ -296,7 +301,8 @@ export async function exportModel(
   falloff: number,
   format: 'glb' | 'fbx',
   template: string,
-  clip: string | null
+  clip: string | null,
+  mirror = false
 ): Promise<string | null> {
   return await invoke<string | null>('export_model', {
     path,
@@ -304,7 +310,8 @@ export async function exportModel(
     falloff,
     format,
     template,
-    clip
+    clip,
+    mirror
   })
 }
 
@@ -342,10 +349,18 @@ export async function previewAnimation(
   skeleton: FittedSkeleton,
   falloff: number,
   template: string,
-  clip: string
+  clip: string,
+  mirror = false
 ): Promise<ArrayBuffer> {
   return bulk(
-    await invoke<BulkResponse>('preview_animation', { path, skeleton, falloff, template, clip })
+    await invoke<BulkResponse>('preview_animation', {
+      path,
+      skeleton,
+      falloff,
+      template,
+      clip,
+      mirror
+    })
   )
 }
 

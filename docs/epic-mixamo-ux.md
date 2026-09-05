@@ -34,8 +34,9 @@ Learn from the legacy `SkeletonHelper` lines (thin) — go beyond them.
 - [ ] 2f (USER-ADDED): search animations + descriptions/index. clip-index.ts derives
       a description + category tags from each clip name (human + animal), a search
       box live-filters the list, and each clip shows its description. Verify.
-- [ ] 2d Trim (start/end frame range).
-- [ ] 2c Character Arm-Space (retarget). 2e Mirror (retarget).
+- [x] 2d Trim (dual-thumb range, playback loops within it; export honoring wired for item 3).
+- [ ] 2e Mirror (retarget L/R mirror — Rust retarget flag + frontend checkbox + IPC). Simpler than 2c; do first.
+- [ ] 2c Character Arm-Space (retarget arm spacing — Rust, a slider). More involved.
 
 From mixamo-animation-extra-features.png. Drop **Aero Update** (obsolete). Keep:
 

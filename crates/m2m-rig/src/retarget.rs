@@ -281,6 +281,46 @@ pub fn retarget(
     )
 }
 
+/// Mirrors a clip left↔right across the sagittal (X) plane.
+///
+/// Each `_l`/`_r` bone's rotation track is moved to its partner, and every
+/// rotation is reflected across X — `(x, y, z, w) → (x, -y, -z, w)` — so the
+/// motion plays as its mirror image. A midline bone (no `_l`/`_r` suffix) keeps
+/// its own track, reflected in place. Assumes a left/right-symmetric rest pose,
+/// which the templates are (`calf_l` at +X mirrors `calf_r` at -X).
+pub fn mirror_clip(clip: &Clip, names: &[String]) -> Clip {
+    let partner = |bone: usize| -> usize {
+        let Some(name) = names.get(bone) else {
+            return bone;
+        };
+        let wanted = if let Some(base) = name.strip_suffix("_l") {
+            format!("{base}_r")
+        } else if let Some(base) = name.strip_suffix("_r") {
+            format!("{base}_l")
+        } else {
+            return bone;
+        };
+        names.iter().position(|n| *n == wanted).unwrap_or(bone)
+    };
+    let tracks = clip
+        .tracks
+        .iter()
+        .map(|track| RotationTrack {
+            bone: partner(track.bone),
+            times: track.times.clone(),
+            rotations: track
+                .rotations
+                .iter()
+                .map(|q| Quat::from_xyzw(q.x, -q.y, -q.z, q.w))
+                .collect(),
+        })
+        .collect();
+    Clip {
+        name: clip.name.clone(),
+        tracks,
+    }
+}
+
 /// Bone indices with every parent before its children.
 ///
 /// Bones caught in a parent cycle are placed last, so the walk terminates on a
@@ -393,4 +433,42 @@ pub fn retarget_translations(
     }
     out.sort_by_key(|t| t.bone);
     out
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::{mirror_clip, Clip, RotationTrack};
+    use glam::Quat;
+
+    #[test]
+    fn mirror_swaps_left_right_and_reflects_across_x() {
+        let names: Vec<String> = ["hand_l", "hand_r", "spine"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let q = Quat::from_xyzw(0.1, 0.2, 0.3, 0.9272).normalize();
+        let clip = Clip {
+            name: "wave".into(),
+            tracks: vec![
+                RotationTrack { bone: 0, times: vec![0.0], rotations: vec![q] }, // hand_l
+                RotationTrack { bone: 2, times: vec![0.0], rotations: vec![q] }, // spine (midline)
+            ],
+        };
+
+        let mirrored = mirror_clip(&clip, &names);
+
+        // hand_l's track moved onto hand_r (bone 1), reflected (x, -y, -z, w).
+        let hand = mirrored.tracks.iter().find(|t| t.bone == 1).expect("hand_r track");
+        let m = hand.rotations[0];
+        assert!((m.x - q.x).abs() < 1e-6);
+        assert!((m.y + q.y).abs() < 1e-6);
+        assert!((m.z + q.z).abs() < 1e-6);
+        assert!((m.w - q.w).abs() < 1e-6);
+
+        // The midline spine keeps its own bone, reflected in place.
+        let spine = mirrored.tracks.iter().find(|t| t.bone == 2).expect("spine track");
+        assert!((spine.rotations[0].y + q.y).abs() < 1e-6);
+        // No track escaped onto hand_l here (only hand_l had a track to move away).
+        assert!(mirrored.tracks.iter().all(|t| t.bone != 0));
+    }
 }

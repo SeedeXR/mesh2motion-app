@@ -38,6 +38,7 @@ import {
   devCaptureSelftest,
   devSaveFixture,
   devAnimateView,
+  devAnimateMirror,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -158,6 +159,8 @@ let overdrive = 50
  *  clip and fps changes. */
 let trimStart = 0
 let trimEnd = 1
+/** Mirror the animation left↔right (re-retargets the clip on the Rust side). */
+let mirrored = false
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
 /** The Animate step's 3-way view over the playing clip. Mesh by default, like
@@ -645,7 +648,10 @@ function renderTransport(): string {
       <span id="trim-val" class="tp-val">${Math.round(trimStart * 100)}–${Math.round(
         trimEnd * 100
       )}%</span>
-    </div>`
+    </div>
+    <label class="toggle"><input type="checkbox" id="mirror" ${
+      mirrored ? 'checked' : ''
+    }/> Mirror</label>`
 }
 
 /** Plays the chosen clip in the viewport, or stops it. */
@@ -656,7 +662,7 @@ async function runPreview(): Promise<void> {
   direction = 1
   render()
   try {
-    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip)
+    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip, mirrored)
     const duration = await ensureViewport().playAnimated(glb, clip)
     if (duration === null) {
       playing = false
@@ -778,7 +784,7 @@ async function runExport(format: 'glb' | 'fbx'): Promise<void> {
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip)
+    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip, mirrored)
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -1246,6 +1252,14 @@ function render(): void {
       btn.hidden = !clipMatches(btn.dataset['clip'] ?? '', clipQuery)
     })
   })
+  app.querySelector<HTMLInputElement>('#mirror')?.addEventListener('change', (event) => {
+    mirrored = (event.target as HTMLInputElement).checked
+    // Mirroring is baked on the Rust side, so re-retarget the clip to apply it.
+    if (playing) {
+      stopPreview()
+      void runPreview()
+    }
+  })
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
   app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
   app.querySelector<HTMLButtonElement>('#play-pause')?.addEventListener('click', () => togglePause())
@@ -1487,6 +1501,7 @@ async function maybeAutoload(): Promise<void> {
     animateView = view
     ensureViewport().setAnimateView(view)
   }
+  mirrored = await devAnimateMirror().catch(() => false)
   render()
   await ensureLibrary(template)
   await runPreview()
