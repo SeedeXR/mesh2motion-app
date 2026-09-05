@@ -87,6 +87,11 @@ export async function devCaptureSelftest(): Promise<boolean> {
   return await invoke<boolean>('dev_capture_selftest')
 }
 
+/** Dev/screenshot: the Animate 3-way view to preselect (mesh/skeleton/both), or null. */
+export async function devAnimateView(): Promise<string | null> {
+  return await invoke<string | null>('dev_animate_view')
+}
+
 /** Dev/testing: writes a JSON fixture into the repo's `e2e/` dir. Returns the
  *  path written. Throws if the Rust side rejects the name or the write fails. */
 export async function devSaveFixture(name: string, contents: string): Promise<string> {

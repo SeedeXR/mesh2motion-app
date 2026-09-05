@@ -151,6 +151,13 @@ fn dev_automark_capture() -> Option<String> {
     std::env::var("M2M_AUTOMARK_CAPTURE").ok()
 }
 
+/// Dev/screenshot harness: `M2M_ANIMATE_VIEW=mesh|skeleton|both` sets the
+/// Animate step's 3-way view before a clip auto-plays, so each can be shot.
+#[tauri::command]
+fn dev_animate_view() -> Option<String> {
+    std::env::var("M2M_ANIMATE_VIEW").ok()
+}
+
 /// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
 /// places a few markers by synthetic clicks and saves them, so the save path can
 /// be verified end-to-end before a person is asked to place them for real.
@@ -589,6 +596,7 @@ pub fn run() {
             dev_automark_capture,
             dev_capture_selftest,
             dev_save_fixture,
+            dev_animate_view,
             log_line,
             import_model,
             load_model,

@@ -61,7 +61,9 @@ From mixamo-export-modal-options.png. A modal on Export:
   - Giant sphere handles dominated; Mixamo bones are the primary read. Shrank
     handleRadius 1.5%→0.6% of the diagonal (small precision dots); boneWidth floor
     0.28→0.7 of a handle so bones stay prominent.
-- 1c DONE (impl): editing loupe — the precision zoom now follows a joint handle
-  while it's dragged (gizmo dragging-changed/objectChange → setLoupeTarget), armed
-  in startFittedEditing, disarmed in clearFittedEditing. tsc + 53 vitest green.
-  Next: verify skeleton + handles + loupe in the compiled build, commit item 1.
+- 1c DONE: editing loupe follows a joint handle while dragged.
+- **ITEM 1 DONE + committed (3b09f45)**: verified in the compiled .app — clean
+  Mixamo-style skeleton (no floor connector, small handle dots, gradient bones).
+  Next: ITEM 2 — Animate window. Start with 2a (3-way mesh/skeleton/both), which
+  needs an animated skeleton drawn in the item-1 gradient style over the animated
+  mesh (a SkeletonHelper-equivalent), replacing the "Show bones" checkbox.

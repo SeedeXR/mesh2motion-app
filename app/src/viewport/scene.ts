@@ -230,9 +230,12 @@ export interface Viewport {
   playbackTime(): number
   /** Stops playback and returns to the event-driven, zero-idle-cost renderer. */
   stop(): void
-  /** Shows or hides the fitted-skeleton bones (the Animate step's hide-bones
-   *  toggle). Honoured across play/stop until changed. */
+  /** Shows or hides the fitted-skeleton bones (the edit step). Honoured across
+   *  play/stop until changed. */
   setSkeletonVisible(visible: boolean): void
+  /** The Animate step's 3-way view over the playing clip: just the mesh, just the
+   *  gradient skeleton, or both. */
+  setAnimateView(view: 'mesh' | 'skeleton' | 'both'): void
   /**
    * Draws a weight-paint overlay: a colour-baked model shown with its vertex
    * colours, replacing whatever was on screen. Returns to `showFittedSkeleton`
@@ -441,6 +444,14 @@ export function createViewport(): Viewport {
   let playing = false
   let bounds = new Box3()
 
+  // The animated skeleton: the item-1 gradient octahedra rebuilt each frame from
+  // the playing mesh's live bone positions, so the Animate step can show mesh,
+  // skeleton, or both (the 3-way view, like Mixamo's skull toggle).
+  let animatedSkeleton: Mesh | null = null
+  let animatedBones: Object3D[] = []
+  let animatedParents: (number | null)[] = []
+  let animateView: 'mesh' | 'skeleton' | 'both' = 'mesh'
+
   // A standing render loop drives every frame and advances the animation mixer
   // while a clip plays (unless the transport has paused it).
   renderer.setAnimationLoop((now: number) => {
@@ -448,6 +459,11 @@ export function createViewport(): Viewport {
     lastFrame = now
     controls.update()
     grid.update(camera)
+    // Follow the clip with the animated skeleton when it's on screen.
+    if (animatedSkeleton !== null && animatedSkeleton.visible && animated !== null) {
+      animated.updateMatrixWorld(true)
+      updateAnimatedSkeleton()
+    }
     renderer.render(scene, camera)
     if (loupeActive && loupeShown) renderLoupe()
     renders++
@@ -550,6 +566,65 @@ export function createViewport(): Viewport {
     // Not a pick target: marker and joint raycasts must reach the mesh, not this.
     mesh.raycast = () => {}
     return mesh
+  }
+
+  /** Builds the animated skeleton for the current clip: reads the playing mesh's
+   *  bones and makes a gradient-octahedra mesh that `updateAnimatedSkeleton`
+   *  refills each frame from their live positions. */
+  function buildAnimatedSkeleton(): void {
+    disposeAnimatedSkeleton()
+    if (animated === null) return
+    let bones: Object3D[] | null = null
+    animated.traverse((object) => {
+      const skinned = object as { isSkinnedMesh?: boolean; skeleton?: { bones: Object3D[] } }
+      if (bones === null && skinned.isSkinnedMesh === true && skinned.skeleton !== undefined) {
+        bones = skinned.skeleton.bones
+      }
+    })
+    if (bones === null) return
+    const list: Object3D[] = bones
+    if (list.length < 2) return
+    const index = new Map<Object3D, number>()
+    list.forEach((bone, i) => index.set(bone, i))
+    animatedBones = list
+    animatedParents = list.map((bone) => {
+      const parent = bone.parent
+      return parent !== null && index.has(parent) ? (index.get(parent) as number) : null
+    })
+    const material = boneMaterial.clone() // drawn on top (depthTest already off)
+    animatedSkeleton = new Mesh(new BufferGeometry(), material)
+    animatedSkeleton.frustumCulled = false
+    animatedSkeleton.renderOrder = 2
+    scene.add(animatedSkeleton)
+    updateAnimatedSkeleton()
+    applyAnimateView()
+  }
+
+  /** Refills the animated skeleton from the bones' current world positions. */
+  function updateAnimatedSkeleton(): void {
+    if (animatedSkeleton === null) return
+    const positions = animatedBones.map((bone): [number, number, number] => {
+      const p = bone.getWorldPosition(new Vector3())
+      return [p.x, p.y, p.z]
+    })
+    fillBoneGeometry(animatedSkeleton.geometry, positions, animatedParents)
+  }
+
+  /** Shows mesh, skeleton, or both for the Animate step's 3-way view. */
+  function applyAnimateView(): void {
+    if (animated !== null) animated.visible = animateView !== 'skeleton'
+    if (animatedSkeleton !== null) animatedSkeleton.visible = animateView !== 'mesh'
+  }
+
+  function disposeAnimatedSkeleton(): void {
+    if (animatedSkeleton !== null) {
+      scene.remove(animatedSkeleton)
+      animatedSkeleton.geometry.dispose()
+      ;(animatedSkeleton.material as MeshBasicMaterial).dispose()
+      animatedSkeleton = null
+    }
+    animatedBones = []
+    animatedParents = []
   }
 
   /** Paints a handle for a state and sizes it to match: rest is its base size,
@@ -1144,6 +1219,8 @@ export function createViewport(): Viewport {
       paused = false
       playing = true
       lastFrame = performance.now()
+      // The gradient skeleton that follows this clip (shown per the 3-way view).
+      buildAnimatedSkeleton()
       return clip.duration
     },
 
@@ -1217,8 +1294,15 @@ export function createViewport(): Viewport {
         release(animated)
         animated = null
       }
+      disposeAnimatedSkeleton()
       if (model !== null) model.visible = true
       if (fittedSkeleton !== null) fittedSkeleton.visible = skeletonVisible
+    },
+
+    /** Sets the Animate step's 3-way view: mesh only, skeleton only, or both. */
+    setAnimateView(view): void {
+      animateView = view
+      applyAnimateView()
     },
 
     setSkeletonVisible(visible): void {

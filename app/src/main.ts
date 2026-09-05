@@ -37,6 +37,7 @@ import {
   devAutomarkCapture,
   devCaptureSelftest,
   devSaveFixture,
+  devAnimateView,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -151,9 +152,9 @@ let fps: 24 | 30 = 30
 let clipDuration = 0
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
-/** Show the rig's bones in the Animate step. Off by default — like Mixamo, the
- *  step is about the moving mesh, not the skeleton. */
-let showBones = false
+/** The Animate step's 3-way view over the playing clip. Mesh by default, like
+ *  Mixamo (its skull toggle switches to the skeleton). */
+let animateView: 'mesh' | 'skeleton' | 'both' = 'mesh'
 
 let viewport: Viewport | null = null
 
@@ -565,10 +566,15 @@ function renderAnimateStep(): string {
     )
     .join('')
 
-  // Show/hide the rig's bones over the mesh.
-  const bones = `<label class="toggle"><input type="checkbox" id="show-bones"${
-    showBones ? ' checked' : ''
-  }/> Show bones</label>`
+  // 3-way view over the playing clip: mesh, skeleton, or both.
+  const seg = (v: 'mesh' | 'skeleton' | 'both', label: string): string =>
+    `<button class="seg-btn${animateView === v ? ' on' : ''}" data-view="${v}" aria-pressed="${
+      animateView === v
+    }">${label}</button>`
+  const bones = `<div class="seg" role="group" aria-label="View">${seg('mesh', 'Mesh')}${seg(
+    'skeleton',
+    'Skeleton'
+  )}${seg('both', 'Both')}</div>`
 
   // Playback controls sit directly under the preview, above the (long, scrolling)
   // clip list, so stop / forward / reverse stay reachable without scrolling.
@@ -1138,9 +1144,14 @@ function render(): void {
   })
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
-  app.querySelector<HTMLInputElement>('#show-bones')?.addEventListener('change', (event) => {
-    showBones = (event.target as HTMLInputElement).checked
-    ensureViewport().setSkeletonVisible(showBones)
+  app.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+    const v = button.dataset['view']
+    if (v !== 'mesh' && v !== 'skeleton' && v !== 'both') return
+    button.addEventListener('click', () => {
+      animateView = v
+      ensureViewport().setAnimateView(v)
+      render()
+    })
   })
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
@@ -1184,8 +1195,10 @@ function render(): void {
 
   if (step.id === StepId.Animate) {
     void ensureClips()
-    // Hide the rig's bones by default here — the step is about the moving mesh.
-    ensureViewport().setSkeletonVisible(showBones)
+    // The rest-pose fitted skeleton has no place here; the animated skeleton (if
+    // shown) follows the clip instead. Apply the chosen 3-way view.
+    ensureViewport().setSkeletonVisible(false)
+    ensureViewport().setAnimateView(animateView)
     // Mount the persistent preview canvas and load the creature's library once.
     const slot = app.querySelector<HTMLElement>('#clip-preview')
     if (slot !== null && chosen !== null) {
@@ -1376,6 +1389,12 @@ async function maybeAutoload(): Promise<void> {
   await ensureClips()
   clip = clips?.find((c) => c.name === autoclip)?.name ?? clips?.[0]?.name ?? null
   activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  // Dev/screenshot: preselect the 3-way view so the animated skeleton can be shot.
+  const view = await devAnimateView().catch(() => null)
+  if (view === 'mesh' || view === 'skeleton' || view === 'both') {
+    animateView = view
+    ensureViewport().setAnimateView(view)
+  }
   render()
   await ensureLibrary(template)
   await runPreview()
