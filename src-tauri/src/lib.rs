@@ -180,6 +180,14 @@ fn dev_autoexport() -> Option<String> {
     std::env::var("M2M_AUTOEXPORT").ok()
 }
 
+/// Dev/screenshot harness: when `M2M_AUTOPROCEED` is set and the import is
+/// already rigged, drive "Proceed to Animate" (read its own rig, bind, jump to
+/// Animate) so the skip-rigging flow can be screenshotted.
+#[tauri::command]
+fn dev_auto_proceed() -> bool {
+    std::env::var("M2M_AUTOPROCEED").is_ok()
+}
+
 /// Dev/testing harness: when `M2M_AUTO_ORBIT` is set, the Animate flow dispatches
 /// a synthetic left-drag across the viewport so camera orbit can be verified in a
 /// screenshot (WKWebView drops synthetic OS mouse events, so the drag must be
@@ -679,6 +687,7 @@ pub fn run() {
             dev_animate_mirror,
             dev_animate_arm_space,
             dev_autoexport,
+            dev_auto_proceed,
             dev_auto_orbit,
             log_line,
             import_model,

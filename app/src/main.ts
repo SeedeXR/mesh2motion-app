@@ -42,11 +42,13 @@ import {
   devAnimateArmSpace,
   devAutoexport,
   devAutoOrbit,
+  devAutoproceed,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
   fitSkeleton,
+  skeletonFromImport,
   fitFromMarkers,
   previewAnimation,
   importModel,
@@ -140,6 +142,8 @@ let markerSaveStatus: string | null = null
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
 let binding = false
+/** True while "Proceed to Animate" reads an already-rigged import's own skeleton. */
+let riggingImport = false
 
 /** The file the rigged model was last written to. */
 let exported: string | null = null
@@ -336,9 +340,12 @@ function renderInspector(step: StepDef): string {
     </dl>
     ${
       rigged
-        ? `<p style="color:var(--fg-1)">This model is already rigged. Its skeleton, weights and
-             ${model.clips.length === 1 ? 'clip are' : 'clips are'} kept \u2014 re-rigging is
-             yours to choose, not the default.</p>`
+        ? `<p style="color:var(--fg-1)">This model is already rigged \u2014 skip fitting and animate
+             its own skeleton with our clips, or re-rig from a template instead.</p>
+           <button id="proceed-rigged" class="action primary" ${riggingImport ? 'disabled' : ''}>${
+             riggingImport ? 'Reading rig\u2026' : 'Proceed to Animate'
+           }</button>
+           <button id="rerig" class="action" ${riggingImport ? 'disabled' : ''}>Re-rig from template</button>`
         : '<p style="color:var(--fg-2)">No skeleton found. Choose a template in the next step.</p>'
     }
     ${truncated}`
@@ -563,6 +570,32 @@ async function runBind(): Promise<void> {
     record()
   } finally {
     binding = false
+    render()
+  }
+}
+
+/** "Proceed to Animate" for an already-rigged import: read its OWN skeleton,
+ *  bind weights to it, and jump to Animate to retarget our clips onto it —
+ *  skipping the template Choose/Fit steps entirely. */
+async function proceedRigged(): Promise<void> {
+  if (loaded === null || riggingImport || binding) return
+  riggingImport = true
+  render()
+  try {
+    fitted = await skeletonFromImport(loaded.path)
+    // No template; humanoid imports (the common already-rigged case) draw from
+    // the human clip library, and the retarget auto-maps foreign bone names.
+    chosen = 'human'
+    clips = null
+    clip = null
+    // Bind is template-independent (weights solve straight from the skeleton),
+    // so this yields a complete rig with no marker/fit pass. It also unlocks
+    // Animate + Export via furthestStep.
+    await runBind()
+    activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+    record()
+  } finally {
+    riggingImport = false
     render()
   }
 }
@@ -875,7 +908,9 @@ async function ensureTemplates(): Promise<void> {
  *  with no marker set, fall straight through to automatic fitting. */
 function chooseTemplate(name: string): void {
   if (markerSetFor(name) !== null) void enterMarkerMode(name)
-  else void runFit(name)
+  // Animals autofit with no markers; jump to the Fit step so the joint handles
+  // (adjust for precision) and Bind (resolve) are surfaced, not hidden.
+  else void runFit(name, true)
 }
 
 /** Enters the marker-placement flow for a template: clears any prior rig, shows
@@ -1006,7 +1041,7 @@ async function runMarkerFit(): Promise<void> {
 }
 
 /** Places the chosen template's skeleton and draws it. */
-async function runFit(name: string): Promise<void> {
+async function runFit(name: string, advance = false): Promise<void> {
   if (loaded === null || fitting) return
   if (markerMode) {
     ensureViewport().endMarkerPlacement()
@@ -1025,6 +1060,8 @@ async function runFit(name: string): Promise<void> {
     // A placed skeleton is what binding needs. The Fit step in between has
     // nothing to complete yet, so it does not gate the one after it.
     furthestStep = Math.max(furthestStep, 3)
+    // Autofit from Choose-skeleton lands on the Fit step so its bone handles show.
+    if (advance) activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
     record()
   } finally {
     fitting = false
@@ -1225,6 +1262,13 @@ function render(): void {
   if (importButton !== null) {
     importButton.addEventListener('click', () => void runImport(importButton))
   }
+
+  // Already-rigged import: skip fitting and animate its own rig, or re-rig.
+  app.querySelector<HTMLButtonElement>('#proceed-rigged')?.addEventListener('click', () => void proceedRigged())
+  app.querySelector<HTMLButtonElement>('#rerig')?.addEventListener('click', () => {
+    activeStep = STEPS.findIndex((s) => s.id === StepId.LoadSkeleton)
+    render()
+  })
 
   const bindButton = app.querySelector<HTMLButtonElement>('#bind')
   bindButton?.addEventListener('click', () => void runBind())
@@ -1484,6 +1528,22 @@ async function maybeAutoload(): Promise<void> {
   if (path === null) return
   const button = document.querySelector<HTMLButtonElement>('#import')
   if (button !== null) await runImport(button)
+
+  // Testing: "Proceed to Animate" for an already-rigged import — read its own
+  // rig, bind, jump to Animate, then optionally play a clip retargeted onto it.
+  if (await devAutoproceed().catch(() => false)) {
+    await proceedRigged()
+    const clipName = await devAutoclip().catch(() => null)
+    if (clipName !== null && chosen !== null) {
+      await ensureClips()
+      clip = clips?.find((c) => c.name === clipName)?.name ?? clips?.[0]?.name ?? null
+      await ensureLibrary(chosen)
+      render()
+      await runPreview()
+      render()
+    }
+    return
+  }
 
   // Testing capture: open a template's marker step EMPTY so a person can place
   // the markers by hand, with a "Save markers" button to log them as a fixture.

@@ -102,6 +102,11 @@ export async function devAutoOrbit(): Promise<boolean> {
   return await invoke<boolean>('dev_auto_orbit')
 }
 
+/** Dev/screenshot: drive "Proceed to Animate" for an already-rigged import. */
+export async function devAutoproceed(): Promise<boolean> {
+  return await invoke<boolean>('dev_auto_proceed')
+}
+
 /** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
 export async function devAnimateMirror(): Promise<boolean> {
   return await invoke<boolean>('dev_animate_mirror')

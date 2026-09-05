@@ -24,8 +24,10 @@ Feasibility (verified, see session notes):
 
 ## Stages
 
-- [ ] S1 (F2 nav). After an animal autofit (`runFit`, no marker set), navigate to the
-      Fit/EditSkeleton step so the joint handles + "Auto-fit again" + Bind are surfaced.
+- [x] S1 (F2 nav). `runFit(name, advance)` — `chooseTemplate` passes `advance` for the
+      no-marker (animal) path so it lands on the Fit step. Verified in compiled .app: buffalo
+      shows the fitted skeleton + draggable joint handles + "Auto-fit again". (Note: the animal
+      autofit placement is rough — a reason S5's reference should be the OWN rig, not autofit.)
 - [x] S2 (F1 backend a). `skeleton_from_import(model) -> FittedSkeleton` + Tauri command
       `skeleton_from_import` + IPC `skeletonFromImport`. Reads the model's own skin (names,
       parents, world positions, local rest rotations). Tested on buffalo (rigged, forest of
@@ -35,9 +37,10 @@ Feasibility (verified, see session notes):
       it only if it maps more). `known_rigs()` embeds mixamo/rigify JSON via include_str!.
       Tested: 47 pipeline tests still pass (templates unregressed) + a new end-to-end test
       proving a `mixamorig:`-named import retargets a human clip (motion actually transfers).
-- [ ] S4 (F1 frontend). Rigged-import inspector: "Proceed to Animate" / "Re-rig" choice.
-      Proceed → build fitted-from-import, pick library (human for humanoid), unlock+jump to
-      Animate. Verify in compiled .app with a Mixamo-rigged humanoid.
+- [x] S4 (F1 frontend). Rigged-import inspector: "Proceed to Animate" / "Re-rig from template".
+      Proceed → `skeletonFromImport` → bind → chosen='human' → jump to Animate. Verified in the
+      compiled .app: the Mixamo fixture imported, skipped fitting, and PLAYS Chest_Open
+      retargeted onto its own mixamorig skeleton (clean deformation). (M2M_AUTOPROCEED dev hook.)
 - [ ] S5 (F2 renders). Render each rigged animal sample (app capture: load → autofit →
       mesh+skeleton) to a reference image; show it in the animal Fit step (a
       MARKER_GUIDES-equivalent for animals). Verify in compiled .app.
