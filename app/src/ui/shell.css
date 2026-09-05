@@ -201,8 +201,8 @@ body {
    Size and position mirror LOUPE_SIZE / LOUPE_MARGIN in scene.ts. */
 .marker-loupe {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  top: 60px; /* below .viewport-nav; mirrors LOUPE_TOP in scene.ts */
+  right: 12px;
   width: 180px;
   height: 180px;
   z-index: 1;

@@ -69,12 +69,14 @@ import {
 const FOV_DEGREES = 45
 
 // The marker-placement "precision preview": a magnified inset (Mixamo's loupe)
-// pinned to the viewport's top-left, showing a close-up of the joint under the
-// pointer so a marker can be dropped exactly. Fixed pixel size — this flow is a
+// pinned to the viewport's top-right, showing a close-up of the joint under the
+// pointer so a marker can be dropped exactly. It sits just below the persistent
+// viewport-nav toolbar (LOUPE_TOP clears it). Fixed pixel size — this flow is a
 // desktop interaction. ponytail: make it responsive if it ever ships on small
 // screens.
 const LOUPE_SIZE = 180
 const LOUPE_MARGIN = 12
+const LOUPE_TOP = 60
 const LOUPE_ZOOM = 9
 
 /**
@@ -980,14 +982,14 @@ export function createViewport(): Viewport {
     if (loupeEl !== null) loupeEl.hidden = !loupeShown
   }
 
-  /** Renders the magnified close-up into the top-left inset (scissored so it
+  /** Renders the magnified close-up into the top-right inset (scissored so it
    *  overwrites just that corner of the frame the main pass already drew). */
   function renderLoupe(): void {
     const size = renderer.getSize(loupeSize)
-    // Top-left corner: the top-right already holds the persistent viewport-nav
-    // toolbar. (WebGL's viewport origin is bottom-left, so "top" is size.y - …)
-    const x = LOUPE_MARGIN
-    const y = size.y - LOUPE_SIZE - LOUPE_MARGIN
+    // Top-right, below the nav toolbar. (WebGL's viewport origin is bottom-left,
+    // so a "top" offset of LOUPE_TOP becomes size.y - LOUPE_SIZE - LOUPE_TOP.)
+    const x = size.x - LOUPE_SIZE - LOUPE_MARGIN
+    const y = size.y - LOUPE_SIZE - LOUPE_TOP
     loupeDir.copy(camera.position).sub(loupeTarget)
     const dist = loupeDir.length() || 1
     loupeCamera.position

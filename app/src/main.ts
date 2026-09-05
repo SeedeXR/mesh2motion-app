@@ -1276,10 +1276,12 @@ async function maybeAutoload(): Promise<void> {
     if (await devAutomarkHover().catch(() => false)) {
       const canvas = ensureViewport().canvas
       const rect = canvas.getBoundingClientRect()
+      // Dead-centre lands on the torso for any full-body framing (a fixed
+      // fraction lower down can miss the mesh when the model frames smaller).
       canvas.dispatchEvent(
         new PointerEvent('pointermove', {
           clientX: rect.left + rect.width / 2,
-          clientY: rect.top + rect.height * 0.42,
+          clientY: rect.top + rect.height / 2,
           bubbles: true
         })
       )
