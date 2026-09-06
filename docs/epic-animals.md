@@ -120,3 +120,19 @@ pupils, coat/whiskers intact. Injection script pattern is in the session; bake s
   wiring correctness.
 - `cat2` source → public name **cat** (clips `cat2_`→`cat_`). Confirm the same species
   naming for the rest as they're wired.
+
+## Idle front-leg planting (DONE)
+User: "while leopard is idle breathing the front legs should be grounded shouldn't be moving."
+Cause: the idle clip only breathes (19 of 978 channels animate — spine/neck/head rotation); the
+leg bones are static. But the front legs hang off Chest_M → Spine3→2→1 → Root, so the accumulated
+spine/chest breathing dragged the front paws ~73mm horizontally, ~25mm vertically (FK-measured).
+Back legs hang off Pelvis→Root (barely moves), so they were fine — which is why it was the FRONT
+legs. Fix (bake, no re-export): world-lock the front legs by replacing ScapularAim_L/R's constant
+local rotation+translation in leopard_idle with 97-key channels = inv(Q(f))·Q(0)·rest, where
+Q(f) = the FK product of Spine1·Spine2·Spine3·Chest at frame f. This holds each front leg's
+frame-0 WORLD pose while the torso still breathes. Applied to BOTH leopard.glb (own-clips) and
+leopard-animations.glb (template-fit). Validated: frontToes range 0.00mm after; rig/clips intact;
+Rust reader + app + pipeline suites green. Verified in the compiled .app (front paws pixel-identical
+across idle frames). GOTCHA that bit once: don't set a top-level `samplers` to null — the strict
+m2m-io glb reader rejects `"samplers":null` (only the char glb had a real samplers list from the
+eye textures, so the library broke until the stray line was removed).
