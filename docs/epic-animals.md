@@ -97,24 +97,22 @@ Authored locomotion clips carry root translation; played as-is the model drifts 
 on the Z-up animal assets, where forward travel lands on the viewer's up axis. `scene.ts
 playAnimated` now strips the root bones' `.position` tracks so the cycle plays in place.
 
-## Leopard eyes (NEXT — not yet done)
-Ask: "real leopard eye texture pupil sclera etc" (sequenced AFTER "make it work"; that part
-is done). Current state: each eye is ONE sphere mesh (leopard.glb meshes 37/38) with ONE
-iris-only material (37 `leopard_iris_eye_l`, 38 `_r`), flat amber baseColorFactor
-[0.55,0.33,0.07,1] (commit ad71d13), NO texture, NO pupil/sclera. Big cats (Panthera) have
-ROUND pupils, not slits — so the target is a round dark pupil on the amber iris, minimal
-sclera.
-Constraint found this session: the model is Y-up, long axis Z, head at +Z (it faces +Z);
-each eyeball is ~8mm radius. The gaze/front-facing region maps to a STRETCHED, seam-crossing
-UV span (a ~22° forward cap spans u≈[0.12,0.71] but v≈[0.35,0.64]) — so a naive round disc
-painted in UV space would NOT map to a round pupil on the eye. Blind JSON texture injection
-would need many .app-rebuild iterations to align. Correct approach: use Blender to SEE the
-eye UV layout, place/bake an aligned iris+pupil texture, then inject ONLY the PNG (new image
-+bufferView+texture+sampler, assign baseColorTexture to mats 37/38) via in-place glb edit —
-do NOT re-export the model from Blender (would risk the 326-bone rig + embedded clips that
-own-clips depends on). Blender MCP was unresponsive during this session (peer
-`blender-claude-experiments` sessions likely held it) — retry when free. Pupil size/dilation
-is an aesthetic call worth confirming with the user.
+## Leopard eyes (DONE)
+Ask: "real leopard eye texture pupil sclera etc" → user chose "mostly iris big cat". Big cats
+(Panthera) have ROUND pupils, not slits. Each eye is ONE sphere mesh (leopard.glb meshes
+37/38, materials `leopard_iris_eye_l/_r`); was flat amber, no pupil.
+Approach (worked): Blender only BAKES, never re-exports. Import leopard.glb, set the armature
+`pose_position='REST'` (else the posed head rotates the world normals off the gaze), build a
+geometry-driven shader on each eye material — dot(world Normal, gaze) → ColorRamp (black round
+pupil ~15.6°, golden-amber iris, dark limbal edge, dark hidden back); gaze = normalize(±0.5,
+-1, 0) in Blender space (glTF +Y-up→Blender +Z-up makes the leopard face -Y). Because the
+shader is geometry-driven, the seamed UV doesn't matter — bake EMIT to a 1024² PNG in the
+eye's UV (save Non-Color so texel bytes round-trip as sRGB baseColor). Then inject ONLY the
+PNGs into leopard.glb via in-place glb edit (append to BIN, add image+bufferView+texture, set
+baseColorTexture on mats 37/38, texCoord 0, baseColorFactor white) — NO re-export, so the
+326-bone rig + 5 clips are byte-identical (validated: nodes/joints/anims/accessors unchanged;
+own-clips still 978/978 tracks). Verified in the compiled .app: golden-amber eyes with round
+pupils, coat/whiskers intact. Injection script pattern is in the session; bake settings above.
 
 ## Open questions / notes
 - The app re-fits + re-binds when a user picks a template; the asset's own careful weights
