@@ -50,9 +50,14 @@ tolerates unclaimed bones.
       3 root bones (all children of a non-joint armature) and no spine, so the fitter
       (needs one root + a spine) can't fit it. Options: a template-system change (allow
       multi-root/spineless), or ship it as a Proceed-only sample. Raised with the user.
-- [ ] A3. Refresh existing 6 (**buffalo, rhino, giraffe, hyena, elephant, crow**) to the
-      native rigs+libraries. Rewrite their manifests to native names; update the fit tests
-      that assert the old canonical bone names/counts.
+- [x] A3. All 9 animals ship as ANIMATED character samples in `assets/characters/*.glb`
+      (LFS, bundled): buffalo/elephant/giraffe/hyena/rhino replaced with the animals-3d
+      animated versions (were 0-1 clips), crow + butterfly + cat + leopard added. Loading any
+      of them → "Animate its own clips" → it animates (verified buffalo + leopard in the
+      compiled .app). The `_source_` raws are hidden by the UI. butterfly is UN-deferred: it
+      needs no fit/spine for own-clips. The canonical templates (rig+library+manifest) for the
+      existing 6 are left as-is (they serve the fit-onto-unrigged-user-mesh path).
+      Follow-up: refresh those canonical libraries to the better clips (needs a retarget pass).
 - [ ] A4. Naming pass: confirm public template/clip names (cat done; check others).
 - [ ] A5. (separate) Task A: improve the animal AUTOFIT + bind quality (the cat/buffalo
       fit is rough — the app re-fits + re-solves weights rather than using the asset's
