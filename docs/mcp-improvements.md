@@ -56,9 +56,14 @@ commits with the Co-Authored-By trailer.
   (`pipeline::fit_from_markers`) — pin named joints to measured positions. Tests: suggest
   ranks human top for a human mesh; marker-fit places joints (bones=66). Retarget-quality
   on export DEFERRED (needs export_glb to surface RetargetReport — a separate change).
-- [ ] **6. Add-on upgrade (Python).** `render` command (viewport PNG back), richer
-  report (over-influence, unweighted, bbox, materials, non-manifold), N-panel status UI,
-  optional socket token.
+- [x] **6. Add-on upgrade (Python).** `render` command (renders the scene, returns a
+  base64 PNG — eyes into live Blender); richer report (unweighted + over-influence vertex
+  counts, world bbox, material names, alongside the existing bone/weight counts); a
+  View3D N-panel with server status + start/stop; optional socket token (`M2M_BRIDGE_TOKEN`);
+  stderr+file logging (`M2M_BRIDGE_LOG`); the accept loop now drops a malformed request
+  instead of dying. Pure logic (token/report/parse) split out and unit-tested without
+  Blender (`blender-addon/tests/test_bridge.py`, 3 tests); enriched report + render verified
+  end-to-end against real headless Blender; Rust `BlenderReport` ignores the new fields.
 
 ## Notes / decisions
 - ffmpeg path: reuse the bridge's tool-discovery pattern (env override + PATH); if
