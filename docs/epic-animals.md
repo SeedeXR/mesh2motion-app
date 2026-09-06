@@ -58,6 +58,24 @@ tolerates unclaimed bones.
       fit is rough — the app re-fits + re-solves weights rather than using the asset's
       own). Task B: fine bone precision editing.
 
+## Own-clips animation (the fix for animating rigged samples)
+An already-rigged, animated model (the animal samples) now offers **"Animate its own
+clips"** in the rigged-import inspector — it plays the model's OWN embedded clips directly
+(`playAnimated` on the model's own bytes), no fit, no retarget. Verified on leopard:
+978/978 tracks drive the mesh, it animates cleanly.
+
+WHY this was needed: template-fit + retarget onto an ALREADY-rigged source hits a graft bug
+— the export appends a second bone set with the same names, the glTF loader renames the
+collision (`Root_M`→`Root_M_1`), so the animation drives one set and the skin the other →
+`tracksMatchingSkin=0`, frames play but the mesh is frozen. Own-clips sidesteps it (single
+skeleton). The template flow still works for an UNRIGGED user mesh (no collision).
+`scene.ts playAnimated` now logs `[animate] <clip>: <driven>/<total> tracks drive the mesh`
+and warns when 0 (the bug signature).
+
+Follow-up: the template-fit-onto-already-rigged path still has the graft duplicate-bone bug
+(fix graft_skin to strip the source skeleton) — lower priority now that own-clips + F1
+Proceed both work. Clip previews for own-clips (the top thumbnail) not yet wired.
+
 ## Open questions / notes
 - The app re-fits + re-binds when a user picks a template; the asset's own careful weights
   are not used (F1 "use original weights" would help). Fit quality is task A, separate from

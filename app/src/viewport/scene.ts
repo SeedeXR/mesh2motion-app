@@ -1205,6 +1205,18 @@ export function createViewport(): Viewport {
       const clip = findClip(contents.clips, clipName)
       if (clip === undefined) return null
 
+      // Observability: a clip whose tracks drive NONE of the skin's bones plays
+      // its frames without deforming the mesh ("frames advance but nothing moves")
+      // — the signature of a name mismatch between the animation and the skin.
+      const skinBones = new Set<string>()
+      contents.root.traverse((o) => {
+        const mesh = o as unknown as { isSkinnedMesh?: boolean; skeleton?: { bones: { name: string }[] } }
+        if (mesh.isSkinnedMesh) for (const b of mesh.skeleton?.bones ?? []) skinBones.add(b.name)
+      })
+      const driven = clip.tracks.filter((t) => skinBones.has(t.name.split('.')[0] ?? t.name)).length
+      const log = driven === 0 && clip.tracks.length > 0 ? console.warn : console.log
+      log(`[animate] ${clipName}: ${driven}/${clip.tracks.length} tracks drive the mesh`)
+
       // Replace any previous playback subject.
       this.stop()
       clearFittedEditing()

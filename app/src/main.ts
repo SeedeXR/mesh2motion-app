@@ -68,7 +68,7 @@ import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
 import { markerSetFor, slotForClickedSide } from './state/markers'
-import { clipDescription, clipMatches } from './state/clip-index'
+import { clipDescription, clipMatches, humanizeClipName } from './state/clip-index'
 import markerGuideHuman from './assets/marker-guide-human.png'
 
 /** A rendered guide image per template, showing where the markers go on a real
@@ -144,6 +144,12 @@ let bound: BindReport | null = null
 let binding = false
 /** True while "Proceed to Animate" reads an already-rigged import's own skeleton. */
 let riggingImport = false
+/** The imported model's own glb bytes, kept so its OWN clips can be played back
+ *  directly (no retarget) when it arrives already rigged and animated. */
+let modelBytes: ArrayBuffer | null = null
+/** True when Animate plays the imported model's OWN embedded clips rather than
+ *  retargeting a template library onto a fitted skeleton. */
+let ownClips = false
 
 /** The file the rigged model was last written to. */
 let exported: string | null = null
@@ -340,11 +346,21 @@ function renderInspector(step: StepDef): string {
     </dl>
     ${
       rigged
-        ? `<p style="color:var(--fg-1)">This model is already rigged \u2014 skip fitting and animate
-             its own skeleton with our clips, or re-rig from a template instead.</p>
-           <button id="proceed-rigged" class="action primary" ${riggingImport ? 'disabled' : ''}>${
-             riggingImport ? 'Reading rig\u2026' : 'Proceed to Animate'
-           }</button>
+        ? `<p style="color:var(--fg-1)">This model is already rigged${
+            model.clips.length > 0
+              ? ` and carries ${model.clips.length} ${
+                  model.clips.length === 1 ? 'clip' : 'clips'
+                } \u2014 play them directly, or`
+              : ' \u2014'
+          } re-rig from a template, or retarget our clips onto its own skeleton.</p>
+           ${
+             model.clips.length > 0
+               ? '<button id="play-own" class="action primary">Animate its own clips</button>'
+               : ''
+           }
+           <button id="proceed-rigged" class="action${model.clips.length > 0 ? '' : ' primary'}" ${
+             riggingImport ? 'disabled' : ''
+           }>${riggingImport ? 'Reading rig\u2026' : 'Retarget our clips'}</button>
            <button id="rerig" class="action" ${riggingImport ? 'disabled' : ''}>Re-rig from template</button>`
         : '<p style="color:var(--fg-2)">No skeleton found. Choose a template in the next step.</p>'
     }
@@ -600,8 +616,51 @@ async function proceedRigged(): Promise<void> {
   }
 }
 
+/** Animate an already-rigged import with its OWN embedded clips — no fitting,
+ *  no retarget. The mesh is already bound to its own skeleton, so its authored
+ *  clips deform it directly (the correct path for a rigged, animated model). */
+function proceedOwnClips(): void {
+  if (loaded === null) return
+  ownClips = true
+  clip = loaded.import.clips[0] ?? null
+  furthestStep = Math.max(furthestStep, STEPS.findIndex((s) => s.id === StepId.Animate))
+  activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  render()
+  void playOwnClip()
+}
+
+/** Plays the selected own-clip on the imported model's own bytes. */
+async function playOwnClip(): Promise<void> {
+  if (modelBytes === null || clip === null) return
+  const duration = await ensureViewport().playAnimated(modelBytes, clip)
+  if (duration === null) return
+  playing = true
+  clipDuration = duration
+  render()
+  startPlayhead()
+  ensureViewport().setPlaybackRate(playbackRate())
+}
+
 /** The Animate step: pick a clip to retarget onto the rig. */
 function renderAnimateStep(): string {
+  // Own-clips mode: list the imported model's OWN clips (played directly).
+  if (ownClips && loaded !== null) {
+    const names = loaded.import.clips.filter((n) => !n.includes('_source_'))
+    if (names.length === 0) return '<p style="color:var(--fg-2)">This model has no clips.</p>'
+    const rows = names
+      .map(
+        (name) =>
+          `<button class="action template clip-item" data-ownclip="${escape(name)}" ${
+            name === clip ? 'aria-current="true"' : ''
+          }><span class="clip-text"><span class="clip-name">${escape(
+            humanizeClipName(name)
+          )}</span></span></button>`
+      )
+      .join('')
+    return `<p style="color:var(--fg-2)">Playing this model's own clips.</p>${
+      clip === null ? '' : renderTransport()
+    }<div class="clip-list">${rows}</div>`
+  }
   if (fitted === null || chosen === null) {
     return '<p style="color:var(--fg-2)">Choose and fit a skeleton first — a clip is retargeted onto one.</p>'
   }
@@ -1084,6 +1143,9 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       loaded = picked
       const geometry = await loadModel(picked.path)
       geometryBytes = geometry.byteLength
+      // Kept so an already-rigged import can play its OWN clips without a retarget.
+      modelBytes = geometry
+      ownClips = false
       // A model is what the skeleton step needs, so earning it unlocks that step.
       furthestStep = Math.max(furthestStep, 1)
       // The imported-but-unrigged state is the baseline undo returns to.
@@ -1264,6 +1326,7 @@ function render(): void {
   }
 
   // Already-rigged import: skip fitting and animate its own rig, or re-rig.
+  app.querySelector<HTMLButtonElement>('#play-own')?.addEventListener('click', () => proceedOwnClips())
   app.querySelector<HTMLButtonElement>('#proceed-rigged')?.addEventListener('click', () => void proceedRigged())
   app.querySelector<HTMLButtonElement>('#rerig')?.addEventListener('click', () => {
     activeStep = STEPS.findIndex((s) => s.id === StepId.LoadSkeleton)
@@ -1428,6 +1491,17 @@ function render(): void {
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']
     const clipName = button.dataset['clip']
+    // Own-clips mode: play the imported model's OWN clip directly.
+    const ownClipName = button.dataset['ownclip']
+    if (ownClipName !== undefined) {
+      button.addEventListener('click', () => {
+        stopPreview()
+        clip = ownClipName
+        render()
+        void playOwnClip()
+      })
+      return
+    }
     if (clipName !== undefined) {
       // Hovering plays the clip in the chooser preview; clicking selects it.
       button.addEventListener('mouseenter', () => clipPreview?.play(clipName))
@@ -1449,16 +1523,17 @@ function render(): void {
   })
 
   if (step.id === StepId.Animate) {
-    void ensureClips()
-    // The rest-pose fitted skeleton has no place here; the animated skeleton (if
-    // shown) follows the clip instead. Apply the chosen 3-way view.
     ensureViewport().setSkeletonVisible(false)
     ensureViewport().setAnimateView(animateView)
-    // Mount the persistent preview canvas and load the creature's library once.
-    const slot = app.querySelector<HTMLElement>('#clip-preview')
-    if (slot !== null && chosen !== null) {
-      slot.appendChild(ensureClipPreview().canvas)
-      void ensureLibrary(chosen)
+    // Own-clips mode plays the model's own bytes; there is no template library.
+    if (!ownClips) {
+      void ensureClips()
+      // Mount the persistent preview canvas and load the creature's library once.
+      const slot = app.querySelector<HTMLElement>('#clip-preview')
+      if (slot !== null && chosen !== null) {
+        slot.appendChild(ensureClipPreview().canvas)
+        void ensureLibrary(chosen)
+      }
     }
   }
 
@@ -1532,15 +1607,26 @@ async function maybeAutoload(): Promise<void> {
   // Testing: "Proceed to Animate" for an already-rigged import — read its own
   // rig, bind, jump to Animate, then optionally play a clip retargeted onto it.
   if (await devAutoproceed().catch(() => false)) {
-    await proceedRigged()
     const clipName = await devAutoclip().catch(() => null)
-    if (clipName !== null && chosen !== null) {
-      await ensureClips()
-      clip = clips?.find((c) => c.name === clipName)?.name ?? clips?.[0]?.name ?? null
-      await ensureLibrary(chosen)
+    // A rigged, animated import plays its OWN clips; otherwise retarget our lib.
+    if (loaded !== null && loaded.import.clips.length > 0) {
+      ownClips = true
+      clip = loaded.import.clips.find((n) => n === clipName) ?? loaded.import.clips[0] ?? null
+      furthestStep = Math.max(furthestStep, STEPS.findIndex((s) => s.id === StepId.Animate))
+      activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
       render()
-      await runPreview()
+      await playOwnClip()
       render()
+    } else {
+      await proceedRigged()
+      if (clipName !== null && chosen !== null) {
+        await ensureClips()
+        clip = clips?.find((c) => c.name === clipName)?.name ?? clips?.[0]?.name ?? null
+        await ensureLibrary(chosen)
+        render()
+        await runPreview()
+        render()
+      }
     }
     return
   }
