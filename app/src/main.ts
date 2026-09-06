@@ -18,7 +18,8 @@ import {
   Pause,
   Rewind,
   FastForward,
-  Square
+  Square,
+  Hand
 } from 'lucide'
 import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
@@ -197,6 +198,9 @@ let viewport: Viewport | null = null
 
 /** Which model-transform tool is active (rotate/move the model), or none. */
 let transformMode: 'none' | 'rotate' | 'translate' = 'none'
+
+/** Whether the Pan view toggle is on (left-drag pans, to follow a travelling clip). */
+let panView = false
 
 /** The clip chooser's moving preview, created on first use, and which creature's
  *  library it has loaded. */
@@ -1227,7 +1231,12 @@ function renderGuidance(step: StepDef): string {
 
 /** The floating viewport controls: frame, zoom, and the front/side/top presets.
  *  A mouse-free way to do what orbit/scroll do, and a discoverable one. */
-function renderViewportNav(): string {
+function renderViewportNav(canPan: boolean): string {
+  const pan = canPan
+    ? `<button class="nav-btn" data-nav-mode="pan" aria-pressed="${panView}" title="Pan the view — drag to move the scene and follow the animation" aria-label="Pan the view">
+        <i data-lucide="hand" width="16" height="16" aria-hidden="true"></i>
+      </button>`
+    : ''
   return `
     <div class="viewport-nav" role="toolbar" aria-label="Viewport controls">
       <button class="nav-btn" data-view-action="frame" title="Frame the model" aria-label="Frame the model">
@@ -1239,6 +1248,7 @@ function renderViewportNav(): string {
       <button class="nav-btn" data-view-action="zoom-out" title="Zoom out" aria-label="Zoom out">
         <i data-lucide="zoom-out" width="16" height="16" aria-hidden="true"></i>
       </button>
+      ${pan}
       <span class="nav-sep"></span>
       <button class="nav-btn" data-transform="translate" aria-pressed="false" title="Move the model (independent of the grid)" aria-label="Move the model">
         <i data-lucide="move-3d" width="16" height="16" aria-hidden="true"></i>
@@ -1283,7 +1293,7 @@ function render(): void {
             <div>${loaded === null ? 'Import a mesh to begin' : 'Viewport rendering arrives with the model preview step'}</div>
           </div>
         </div>
-        ${loaded === null ? '' : renderViewportNav()}
+        ${loaded === null ? '' : renderViewportNav(step.id === StepId.Animate)}
         <div class="guidance">${renderGuidance(step)}</div>
       </main>
 
@@ -1305,12 +1315,15 @@ function render(): void {
     stage?.querySelector('.viewport-empty')?.remove()
     stage?.prepend(ensureViewport().canvas)
     // Plain left-drag orbits in Animate (nothing to select there); elsewhere left
-    // stays free for joint/marker picking.
+    // stays free for joint/marker picking. Pan mode is Animate-only, so leaving it
+    // releases left back to picking.
     ensureViewport().setLeftOrbit(step.id === StepId.Animate)
+    if (step.id !== StepId.Animate) panView = false
+    ensureViewport().setPanMode(panView)
   }
 
   createIcons({
-    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle, Pause, Rewind, FastForward, Square }
+    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle, Pause, Rewind, FastForward, Square, Hand }
   })
 
   // Viewport navigation toolbar: frame / zoom / preset views.
@@ -1327,6 +1340,15 @@ function render(): void {
     const preset = button.dataset['viewPreset'] as ViewPreset | undefined
     if (preset === undefined) return
     button.addEventListener('click', () => ensureViewport().setView(preset))
+  })
+
+  // Pan-view toggle (Animate): rebinds left-drag to pan so a trackpad can follow
+  // a travelling clip without the awkward right-drag.
+  const panButton = app.querySelector<HTMLButtonElement>('[data-nav-mode="pan"]')
+  panButton?.addEventListener('click', () => {
+    panView = !panView
+    ensureViewport().setPanMode(panView)
+    panButton.setAttribute('aria-pressed', String(panView))
   })
 
   // Rotate / move the model. Clicking a tool toggles it; the two are mutually

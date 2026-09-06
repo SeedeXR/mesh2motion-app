@@ -91,7 +91,8 @@ const LOUPE_ZOOM = 9
 function installBlenderNavigation(
   controls: OrbitControls,
   dom: HTMLElement,
-  leftOrbits: () => boolean
+  leftOrbits: () => boolean,
+  leftPans: () => boolean
 ): void {
   const action = (e: PointerEvent): MOUSE => {
     if (e.shiftKey) return MOUSE.PAN
@@ -107,8 +108,10 @@ function installBlenderNavigation(
         controls.mouseButtons = { LEFT: action(e), MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
       } else if (e.button === 0) {
         // The Animate step has nothing to select or place, so plain left orbits
-        // there; elsewhere left stays unbound for joint/marker picking.
-        const left = leftOrbits() ? MOUSE.ROTATE : undefined
+        // there; elsewhere left stays unbound for joint/marker picking. The Pan
+        // toggle (Animate) rebinds plain left to pan, so a trackpad can follow a
+        // travelling clip without the awkward right-drag.
+        const left = leftPans() ? MOUSE.PAN : leftOrbits() ? MOUSE.ROTATE : undefined
         controls.mouseButtons = { LEFT: left, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
       }
     },
@@ -247,6 +250,9 @@ export interface Viewport {
   /** Lets plain left-drag orbit the camera (the Animate step, where left has no
    *  selection role). Off elsewhere so left stays free for picking. */
   setLeftOrbit(enabled: boolean): void
+  /** Rebinds plain left-drag to pan instead of orbit — the Pan toggle, so a
+   *  trackpad can follow a travelling clip. Takes precedence over left-orbit. */
+  setPanMode(enabled: boolean): void
   /**
    * Draws a weight-paint overlay: a colour-baked model shown with its vertex
    * colours, replacing whatever was on screen. Returns to `showFittedSkeleton`
@@ -349,7 +355,13 @@ export function createViewport(): Viewport {
   // Left-drag orbits only in the Animate step (set via setLeftOrbit); elsewhere
   // left is reserved for selecting joints and placing markers.
   let leftOrbits = false
-  installBlenderNavigation(controls, renderer.domElement, () => leftOrbits)
+  let panMode = false
+  installBlenderNavigation(
+    controls,
+    renderer.domElement,
+    () => leftOrbits,
+    () => panMode
+  )
 
   // Image-based lighting from a neutral studio room — the same trick the glTF
   // sample viewer and three's editor use. It gives PBR materials soft ambient
@@ -1217,19 +1229,11 @@ export function createViewport(): Viewport {
       const log = driven === 0 && clip.tracks.length > 0 ? console.warn : console.log
       log(`[animate] ${clipName}: ${driven}/${clip.tracks.length} tracks drive the mesh`)
 
-      // Play in place: authored locomotion clips carry ROOT MOTION (the animal
-      // travels), which reads as the model drifting/flying off — worst on assets
-      // exported Z-up, where the forward travel lands on the viewer's up axis.
-      // Drop the root bones' position tracks so the cycle plays on the spot; the
-      // limbs still move. (A root bone is one whose parent is not itself a bone.)
-      const rootBones = new Set<string>()
-      contents.root.traverse((o) => {
-        const bone = o as unknown as { isBone?: boolean; name: string; parent?: { isBone?: boolean } }
-        if (bone.isBone && bone.parent?.isBone !== true) rootBones.add(bone.name)
-      })
-      clip.tracks = clip.tracks.filter(
-        (t) => !(t.name.endsWith('.position') && rootBones.has(t.name.slice(0, -'.position'.length)))
-      )
+      // Root motion is kept: authored locomotion clips travel forward so the
+      // creature actually locomotes across the ground (pan the view to follow).
+      // Every shipped clip travels on the ground plane with zero net vertical
+      // drift, so nothing flies up; a clip that genuinely drifted upward would
+      // need its vertical component detrended here, but none do.
 
       // Replace any previous playback subject.
       this.stop()
@@ -1349,6 +1353,10 @@ export function createViewport(): Viewport {
 
     setLeftOrbit(enabled): void {
       leftOrbits = enabled
+    },
+
+    setPanMode(enabled): void {
+      panMode = enabled
     },
 
     setSkeletonVisible(visible): void {
