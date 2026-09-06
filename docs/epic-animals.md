@@ -97,6 +97,25 @@ Authored locomotion clips carry root translation; played as-is the model drifts 
 on the Z-up animal assets, where forward travel lands on the viewer's up axis. `scene.ts
 playAnimated` now strips the root bones' `.position` tracks so the cycle plays in place.
 
+## Leopard eyes (NEXT — not yet done)
+Ask: "real leopard eye texture pupil sclera etc" (sequenced AFTER "make it work"; that part
+is done). Current state: each eye is ONE sphere mesh (leopard.glb meshes 37/38) with ONE
+iris-only material (37 `leopard_iris_eye_l`, 38 `_r`), flat amber baseColorFactor
+[0.55,0.33,0.07,1] (commit ad71d13), NO texture, NO pupil/sclera. Big cats (Panthera) have
+ROUND pupils, not slits — so the target is a round dark pupil on the amber iris, minimal
+sclera.
+Constraint found this session: the model is Y-up, long axis Z, head at +Z (it faces +Z);
+each eyeball is ~8mm radius. The gaze/front-facing region maps to a STRETCHED, seam-crossing
+UV span (a ~22° forward cap spans u≈[0.12,0.71] but v≈[0.35,0.64]) — so a naive round disc
+painted in UV space would NOT map to a round pupil on the eye. Blind JSON texture injection
+would need many .app-rebuild iterations to align. Correct approach: use Blender to SEE the
+eye UV layout, place/bake an aligned iris+pupil texture, then inject ONLY the PNG (new image
++bufferView+texture+sampler, assign baseColorTexture to mats 37/38) via in-place glb edit —
+do NOT re-export the model from Blender (would risk the 326-bone rig + embedded clips that
+own-clips depends on). Blender MCP was unresponsive during this session (peer
+`blender-claude-experiments` sessions likely held it) — retry when free. Pupil size/dilation
+is an aesthetic call worth confirming with the user.
+
 ## Open questions / notes
 - The app re-fits + re-binds when a user picks a template; the asset's own careful weights
   are not used (F1 "use original weights" would help). Fit quality is task A, separate from
