@@ -950,15 +950,17 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
     assert_eq!(
         names,
         [
-            "bird", "buffalo", "cat", "crow", "dragon", "elephant", "fox", "giraffe", "horse",
-            "human", "hyena", "kaiju", "leopard", "rhino", "shark", "snake", "spider",
+            "bird", "buffalo", "cat", "crow", "dragon", "elephant", "fish", "fox", "giraffe",
+            "horse", "human", "hyena", "kaiju", "leopard", "rhino", "shark", "snake", "spider",
+            "whaleshark",
         ]
     );
 
     // Manifest-claimed bones. cat adds the fox skeleton's 49 (715 -> 764); the
     // leopard manifest chains 49 of its 326 (the rest are unclaimed detail bones).
+    // fish (19) and whaleshark (33) chain every bone they have (+52 -> 865).
     let bones: usize = shipped.iter().map(|t| t.bones().count()).sum();
-    assert_eq!(bones, 813);
+    assert_eq!(bones, 865);
 }
 
 /// The embedded manifests are the files on disk, not a stale copy.

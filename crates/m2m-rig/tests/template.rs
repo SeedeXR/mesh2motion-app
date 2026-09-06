@@ -512,6 +512,9 @@ fn each_creature_has_the_chains_it_should() {
         ("buffalo.json", 4, 0, 1, 0),
         ("hyena.json", 4, 0, 1, 1),
         ("elephant.json", 4, 0, 1, 1),
+        // aquatic: fins are the limbs; the tail is the body axis (spine), as shark
+        ("fish.json", 4, 0, 0, 0),
+        ("whaleshark.json", 4, 0, 0, 1),
     ] {
         let t = load(manifest);
         assert_eq!(
@@ -557,6 +560,8 @@ fn limbs_carry_the_role_that_creature_has() {
         ("buffalo.json", 0, 4, 0, 0),
         ("hyena.json", 0, 4, 0, 0),
         ("elephant.json", 0, 4, 0, 0),
+        ("fish.json", 0, 0, 0, 4),
+        ("whaleshark.json", 0, 0, 0, 4),
     ] {
         let t = load(manifest);
         let count = |role: LimbRole| {
