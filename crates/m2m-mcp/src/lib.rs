@@ -66,6 +66,8 @@ struct Session {
     template: Option<String>,
     fitted: Option<pipeline::FittedSkeleton>,
     falloff: f32,
+    /// Snapshots of joint positions before each adjust, for `undo` (newest last).
+    history: Vec<Vec<[f32; 3]>>,
 }
 
 /// The server: a session plus where to find the animation libraries on disk.
@@ -163,7 +165,9 @@ impl Server {
             "list_templates" => list_templates().map(text),
             "load_asset" => self.load_asset(args).map(text),
             "fit_skeleton" => self.fit_skeleton(args).map(text),
+            "list_joints" => self.list_joints().map(text),
             "adjust_joint" => self.adjust_joint(args).map(text),
+            "undo" => self.undo().map(text),
             "bind_weights" => self.bind_weights(args).map(text),
             "diagnose" => self.diagnose(args).map(text),
             "list_clips" => self.list_clips(args).map(text),
@@ -417,27 +421,97 @@ impl Server {
         });
         self.session.template = Some(template);
         self.session.fitted = Some(fitted);
+        // A fresh fit invalidates the previous skeleton's edit history.
+        self.session.history.clear();
         Ok(pretty(&summary))
     }
 
+    /// List every fitted joint — index, name, world position and parent name —
+    /// so an agent can pick one to adjust by name instead of guessing an index.
+    fn list_joints(&self) -> Result<String, String> {
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let joints: Vec<Value> = (0..fitted.bones.len())
+            .map(|i| {
+                json!({
+                    "index": i,
+                    "name": fitted.bones[i],
+                    "position": fitted.positions[i],
+                    "parent": fitted.parents[i].map(|p| fitted.bones[p].clone()),
+                })
+            })
+            .collect();
+        Ok(pretty(&json!({ "count": joints.len(), "joints": joints })))
+    }
+
+    /// Move one fitted joint before binding. Address it by `index` or `name`; set
+    /// an absolute `position` or a relative `nudge`; `mirror` also moves the
+    /// left/right counterpart (X negated). Every move is snapshotted for `undo`.
     fn adjust_joint(&mut self, args: &Value) -> Result<String, String> {
-        let index = arg_u64(args, "index")? as usize;
-        let position = arg_vec3(args, "position")?;
+        let mirror = args.get("mirror").and_then(Value::as_bool).unwrap_or(false);
+        // Resolve everything that only needs a shared borrow first.
+        let (index, is_nudge, value, midline) = {
+            let fitted = self
+                .session
+                .fitted
+                .as_ref()
+                .ok_or("no fitted skeleton — call fit_skeleton first")?;
+            let index = resolve_joint(fitted, args)?;
+            let (is_nudge, value) = match args.get("nudge") {
+                Some(nudge) => (true, vec3_of(nudge, "nudge")?),
+                None => (false, arg_vec3(args, "position")?),
+            };
+            // Midline for an absolute-position mirror: the mean joint X (a
+            // symmetric rig sits centred there).
+            let midline = fitted.positions.iter().map(|p| p[0]).sum::<f32>()
+                / fitted.positions.len().max(1) as f32;
+            (index, is_nudge, value, midline)
+        };
+
+        // Snapshot for undo, then apply.
+        self.session
+            .history
+            .push(self.session.fitted.as_ref().unwrap().positions.clone());
+        let fitted = self.session.fitted.as_mut().unwrap();
+        apply_move(&mut fitted.positions[index], is_nudge, value);
+        let mut moved =
+            vec![json!({ "joint": fitted.bones[index], "to": fitted.positions[index] })];
+
+        if mirror {
+            let counterpart = mirror_name(&fitted.bones[index])
+                .and_then(|name| fitted.bones.iter().position(|b| *b == name));
+            if let Some(other) = counterpart {
+                let mirrored = if is_nudge {
+                    [-value[0], value[1], value[2]]
+                } else {
+                    [2.0 * midline - value[0], value[1], value[2]]
+                };
+                apply_move(&mut fitted.positions[other], is_nudge, mirrored);
+                moved.push(json!({ "joint": fitted.bones[other], "to": fitted.positions[other] }));
+            }
+        }
+        Ok(pretty(&json!({ "moved": moved })))
+    }
+
+    /// Undo the last adjust_joint, restoring the joint positions before it.
+    fn undo(&mut self) -> Result<String, String> {
+        let previous = self
+            .session
+            .history
+            .pop()
+            .ok_or("nothing to undo — no joint adjustments have been made")?;
         let fitted = self
             .session
             .fitted
             .as_mut()
             .ok_or("no fitted skeleton — call fit_skeleton first")?;
-        let slot = fitted.positions.get_mut(index).ok_or_else(|| {
-            format!(
-                "joint index {index} out of range (0..{})",
-                fitted.bones.len()
-            )
-        })?;
-        *slot = position;
+        fitted.positions = previous;
         Ok(pretty(&json!({
-            "moved": fitted.bones.get(index),
-            "to": position,
+            "undone": true,
+            "adjustments_left_to_undo": self.session.history.len(),
         })))
     }
 
@@ -606,8 +680,12 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({ "path": { "type": "string", "description": "Absolute path to the model file." } }), json!(["path"])) },
         { "name": "fit_skeleton", "description": "Auto-fit a creature template's skeleton to the loaded mesh.",
           "inputSchema": obj(json!({ "template": { "type": "string", "description": "A template name from list_templates." } }), json!(["template"])) },
-        { "name": "adjust_joint", "description": "Move one fitted joint to refine the placement before binding.",
-          "inputSchema": obj(json!({ "index": { "type": "integer" }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 } }), json!(["index", "position"])) },
+        { "name": "list_joints", "description": "List every fitted joint — index, name, world position, parent — so you can adjust one by name. Needs fit_skeleton first.",
+          "inputSchema": obj(json!({}), json!([])) },
+        { "name": "adjust_joint", "description": "Move one fitted joint to refine placement before binding. Address it by `index` OR `name`; give an absolute `position` OR a relative `nudge`; set `mirror` to also move the left/right counterpart (X mirrored). Undoable with `undo`.",
+          "inputSchema": obj(json!({ "index": { "type": "integer" }, "name": { "type": "string", "description": "Joint name (from list_joints); an alternative to index." }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "New absolute world position." }, "nudge": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "Relative delta added to the current position." }, "mirror": { "type": "boolean", "description": "Also move the L/R counterpart (default false)." } }), json!([])) },
+        { "name": "undo", "description": "Undo the last adjust_joint, restoring the joint positions before it.",
+          "inputSchema": obj(json!({}), json!([])) },
         { "name": "bind_weights", "description": "Bind the mesh to the fitted skeleton and report the weighting.",
           "inputSchema": obj(json!({ "falloff": { "type": "number", "description": "Weight falloff (default 2.0)." } }), json!([])) },
         { "name": "diagnose", "description": "Grade the current fit + bind (pass/warn/fail) with plain findings: unweighted vertices, disconnected islands, the influence histogram, and which joints sit outside the mesh. Needs load_asset + fit_skeleton first.",
@@ -733,10 +811,83 @@ fn arg_str(args: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing required string argument `{key}`"))
 }
 
-fn arg_u64(args: &Value, key: &str) -> Result<u64, String> {
-    args.get(key)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format!("missing required integer argument `{key}`"))
+/// Sets a position absolutely, or adds a delta when `is_nudge`.
+fn apply_move(slot: &mut [f32; 3], is_nudge: bool, value: [f32; 3]) {
+    if is_nudge {
+        for i in 0..3 {
+            slot[i] += value[i];
+        }
+    } else {
+        *slot = value;
+    }
+}
+
+/// Resolves a joint index from an `index` or a `name` argument.
+fn resolve_joint(fitted: &pipeline::FittedSkeleton, args: &Value) -> Result<usize, String> {
+    if let Some(index) = args.get("index").and_then(Value::as_u64) {
+        let index = index as usize;
+        return if index < fitted.bones.len() {
+            Ok(index)
+        } else {
+            Err(format!(
+                "joint index {index} out of range (0..{})",
+                fitted.bones.len()
+            ))
+        };
+    }
+    if let Some(name) = args.get("name").and_then(Value::as_str) {
+        return fitted
+            .bones
+            .iter()
+            .position(|b| b == name)
+            .ok_or_else(|| format!("no joint named {name:?}; call list_joints to see the names"));
+    }
+    Err("give the joint to move as `index` or `name`".to_string())
+}
+
+/// The left/right counterpart of a bone name, swapping the common side markers.
+/// Returns `None` when the name carries no side (a spine or centre bone).
+fn mirror_name(name: &str) -> Option<String> {
+    const PAIRS: [(&str, &str); 6] = [
+        ("_l", "_r"),
+        ("_L", "_R"),
+        (".l", ".r"),
+        (".L", ".R"),
+        ("left", "right"),
+        ("Left", "Right"),
+    ];
+    for (a, b) in PAIRS {
+        if let Some(stem) = name.strip_suffix(a) {
+            return Some(format!("{stem}{b}"));
+        }
+        if let Some(stem) = name.strip_suffix(b) {
+            return Some(format!("{stem}{a}"));
+        }
+        if name.contains(a) {
+            return Some(name.replacen(a, b, 1));
+        }
+        if name.contains(b) {
+            return Some(name.replacen(b, a, 1));
+        }
+    }
+    None
+}
+
+/// Parses a 3-number array from an arbitrary JSON value (for `nudge`).
+fn vec3_of(value: &Value, key: &str) -> Result<[f32; 3], String> {
+    let a = value
+        .as_array()
+        .ok_or_else(|| format!("`{key}` must be a 3-number array"))?;
+    if a.len() != 3 {
+        return Err(format!("`{key}` must have exactly 3 numbers"));
+    }
+    let mut out = [0.0f32; 3];
+    for (i, v) in a.iter().enumerate() {
+        out[i] = v
+            .as_f64()
+            .ok_or_else(|| format!("`{key}[{i}]` is not a number"))? as f32;
+    }
+    Ok(out)
 }
 
 fn arg_vec3(args: &Value, key: &str) -> Result<[f32; 3], String> {
@@ -789,7 +940,77 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 13);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 15);
+    }
+
+    #[test]
+    fn mirror_name_and_apply_move() {
+        assert_eq!(mirror_name("upperarm_l").as_deref(), Some("upperarm_r"));
+        assert_eq!(mirror_name("upperarm_r").as_deref(), Some("upperarm_l"));
+        assert_eq!(mirror_name("Hand_L").as_deref(), Some("Hand_R"));
+        assert_eq!(mirror_name("spine"), None);
+
+        let mut p = [1.0, 2.0, 3.0];
+        apply_move(&mut p, false, [5.0, 5.0, 5.0]);
+        assert_eq!(p, [5.0, 5.0, 5.0], "absolute set");
+        apply_move(&mut p, true, [1.0, -1.0, 0.0]);
+        assert_eq!(p, [6.0, 4.0, 5.0], "relative nudge");
+    }
+
+    /// Adjust by name + nudge + mirror moves both sides; undo restores them and
+    /// then reports there is nothing left to undo.
+    #[test]
+    fn adjust_by_name_nudge_mirror_and_undo() {
+        let mut server = Server::new();
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+
+        let (listed, err) = call(&mut server, "list_joints", json!({}));
+        assert!(!err, "{listed}");
+        let joints: Value = serde_json::from_str(&listed).unwrap();
+        let names: Vec<String> = joints["joints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["name"].as_str().unwrap().to_string())
+            .collect();
+        // A bone that has a side AND whose counterpart exists in this rig.
+        let sided = names
+            .iter()
+            .find(|n| mirror_name(n).is_some_and(|m| names.contains(&m)))
+            .cloned()
+            .expect("the human rig has a left/right bone");
+
+        let (moved, err) = call(
+            &mut server,
+            "adjust_joint",
+            json!({ "name": sided, "nudge": [0.05, 0.0, 0.0], "mirror": true }),
+        );
+        assert!(!err, "{moved}");
+        let moved: Value = serde_json::from_str(&moved).unwrap();
+        assert_eq!(
+            moved["moved"].as_array().unwrap().len(),
+            2,
+            "moved both sides"
+        );
+
+        let (undone, err) = call(&mut server, "undo", json!({}));
+        assert!(!err, "{undone}");
+        // The one adjustment is now undone; a second undo has nothing to do.
+        let (msg, err) = call(&mut server, "undo", json!({}));
+        assert!(err && msg.contains("nothing to undo"), "{msg}");
+
+        // Addressing an unknown name points at list_joints.
+        let (msg, err) = call(
+            &mut server,
+            "adjust_joint",
+            json!({ "name": "no_such_bone" }),
+        );
+        assert!(err && msg.contains("list_joints"), "{msg}");
     }
 
     #[test]

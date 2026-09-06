@@ -43,9 +43,12 @@ commits with the Co-Authored-By trailer.
   footage). Bridge: `ffmpeg_path` discovery (M2M_FFMPEG + PATH), `render_animation`,
   `encode_video`, `sample_video_frames`, `FfmpegNotFound`. Verified end-to-end (whale-shark
   swim → mp4; leopard-running.mp4 → frames). Tests: helpers (sample_evenly/sanitize) + guards.
-- [ ] **4. Robust joint/session tools (MCP).** `list_joints` (name/pos/parent),
-  `adjust_joint` by name + `nudge` delta + `mirror` L↔R, session `undo`, richer
-  next-step error hints.
+- [x] **4. Robust joint/session tools (MCP).** `list_joints` (index/name/pos/parent);
+  `adjust_joint` now takes `index` OR `name`, an absolute `position` OR a relative
+  `nudge`, and `mirror` (moves the L/R counterpart, X mirrored); `undo` reverts the last
+  adjust from a per-session snapshot history (cleared on a fresh fit). Unknown names point
+  at list_joints. Tests: unit (mirror_name, apply_move), integration (name+nudge+mirror
+  moves both sides; undo restores then reports nothing-to-undo).
 - [ ] **5. Smarter fitting (MCP).** `suggest_template` (rank templates for the loaded
   mesh by bone-plan/shape/axis), expose `fit_from_markers`, retarget-quality on export.
 - [ ] **6. Add-on upgrade (Python).** `render` command (viewport PNG back), richer
