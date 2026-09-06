@@ -14,6 +14,49 @@ use std::path::PathBuf;
 /// The MCP protocol revision this server speaks.
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// Structured logging to **stderr** — stdout is the JSON-RPC transport, so a log
+/// line there would corrupt the protocol. Gated by `M2M_MCP_LOG`: `off` silences
+/// everything; `debug` adds per-call detail; anything else (or unset) logs
+/// info + errors. MCP hosts capture a server's stderr, so this is where an
+/// operator sees what the server did and why a call failed.
+pub mod log {
+    /// Is a message at this verbosity enabled? `debug` messages need `M2M_MCP_LOG=debug`.
+    fn enabled(is_debug: bool) -> bool {
+        match std::env::var("M2M_MCP_LOG").ok().as_deref() {
+            Some("off") => false,
+            Some("debug") => true,
+            _ => !is_debug,
+        }
+    }
+
+    /// The formatted line, without the trailing newline — pure, so it is tested.
+    #[must_use]
+    pub fn line(level: &str, msg: &str) -> String {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        format!("[m2m-mcp {millis} {level}] {msg}")
+    }
+
+    pub fn info(msg: &str) {
+        if enabled(false) {
+            eprintln!("{}", line("info", msg));
+        }
+    }
+
+    pub fn error(msg: &str) {
+        if enabled(false) {
+            eprintln!("{}", line("error", msg));
+        }
+    }
+
+    pub fn debug(msg: &str) {
+        if enabled(true) {
+            eprintln!("{}", line("debug", msg));
+        }
+    }
+}
+
 /// A rigging session: what has been loaded and fitted so far. Tools read and
 /// advance it, so an agent drives the pipeline one call at a time.
 #[derive(Default)]
@@ -88,14 +131,25 @@ impl Server {
             .and_then(|p| p.get("arguments"))
             .cloned()
             .unwrap_or_else(|| json!({}));
-        match self.run_tool(&name, &args) {
-            Ok(content) => ok(id, json!({ "content": content })),
+        log::info(&format!("tool {name}"));
+        log::debug(&format!("tool {name} args {args}"));
+        let started = std::time::Instant::now();
+        let outcome = self.run_tool(&name, &args);
+        let ms = started.elapsed().as_millis();
+        match outcome {
+            Ok(content) => {
+                log::info(&format!("tool {name} ok ({ms} ms)"));
+                ok(id, json!({ "content": content }))
+            }
             // A tool failure is a normal result with isError, not a protocol error:
             // the agent reads the message and adjusts.
-            Err(message) => ok(
-                id,
-                json!({ "content": text_content(&message), "isError": true }),
-            ),
+            Err(message) => {
+                log::error(&format!("tool {name} failed ({ms} ms): {message}"));
+                ok(
+                    id,
+                    json!({ "content": text_content(&message), "isError": true }),
+                )
+            }
         }
     }
 
@@ -111,6 +165,7 @@ impl Server {
             "fit_skeleton" => self.fit_skeleton(args).map(text),
             "adjust_joint" => self.adjust_joint(args).map(text),
             "bind_weights" => self.bind_weights(args).map(text),
+            "diagnose" => self.diagnose(args).map(text),
             "list_clips" => self.list_clips(args).map(text),
             "export" => self.export(args).map(text),
             "validate_export" => validate_export(args).map(text),
@@ -267,6 +322,30 @@ impl Server {
         ))
     }
 
+    /// Grade the current fit + bind: disconnected islands, the influence
+    /// histogram, unweighted vertices, and which joints poke outside the mesh,
+    /// rolled into a pass/warn/fail verdict with plain findings to act on.
+    fn diagnose(&self, args: &Value) -> Result<String, String> {
+        let falloff = args
+            .get("falloff")
+            .and_then(Value::as_f64)
+            .map_or(self.session.falloff, |f| f as f32);
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let report = pipeline::diagnose(model, fitted, falloff).map_err(|e| e.to_string())?;
+        Ok(pretty(
+            &serde_json::to_value(&report).map_err(|e| e.to_string())?,
+        ))
+    }
+
     fn list_clips(&self, args: &Value) -> Result<String, String> {
         let template = arg_str(args, "template")?;
         let library = self.library_bytes(&template)?;
@@ -391,6 +470,8 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({ "index": { "type": "integer" }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 } }), json!(["index", "position"])) },
         { "name": "bind_weights", "description": "Bind the mesh to the fitted skeleton and report the weighting.",
           "inputSchema": obj(json!({ "falloff": { "type": "number", "description": "Weight falloff (default 2.0)." } }), json!([])) },
+        { "name": "diagnose", "description": "Grade the current fit + bind (pass/warn/fail) with plain findings: unweighted vertices, disconnected islands, the influence histogram, and which joints sit outside the mesh. Needs load_asset + fit_skeleton first.",
+          "inputSchema": obj(json!({ "falloff": { "type": "number", "description": "Weight falloff to grade at (default: the session's)." } }), json!([])) },
         { "name": "list_clips", "description": "List the animation clips a creature's library offers.",
           "inputSchema": obj(json!({ "template": { "type": "string" } }), json!(["template"])) },
         { "name": "export", "description": "Export the rigged model to a file, optionally with a clip retargeted on.",
@@ -536,7 +617,48 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 10);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 11);
+    }
+
+    #[test]
+    fn log_line_is_prefixed_and_levelled() {
+        let line = log::line("info", "tool fit_skeleton ok");
+        assert!(line.starts_with("[m2m-mcp "), "{line}");
+        assert!(line.contains(" info] tool fit_skeleton ok"), "{line}");
+    }
+
+    /// diagnose grades a real fit+bind, and refuses (with a next-step hint)
+    /// before a skeleton exists. Integration over the tool interface + a
+    /// regression guard on the "fit first" precondition.
+    #[test]
+    fn diagnose_grades_a_fit_and_guards_its_preconditions() {
+        let mut server = Server::new();
+
+        // Precondition: diagnosing before loading names what to do first.
+        let (msg, err) = call(&mut server, "diagnose", json!({}));
+        assert!(err && msg.contains("load_asset"), "{msg}");
+
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        // ...and before fitting.
+        let (msg, err) = call(&mut server, "diagnose", json!({}));
+        assert!(err && msg.contains("fit_skeleton"), "{msg}");
+
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        let (report, err) = call(&mut server, "diagnose", json!({}));
+        assert!(!err, "{report}");
+        let value: Value = serde_json::from_str(&report).unwrap();
+        assert!(
+            ["pass", "warn", "fail"].contains(&value["grade"].as_str().unwrap()),
+            "{report}"
+        );
+        assert!(value["findings"].as_array().is_some_and(|f| !f.is_empty()));
+        assert_eq!(value["joints"], 66);
+        // The human template fits cleanly, so no vertex should detach.
+        assert_eq!(value["bind"]["unweighted_vertices"], 0, "{report}");
     }
 
     #[test]

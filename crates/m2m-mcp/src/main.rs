@@ -25,6 +25,7 @@ fn main() {
     }
 
     let mut server = Server::new();
+    m2m_mcp::log::info("server started (stdio JSON-RPC); set M2M_MCP_LOG=debug for per-call detail, =off to silence");
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
@@ -38,6 +39,7 @@ fn main() {
             Err(e) => {
                 // A parse error is answered with a null-id JSON-RPC error, as the
                 // spec requires, rather than crashing the transport.
+                m2m_mcp::log::error(&format!("parse error, replying -32700: {e}"));
                 let error = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": serde_json::Value::Null,

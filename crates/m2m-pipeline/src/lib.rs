@@ -372,6 +372,153 @@ pub fn bind(model: &[u8], skeleton: &FittedSkeleton, falloff: f32) -> Result<Bin
     Ok(solve(model, skeleton, falloff)?.2)
 }
 
+/// A graded health check of the current fit + bind, rolled into a pass/warn/fail
+/// verdict with plain findings an agent (or a person) can act on. Surfaces the
+/// numbers [`bind`] already computes — disconnected islands, the influence
+/// histogram, unweighted vertices — alongside a joints-inside-the-mesh check.
+#[derive(Debug, Serialize)]
+pub struct DiagnoseReport {
+    /// "pass", "warn" or "fail".
+    pub grade: &'static str,
+    /// Plain-language issues, worst first; a single all-clear line when clean.
+    pub findings: Vec<String>,
+    /// Joints whose position falls outside the mesh surface.
+    pub joints_outside_mesh: Vec<String>,
+    /// Total fitted joints.
+    pub joints: usize,
+    /// The solved fit scale (a value far from 1 hints at a unit mismatch).
+    pub scale: f32,
+    /// The full bind report the grade is drawn from.
+    pub bind: BindReport,
+}
+
+/// Grades the fit + bind of `skeleton` on `model`. See [`DiagnoseReport`].
+pub fn diagnose(
+    model: &[u8],
+    skeleton: &FittedSkeleton,
+    falloff: f32,
+) -> Result<DiagnoseReport, RigError> {
+    let (mesh, _weights, bind) = solve(model, skeleton, falloff)?;
+
+    // Which joints sit grossly off the mesh — a limb placed beside the body, not
+    // a tip at the surface? A misplaced joint is far from EVERY vertex; a
+    // legitimate tip (fingers, toes, head) or the ground-level root sits ~0 from
+    // nearby geometry, so distance separates the two where inside/outside can't
+    // (a skeleton's root, leaves and thin appendages are all at/past the surface).
+    let mut outside = Vec::new();
+    if !mesh.positions.is_empty() {
+        let (mut lo, mut hi) = (mesh.positions[0], mesh.positions[0]);
+        for p in &mesh.positions {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+        let threshold = 0.08 * (hi - lo).length().max(1e-6);
+        let thresh_sq = threshold * threshold;
+        // Subsample vertices so the check stays cheap on dense meshes.
+        let stride = (mesh.positions.len() / 5000).max(1);
+        for (i, p) in skeleton.positions.iter().enumerate() {
+            let joint = glam::Vec3::from(*p);
+            let mut nearest = f32::INFINITY;
+            for v in mesh.positions.iter().step_by(stride) {
+                nearest = nearest.min(joint.distance_squared(*v));
+                if nearest <= thresh_sq {
+                    break;
+                }
+            }
+            if nearest > thresh_sq {
+                outside.push(skeleton.bones[i].clone());
+            }
+        }
+    }
+
+    let verts = bind.vertices.max(1);
+    let mut findings = Vec::new();
+    let (mut fail, mut warn) = (false, false);
+
+    if bind.unweighted_vertices > 0 {
+        fail = true;
+        findings.push(format!(
+            "{} vertices are unweighted — they detach from the skeleton when it moves.",
+            bind.unweighted_vertices
+        ));
+    }
+    if bind.fallback_vertices > 0 {
+        let frac = bind.fallback_vertices as f32 / verts as f32;
+        if frac > 0.05 {
+            fail = true;
+        } else {
+            warn = true;
+        }
+        findings.push(format!(
+            "{} vertices ({:.1}%) fell back to the nearest bone in a straight line — a disconnected island, or a part modelled apart from the body.",
+            bind.fallback_vertices,
+            frac * 100.0
+        ));
+    }
+    if !outside.is_empty() {
+        let frac = outside.len() as f32 / skeleton.bones.len().max(1) as f32;
+        if frac > 0.15 {
+            fail = true;
+        } else {
+            warn = true;
+        }
+        findings.push(format!(
+            "{} of {} joints sit well off the mesh ({}) — a limb likely landed beside the body rather than inside it; adjust_joint can pull them in.",
+            outside.len(),
+            skeleton.bones.len(),
+            preview_names(&outside)
+        ));
+    }
+    let single = bind.influence_histogram[0];
+    if single as f32 / verts as f32 > 0.5 {
+        warn = true;
+        findings.push(format!(
+            "{} vertices ({:.0}%) ride a single bone — deformation there is rigid; a higher falloff blends more bones in.",
+            single,
+            single as f32 / verts as f32 * 100.0
+        ));
+    }
+    if !(0.2..=5.0).contains(&skeleton.scale) {
+        warn = true;
+        findings.push(format!(
+            "the fit scaled the template by {:.2}x — a value far from 1 usually means the mesh units are off (cm vs m).",
+            skeleton.scale
+        ));
+    }
+
+    let grade = if fail {
+        "fail"
+    } else if warn {
+        "warn"
+    } else {
+        "pass"
+    };
+    if findings.is_empty() {
+        findings.push(
+            "no problems: every vertex is weighted, no disconnected islands, every joint inside the mesh."
+                .to_string(),
+        );
+    }
+    Ok(DiagnoseReport {
+        grade,
+        findings,
+        joints_outside_mesh: outside,
+        joints: skeleton.bones.len(),
+        scale: skeleton.scale,
+        bind,
+    })
+}
+
+/// First few names of a list, with a "+N more" tail, for a compact finding.
+fn preview_names(names: &[String]) -> String {
+    const N: usize = 5;
+    if names.len() <= N {
+        names.join(", ")
+    } else {
+        format!("{}, +{} more", names[..N].join(", "), names.len() - N)
+    }
+}
+
 /// The solve behind [`bind`] and [`export_glb`]: mesh, weights and report.
 ///
 /// Export recomputes rather than carrying the weights out to the frontend and
@@ -2624,6 +2771,29 @@ mod tests {
         // smoother still (7104 -> 7129 four-influence) once `fit_limb` stopped
         // aiming the right leg across the body at the left foot.
         assert_eq!(report.influence_histogram, [250, 0, 20, 7129]);
+    }
+
+    /// diagnose grades a clean human fit as pass, with every joint inside the
+    /// mesh and no findings beyond the all-clear line.
+    #[test]
+    fn diagnose_passes_a_clean_human_fit() {
+        let skeleton = fit("human", &model("models/model-human.glb")).expect("fits");
+        let report = super::diagnose(
+            &model("models/model-human.glb"),
+            &skeleton,
+            m2m_core::skinning::DEFAULT_FALLOFF,
+        )
+        .expect("diagnoses");
+
+        assert_eq!(report.grade, "pass", "{:?}", report.findings);
+        assert_eq!(report.joints, 66);
+        assert!(
+            report.joints_outside_mesh.is_empty(),
+            "joints poking out: {:?}",
+            report.joints_outside_mesh
+        );
+        assert_eq!(report.bind.unweighted_vertices, 0);
+        assert_eq!(report.findings.len(), 1, "clean fit has one all-clear line");
     }
 
     /// The auto-fit places the two legs as mirror images.
