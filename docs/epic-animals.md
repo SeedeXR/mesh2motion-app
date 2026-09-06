@@ -157,3 +157,21 @@ The chooser's moving thumbnail only mounted in the template-fit flow; own-clips 
 listed clip names with no preview. Own-clips now mounts the same `#clip-preview` and loads the
 model's OWN bytes (mesh + clips), so hovering a clip plays a textured moving preview — parity
 with the human flow. Caches reset on new import. Verified in the compiled .app (leopard, buffalo).
+
+## Second animal wave — 10 own-clips samples (DONE)
+Wired the animals that shipped only skeleton-only fit templates (shark, bird, spider, horse, fox,
+dragon, snake, kaiju) as loadable `assets/characters/<name>.glb` samples (mesh+rig+clips, LFS) —
+their character sample was the one missing part; rig+library+template already shipped. The source
+is the original app asset (`legacy/static/animations/<name>-animations.glb`, which carries the
+mesh). Plus two aquatic creatures authored from scratch: **whale shark** (thunniform swim, textured)
+and **redfish** (carangiform swim; ships a solid redfish material — its `.mb` texture is not on
+disk). fish + whale shark also got full fit-templates (`wire_animals` → `rig-<name>.glb` +
+`<name>-animations.glb` + `<name>.json`); template counts bumped 17→19, 813→865 bones. All 10
+verified in the compiled .app: load, animate their own clips, textured, grounded on the floor.
+(Leopard's improved gaits are staged separately in the git-ignored `animals-3d/` pending approval.)
+
+## Ground models on the floor (DONE)
+Imported models sat at their native origin, so a model whose origin is at its centreline (the shark)
+was half below the grid. `scene.ts show()` now lifts every model so its lowest point rests on y=0
+(and shifts the framing bounds); `playAnimated` copies the model transform, so clips stay grounded.
+One place, all models. Verified in the compiled .app (shark, fox feet-planted, whale shark, redfish).

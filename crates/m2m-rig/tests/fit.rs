@@ -950,8 +950,24 @@ fn every_shipped_template_is_available_without_touching_the_disk() {
     assert_eq!(
         names,
         [
-            "bird", "buffalo", "cat", "crow", "dragon", "elephant", "fish", "fox", "giraffe",
-            "horse", "human", "hyena", "kaiju", "leopard", "rhino", "shark", "snake", "spider",
+            "bird",
+            "buffalo",
+            "cat",
+            "crow",
+            "dragon",
+            "elephant",
+            "fish",
+            "fox",
+            "giraffe",
+            "horse",
+            "human",
+            "hyena",
+            "kaiju",
+            "leopard",
+            "rhino",
+            "shark",
+            "snake",
+            "spider",
             "whaleshark",
         ]
     );
