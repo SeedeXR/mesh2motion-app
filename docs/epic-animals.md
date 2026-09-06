@@ -136,3 +136,24 @@ Rust reader + app + pipeline suites green. Verified in the compiled .app (front 
 across idle frames). GOTCHA that bit once: don't set a top-level `samplers` to null — the strict
 m2m-io glb reader rejects `"samplers":null` (only the char glb had a real samplers list from the
 eye textures, so the library broke until the stray line was removed).
+
+## Idle drift check across all animals (DONE)
+Checked every animal's idle clip for the leopard-style breathing-drag (feet dragged by a
+breathing torso). FK foot-drift, tails excluded:
+- leopard: fixed (0mm). buffalo: 14mm — SAME cause (only `Back` rotates 0.69°, dragging the
+  rigid back legs); FIXED by world-locking `BackShoulder.L/R` (own-clips character glb; the
+  buffalo LIBRARY is the old single-"Animation" asset, no idle, untouched).
+- cat / elephant / giraffe / rhino: 0mm — feet already planted, nothing to do.
+- hyena: `hyena_Idle` is NOT the passive bug — it's an authored expressive idle (crouch +
+  open-mouth snarl/breath; calf rotates 31°, root translates 64mm). World-locking would break
+  the performance, so left as-is. Hyena has calmer variants (Idle2/Idle3/Sit/Sleep) if wanted.
+- crow / butterfly: flyers, no idle clip.
+General detector (session tool): a "draggable" leg = a static leg (all bones <0.4° rot) whose
+parent IS animated; lock the topmost such bone. This finds buffalo, and correctly skips hyena
+(legs animated) and the already-planted rigs. Same world-lock bake as the leopard fix.
+
+## Own-clips clip preview (DONE)
+The chooser's moving thumbnail only mounted in the template-fit flow; own-clips (animal samples)
+listed clip names with no preview. Own-clips now mounts the same `#clip-preview` and loads the
+model's OWN bytes (mesh + clips), so hovering a clip plays a textured moving preview — parity
+with the human flow. Caches reset on new import. Verified in the compiled .app (leopard, buffalo).
