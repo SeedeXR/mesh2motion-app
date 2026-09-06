@@ -164,7 +164,9 @@ impl Server {
             "session_status" => Ok(text(self.session_status())),
             "list_templates" => list_templates().map(text),
             "load_asset" => self.load_asset(args).map(text),
+            "suggest_template" => self.suggest_template().map(text),
             "fit_skeleton" => self.fit_skeleton(args).map(text),
+            "fit_markers" => self.fit_markers(args).map(text),
             "list_joints" => self.list_joints().map(text),
             "adjust_joint" => self.adjust_joint(args).map(text),
             "undo" => self.undo().map(text),
@@ -426,6 +428,65 @@ impl Server {
         Ok(pretty(&summary))
     }
 
+    /// Rank the shipped templates by how well each one's auto-fit lands inside the
+    /// loaded mesh, best first — a starting point for "which skeleton fits this?".
+    fn suggest_template(&self) -> Result<String, String> {
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let ranked = pipeline::suggest_templates(model).map_err(|e| e.to_string())?;
+        Ok(pretty(
+            &serde_json::to_value(&ranked).map_err(|e| e.to_string())?,
+        ))
+    }
+
+    /// Fit a template by pinning named joints to positions the caller measured on
+    /// the mesh (the marker path), rather than the fully-automatic fit_skeleton.
+    fn fit_markers(&mut self, args: &Value) -> Result<String, String> {
+        let template = arg_str(args, "template")?;
+        let entries = args
+            .get("markers")
+            .and_then(Value::as_array)
+            .ok_or("`markers` must be an array of { bone, position }")?;
+        let mut markers = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let bone = entry
+                .get("bone")
+                .and_then(Value::as_str)
+                .ok_or("each marker needs a `bone` name")?
+                .to_string();
+            let position = vec3_of(
+                entry
+                    .get("position")
+                    .ok_or("each marker needs a `position`")?,
+                "position",
+            )?;
+            markers.push(pipeline::Marker { bone, position });
+        }
+        if markers.is_empty() {
+            return Err("give at least one marker".to_string());
+        }
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted =
+            pipeline::fit_from_markers(&template, &markers, model).map_err(|e| e.to_string())?;
+        let summary = json!({
+            "bones": fitted.bones.len(),
+            "scale": fitted.scale,
+            "markers": markers.len(),
+            "note": "marker-fitted; refine with adjust_joint, then bind_weights",
+        });
+        self.session.template = Some(template);
+        self.session.fitted = Some(fitted);
+        self.session.history.clear();
+        Ok(pretty(&summary))
+    }
+
     /// List every fitted joint — index, name, world position and parent name —
     /// so an agent can pick one to adjust by name instead of guessing an index.
     fn list_joints(&self) -> Result<String, String> {
@@ -678,8 +739,12 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({}), json!([])) },
         { "name": "load_asset", "description": "Load a model (glb/gltf/fbx) into the session and report what it contains.",
           "inputSchema": obj(json!({ "path": { "type": "string", "description": "Absolute path to the model file." } }), json!(["path"])) },
+        { "name": "suggest_template", "description": "Rank the shipped templates by how well each one's auto-fit lands inside the loaded mesh (best first), a starting point for choosing a skeleton. Heuristic — try the top few and refine. Needs load_asset first.",
+          "inputSchema": obj(json!({}), json!([])) },
         { "name": "fit_skeleton", "description": "Auto-fit a creature template's skeleton to the loaded mesh.",
           "inputSchema": obj(json!({ "template": { "type": "string", "description": "A template name from list_templates." } }), json!(["template"])) },
+        { "name": "fit_markers", "description": "Fit a template by pinning named joints to positions measured on the mesh (the marker path), instead of the fully-automatic fit. Needs load_asset first.",
+          "inputSchema": obj(json!({ "template": { "type": "string" }, "markers": { "type": "array", "items": { "type": "object", "properties": { "bone": { "type": "string" }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 } }, "required": ["bone", "position"] }, "description": "One { bone, position } per pinned joint." } }), json!(["template", "markers"])) },
         { "name": "list_joints", "description": "List every fitted joint — index, name, world position, parent — so you can adjust one by name. Needs fit_skeleton first.",
           "inputSchema": obj(json!({}), json!([])) },
         { "name": "adjust_joint", "description": "Move one fitted joint to refine placement before binding. Address it by `index` OR `name`; give an absolute `position` OR a relative `nudge`; set `mirror` to also move the left/right counterpart (X mirrored). Undoable with `undo`.",
@@ -940,7 +1005,48 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 15);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
+    }
+
+    /// suggest_template ranks the human template top for a human mesh, and
+    /// marker-fitting places the named joints where asked.
+    #[test]
+    fn suggest_ranks_human_and_marker_fit_places_joints() {
+        let mut server = Server::new();
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+
+        let (ranked, err) = call(&mut server, "suggest_template", json!({}));
+        assert!(!err, "{ranked}");
+        let ranked: Value = serde_json::from_str(&ranked).unwrap();
+        assert_eq!(
+            ranked[0]["template"], "human",
+            "the human template should fit a human mesh best: {ranked}"
+        );
+        assert!(ranked[0]["score"].as_f64().unwrap() > 0.9, "{ranked}");
+
+        // Build markers from a real fit's joints, so the bone names are valid.
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        let (listed, _) = call(&mut server, "list_joints", json!({}));
+        let joints: Value = serde_json::from_str(&listed).unwrap();
+        let markers: Vec<Value> = joints["joints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(3)
+            .map(|j| json!({ "bone": j["name"], "position": j["position"] }))
+            .collect();
+
+        let (fitted, err) = call(
+            &mut server,
+            "fit_markers",
+            json!({ "template": "human", "markers": markers }),
+        );
+        assert!(!err, "{fitted}");
+        assert!(fitted.contains("\"bones\": 66"), "{fitted}");
     }
 
     #[test]

@@ -399,37 +399,7 @@ pub fn diagnose(
     falloff: f32,
 ) -> Result<DiagnoseReport, RigError> {
     let (mesh, _weights, bind) = solve(model, skeleton, falloff)?;
-
-    // Which joints sit grossly off the mesh — a limb placed beside the body, not
-    // a tip at the surface? A misplaced joint is far from EVERY vertex; a
-    // legitimate tip (fingers, toes, head) or the ground-level root sits ~0 from
-    // nearby geometry, so distance separates the two where inside/outside can't
-    // (a skeleton's root, leaves and thin appendages are all at/past the surface).
-    let mut outside = Vec::new();
-    if !mesh.positions.is_empty() {
-        let (mut lo, mut hi) = (mesh.positions[0], mesh.positions[0]);
-        for p in &mesh.positions {
-            lo = lo.min(*p);
-            hi = hi.max(*p);
-        }
-        let threshold = 0.08 * (hi - lo).length().max(1e-6);
-        let thresh_sq = threshold * threshold;
-        // Subsample vertices so the check stays cheap on dense meshes.
-        let stride = (mesh.positions.len() / 5000).max(1);
-        for (i, p) in skeleton.positions.iter().enumerate() {
-            let joint = glam::Vec3::from(*p);
-            let mut nearest = f32::INFINITY;
-            for v in mesh.positions.iter().step_by(stride) {
-                nearest = nearest.min(joint.distance_squared(*v));
-                if nearest <= thresh_sq {
-                    break;
-                }
-            }
-            if nearest > thresh_sq {
-                outside.push(skeleton.bones[i].clone());
-            }
-        }
-    }
+    let outside = joints_off_mesh(&mesh, skeleton);
 
     let verts = bind.vertices.max(1);
     let mut findings = Vec::new();
@@ -517,6 +487,94 @@ fn preview_names(names: &[String]) -> String {
     } else {
         format!("{}, +{} more", names[..N].join(", "), names.len() - N)
     }
+}
+
+/// Joints sitting grossly off the mesh — a limb placed beside the body, not a tip
+/// at the surface. A misplaced joint is far from EVERY vertex; a legitimate tip
+/// (fingers, toes, head) or the ground-level root sits ~0 from nearby geometry,
+/// so distance separates the two where a binary inside/outside cannot (a
+/// skeleton's root, leaves and thin appendages are all at/past the surface).
+fn joints_off_mesh(mesh: &m2m_core::mesh::Mesh, skeleton: &FittedSkeleton) -> Vec<String> {
+    let mut outside = Vec::new();
+    if mesh.positions.is_empty() {
+        return outside;
+    }
+    let (mut lo, mut hi) = (mesh.positions[0], mesh.positions[0]);
+    for p in &mesh.positions {
+        lo = lo.min(*p);
+        hi = hi.max(*p);
+    }
+    let thresh_sq = (0.08 * (hi - lo).length().max(1e-6)).powi(2);
+    let stride = (mesh.positions.len() / 5000).max(1);
+    for (i, p) in skeleton.positions.iter().enumerate() {
+        let joint = glam::Vec3::from(*p);
+        let mut nearest = f32::INFINITY;
+        for v in mesh.positions.iter().step_by(stride) {
+            nearest = nearest.min(joint.distance_squared(*v));
+            if nearest <= thresh_sq {
+                break;
+            }
+        }
+        if nearest > thresh_sq {
+            outside.push(skeleton.bones[i].clone());
+        }
+    }
+    outside
+}
+
+/// How well one template's auto-fit lands inside a mesh — the score `suggest`
+/// ranks by. Higher is better.
+#[derive(Debug, Serialize)]
+pub struct TemplateSuggestion {
+    /// The template name.
+    pub template: String,
+    /// 0..1: the fraction of joints that landed inside the mesh, penalised when
+    /// the fit had to scale the rig implausibly.
+    pub score: f32,
+    /// Total joints the template placed.
+    pub joints: usize,
+    /// How many landed grossly off the mesh.
+    pub joints_off_mesh: usize,
+    /// The solved fit scale.
+    pub scale: f32,
+}
+
+/// Ranks the shipped templates by how well each one's auto-fit lands inside
+/// `model`'s mesh, best first — a starting point for "which skeleton fits this?".
+///
+/// Actually fits each template (auto-fit is cheap) and scores by the fraction of
+/// joints that land inside the mesh, docked for an implausible fit scale. A
+/// template that fails to fit at all is dropped. This is a heuristic ranking, not
+/// a guarantee — the top few are worth trying, then refining with adjust_joint.
+pub fn suggest_templates(model: &[u8]) -> Result<Vec<TemplateSuggestion>, RigError> {
+    let mesh = mesh_of(&m2m_io::import::load(model)?);
+    if mesh.positions.is_empty() {
+        return Err(RigError::NothingToBind {
+            reason: "the model has no vertices",
+        });
+    }
+    let mut suggestions = Vec::new();
+    for template in templates()? {
+        let Ok(fitted) = fit(&template.name, model) else {
+            continue;
+        };
+        let joints = fitted.bones.len();
+        let off = joints_off_mesh(&mesh, &fitted).len();
+        let inside = 1.0 - off as f32 / joints.max(1) as f32;
+        // Dock the score when the rig had to scale far from 1 (a unit/shape
+        // mismatch), tapering to 0 by a 10x scale.
+        let scale_penalty = ((fitted.scale.max(1.0 / fitted.scale) - 1.0) / 9.0).clamp(0.0, 1.0);
+        let score = (inside * (1.0 - 0.5 * scale_penalty)).clamp(0.0, 1.0);
+        suggestions.push(TemplateSuggestion {
+            template: template.name,
+            score,
+            joints,
+            joints_off_mesh: off,
+            scale: fitted.scale,
+        });
+    }
+    suggestions.sort_by(|a, b| b.score.total_cmp(&a.score));
+    Ok(suggestions)
 }
 
 /// The solve behind [`bind`] and [`export_glb`]: mesh, weights and report.

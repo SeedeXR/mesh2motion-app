@@ -49,8 +49,13 @@ commits with the Co-Authored-By trailer.
   adjust from a per-session snapshot history (cleared on a fresh fit). Unknown names point
   at list_joints. Tests: unit (mirror_name, apply_move), integration (name+nudge+mirror
   moves both sides; undo restores then reports nothing-to-undo).
-- [ ] **5. Smarter fitting (MCP).** `suggest_template` (rank templates for the loaded
-  mesh by bone-plan/shape/axis), expose `fit_from_markers`, retarget-quality on export.
+- [x] **5. Smarter fitting (MCP).** `suggest_template` actually auto-fits every shipped
+  template to the loaded mesh and ranks by the fraction of joints landing inside it
+  (docked for an implausible fit scale), best first (`pipeline::suggest_templates`, reusing
+  the extracted `joints_off_mesh`). `fit_markers` exposes the marker path
+  (`pipeline::fit_from_markers`) — pin named joints to measured positions. Tests: suggest
+  ranks human top for a human mesh; marker-fit places joints (bones=66). Retarget-quality
+  on export DEFERRED (needs export_glb to surface RetargetReport — a separate change).
 - [ ] **6. Add-on upgrade (Python).** `render` command (viewport PNG back), richer
   report (over-influence, unweighted, bbox, materials, non-manifold), N-panel status UI,
   optional socket token.
