@@ -257,9 +257,23 @@ fn the_written_file_references_nothing_outside_itself() {
         buffers[0].get("uri").is_none_or(serde_json::Value::is_null),
         "the buffer must have no URI"
     );
-    assert!(json
+    // Images are written when a material has a texture, but embedded — each via
+    // a bufferView into the BIN chunk, never a URI.
+    for image in json
         .get("images")
-        .is_none_or(|i| i.as_array().is_none_or(std::vec::Vec::is_empty)));
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        assert!(
+            image.get("bufferView").is_some(),
+            "an image must be embedded, not external"
+        );
+        assert!(
+            image.get("uri").is_none_or(serde_json::Value::is_null),
+            "an image must have no URI"
+        );
+    }
     assert!(
         !String::from_utf8_lossy(&bytes).contains("\"uri\""),
         "no URI of any kind should be written"
@@ -284,6 +298,7 @@ fn an_empty_document_writes_a_valid_file() {
     let document = Document {
         nodes: Vec::new(),
         primitives: Vec::new(),
+        materials: Vec::new(),
         skins: Vec::new(),
         clips: Vec::new(),
         report: glb::GlbReport::default(),
@@ -292,6 +307,35 @@ fn an_empty_document_writes_a_valid_file() {
     let back = glb::read(&bytes).expect("reads back");
     assert!(back.nodes.is_empty());
     assert!(back.primitives.is_empty());
+}
+
+#[test]
+fn a_written_material_is_non_metallic() {
+    // glTF defaults metallicFactor to 1.0 — a full metal that renders dark and
+    // desaturated. Our materials come from FBX Phong/Lambert, which are dielectric,
+    // so the writer must pin metallic to 0 or the colours look wrong ("unrealistic
+    // FBX colours").
+    let document = Document {
+        nodes: Vec::new(),
+        primitives: Vec::new(),
+        materials: vec![glb::Material {
+            base_color_factor: [0.8, 0.4, 0.2, 1.0],
+            base_color_image: None,
+        }],
+        skins: Vec::new(),
+        clips: Vec::new(),
+        report: glb::GlbReport::default(),
+    };
+    let json = json_of(&glb::write(&document).expect("writes"));
+    let pbr = &json["materials"][0]["pbrMetallicRoughness"];
+    assert_eq!(
+        pbr["metallicFactor"], 0.0,
+        "FBX materials must be non-metallic"
+    );
+    assert_eq!(
+        pbr["baseColorFactor"][0], 0.8,
+        "the base colour must survive"
+    );
 }
 
 /// The JSON chunk of a written GLB, for tests that need to inspect the

@@ -47,3 +47,5 @@ references/
 # Python bytecode from py_compile checks
 __pycache__/
 *.pyc
+
+animals-3d/

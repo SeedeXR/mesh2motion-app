@@ -166,6 +166,8 @@ body {
   font: inherit;
   cursor: pointer;
   min-height: var(--s-6);
+  /* Space stacked action buttons apart so they don't read as one slab. */
+  margin-bottom: var(--s-2);
   transition: background var(--dur-fast) var(--ease);
 }
 
@@ -192,6 +194,43 @@ body {
   height: 100%;
   min-height: 0;
   display: block;
+}
+
+/* The marker-placement precision preview (Mixamo's loupe): a magnified inset
+   whose content the WebGL pass draws — this is only the frame and crosshair.
+   Size and position mirror LOUPE_SIZE / LOUPE_MARGIN in scene.ts. */
+.marker-loupe {
+  position: absolute;
+  top: 60px; /* below .viewport-nav; mirrors LOUPE_TOP in scene.ts */
+  right: 12px;
+  width: 180px;
+  height: 180px;
+  z-index: 1;
+  pointer-events: none;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+/* A thin crosshair through the centre, marking where the marker will drop. */
+.marker-loupe::before,
+.marker-loupe::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.7);
+}
+.marker-loupe::before {
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+.marker-loupe::after {
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  transform: translateY(-0.5px);
 }
 
 /* Floating viewport controls: frame / zoom / preset views, over the canvas. */
@@ -254,6 +293,96 @@ body {
 .transport .tp-sp { flex: 1; }
 .transport .tp-fps { color: var(--fg-2); font-size: var(--fs-xs); margin-right: var(--s-1); }
 
+/* Mixamo-style stacked control: a header (label left, value right) over a
+   full-width slider. Shared by Overdrive, Character Arm-Space and Trim so they
+   line up consistently. */
+.anim-ctl { margin-top: var(--s-3); }
+.anim-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--s-1);
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+}
+.anim-head .anim-sub { color: var(--fg-2); }
+.anim-val { color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.anim-slider { width: 100%; margin: 0; display: block; }
+.anim-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Trim: two range thumbs overlaid on one track (a dual-handle range). Both are
+   full-width and transparent-tracked; only the thumbs take pointer events, so
+   each handle drags independently over the whole track. */
+.trim-range { position: relative; width: 100%; height: var(--s-5); }
+.trim-range::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-2px);
+  background: var(--bg-3);
+  border-radius: 2px;
+}
+.trim-range input[type='range'] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.trim-range input[type='range']::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-0);
+  cursor: pointer;
+}
+.trim-range input[type='range']::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--bg-0);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+/* Animation search + descriptive clip rows. */
+.clip-search {
+  width: 100%;
+  height: var(--s-6);
+  margin: var(--s-2) 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+.clip-item { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.clip-text { display: flex; flex-direction: column; min-width: 0; text-align: left; }
+.clip-name { color: var(--fg-0); }
+.clip-desc { color: var(--fg-2); font-size: var(--fs-xs); text-transform: capitalize; }
+.clip-dur { color: var(--fg-2); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
 .chip {
   min-width: 30px;
   height: var(--s-6);
@@ -268,6 +397,29 @@ body {
   cursor: pointer;
 }
 .chip.on { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+
+/* Animate step's 3-way view control (Mesh / Skeleton / Both). */
+.seg {
+  display: flex;
+  margin: var(--s-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.seg-btn {
+  flex: 1;
+  height: var(--s-6);
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--fg-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.seg-btn:first-child { border-left: 0; }
+.seg-btn.on { background: var(--accent); color: var(--bg-0); }
+.seg-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .chip:focus-visible,
 .tp-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
@@ -304,6 +456,86 @@ body {
 }
 
 .template[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* Marker-placement panel (Fit step, marker-rig flow). */
+.marker-guide {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: var(--s-2) auto;
+  /* A transparent PNG cutout — no card, it floats on the panel like a reference. */
+  background: transparent;
+}
+.marker-prompt {
+  color: var(--fg-1);
+  margin: var(--s-2) 0;
+}
+.marker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-bottom: var(--s-2);
+}
+.marker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.marker-label {
+  flex: 1;
+  color: var(--fg-1);
+}
+.marker-rings {
+  display: flex;
+  gap: var(--s-2);
+}
+/* A hollow ring with a centre dot — the reference marker. */
+.marker-ring {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid var(--ring);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow var(--dur-fast) var(--ease);
+}
+.marker-ring::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ring);
+  opacity: 0.45;
+}
+.marker-ring.placed::after {
+  width: 9px;
+  height: 9px;
+  opacity: 1;
+}
+.marker-ring[aria-current="true"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent);
+}
+.marker-ring:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.action.primary {
   border-color: var(--accent);
   background: var(--accent-dim);
 }
@@ -355,3 +587,58 @@ body {
   color: var(--fg-1);
 }
 .tip i { flex: none; color: var(--accent); transform: translateY(2px); }
+
+/* Export / Download settings modal (native <dialog>, Mixamo-style). */
+.export-modal {
+  width: min(560px, 92vw);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-0);
+}
+.export-modal::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); }
+.export-modal h2 {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--fs-sm);
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3) var(--s-4);
+  padding: var(--s-4);
+}
+.export-field { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.export-field label { font-size: var(--fs-xs); color: var(--fg-1); }
+.export-field select {
+  height: var(--s-6);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.export-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--border);
+}
+.export-actions .action.primary { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+.export-actions .action.primary:hover:not(:disabled) { filter: brightness(1.08); }
+@media (max-width: 460px) {
+  .export-grid { grid-template-columns: 1fr; }
+}
+.export-note {
+  margin: 0;
+  padding: 0 var(--s-4) var(--s-3);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+}

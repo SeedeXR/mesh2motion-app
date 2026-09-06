@@ -53,6 +53,76 @@ export async function devAutoload(): Promise<string | null> {
 }
 
 /** Dev/screenshot harness: a creature template to auto-fit after autoload, or null. */
+export async function devAutoclip(): Promise<string | null> {
+  return await invoke<string | null>('dev_autoclip')
+}
+
+export async function devAutopaint(): Promise<boolean> {
+  return await invoke<boolean>('dev_autopaint')
+}
+
+/** Dev/screenshot harness: drive the marker-placement flow after autoload. */
+export async function devAutomark(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark')
+}
+
+/** Dev/screenshot harness: also run the marker solve, not just placement. */
+export async function devAutomarkSolve(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark_solve')
+}
+
+/** Dev/screenshot harness: hover the model so the precision-preview loupe shows. */
+export async function devAutomarkHover(): Promise<boolean> {
+  return await invoke<boolean>('dev_automark_hover')
+}
+
+/** Dev/testing harness: a template to open in an empty marker step for hand
+ *  placement + capture, or null. */
+export async function devAutomarkCapture(): Promise<string | null> {
+  return await invoke<string | null>('dev_automark_capture')
+}
+
+/** Dev/testing: place a few markers and save automatically, to verify the save. */
+export async function devCaptureSelftest(): Promise<boolean> {
+  return await invoke<boolean>('dev_capture_selftest')
+}
+
+/** Dev/screenshot: Character Arm-Space to preselect (0-100 as string), or null. */
+export async function devAnimateArmSpace(): Promise<string | null> {
+  return await invoke<string | null>('dev_animate_arm_space')
+}
+
+/** Dev/screenshot: open the Export Download modal (value 'with'/'without'/''), or null. */
+export async function devAutoexport(): Promise<string | null> {
+  return await invoke<string | null>('dev_autoexport')
+}
+
+/** Dev/testing: dispatch a synthetic left-drag in Animate to verify camera orbit. */
+export async function devAutoOrbit(): Promise<boolean> {
+  return await invoke<boolean>('dev_auto_orbit')
+}
+
+/** Dev/screenshot: drive "Proceed to Animate" for an already-rigged import. */
+export async function devAutoproceed(): Promise<boolean> {
+  return await invoke<boolean>('dev_auto_proceed')
+}
+
+/** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
+export async function devAnimateMirror(): Promise<boolean> {
+  return await invoke<boolean>('dev_animate_mirror')
+}
+
+/** Dev/screenshot: the Animate 3-way view to preselect (mesh/skeleton/both), or null. */
+export async function devAnimateView(): Promise<string | null> {
+  return await invoke<string | null>('dev_animate_view')
+}
+
+/** Dev/testing: writes a JSON fixture into the repo's `e2e/` dir. Returns the
+ *  path written. Throws if the Rust side rejects the name or the write fails. */
+export async function devSaveFixture(name: string, contents: string): Promise<string> {
+  return await invoke<string>('dev_save_fixture', { name, contents })
+}
+
 export async function devAutofit(): Promise<string | null> {
   return await invoke<string | null>('dev_autofit')
 }
@@ -191,6 +261,32 @@ export async function fitSkeleton(template: string, path: string): Promise<Fitte
   return await invoke<FittedSkeleton>('fit_skeleton', { template, path })
 }
 
+/** Reads an already-rigged model's own skeleton, to animate it without a template
+ *  fit (the "Proceed" path for a rigged import). */
+export async function skeletonFromImport(path: string): Promise<FittedSkeleton> {
+  return await invoke<FittedSkeleton>('skeleton_from_import', { path })
+}
+
+/** A user-placed rig marker: a template bone and where its joint should sit. */
+export interface Marker {
+  readonly bone: string
+  /** `[x, y, z]` in mesh world space. */
+  readonly position: readonly [number, number, number]
+}
+
+/**
+ * Fits a template's skeleton from user-placed markers (the marker-placement
+ * flow — chin/wrists/elbows/knees/groin). The markers pin the key joints and the
+ * model's mesh stands the feet on the ground, so the model path is needed too.
+ */
+export async function fitFromMarkers(
+  template: string,
+  markers: readonly Marker[],
+  path: string
+): Promise<FittedSkeleton> {
+  return await invoke<FittedSkeleton>('fit_from_markers', { template, markers, path })
+}
+
 /** What binding produced, without the weights themselves. */
 export interface BindReport {
   readonly vertices: number
@@ -225,13 +321,27 @@ export async function bindWeights(
  * Resolves to the saved file's name, or `null` when the user cancels. The
  * weights are recomputed on the Rust side rather than sent back and forth.
  */
+/** Export-time options from the Download modal. `trimStart`/`trimEnd` are
+ *  fractions (0–1) of the clip; `fps` of 0 keeps the original keys; `keyframe`
+ *  is the reduction tolerance (0 = keep every key). */
+export interface ExportOptions {
+  readonly skin: boolean
+  readonly fps: number
+  readonly keyframe: number
+  readonly trimStart: number
+  readonly trimEnd: number
+}
+
 export async function exportModel(
   path: string,
   skeleton: FittedSkeleton,
   falloff: number,
   format: 'glb' | 'fbx',
   template: string,
-  clip: string | null
+  clip: string | null,
+  mirror = false,
+  armSpace = 50,
+  options: ExportOptions = { skin: true, fps: 0, keyframe: 0, trimStart: 0, trimEnd: 1 }
 ): Promise<string | null> {
   return await invoke<string | null>('export_model', {
     path,
@@ -239,7 +349,14 @@ export async function exportModel(
     falloff,
     format,
     template,
-    clip
+    clip,
+    mirror,
+    armSpace,
+    skin: options.skin,
+    fps: options.fps,
+    keyframeReduction: options.keyframe,
+    trimStart: options.trimStart,
+    trimEnd: options.trimEnd
   })
 }
 
@@ -277,10 +394,20 @@ export async function previewAnimation(
   skeleton: FittedSkeleton,
   falloff: number,
   template: string,
-  clip: string
+  clip: string,
+  mirror = false,
+  armSpace = 50
 ): Promise<ArrayBuffer> {
   return bulk(
-    await invoke<BulkResponse>('preview_animation', { path, skeleton, falloff, template, clip })
+    await invoke<BulkResponse>('preview_animation', {
+      path,
+      skeleton,
+      falloff,
+      template,
+      clip,
+      mirror,
+      armSpace
+    })
   )
 }
 

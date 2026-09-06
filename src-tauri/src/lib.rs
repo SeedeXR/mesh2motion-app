@@ -103,6 +103,128 @@ fn dev_autofit() -> Option<String> {
     std::env::var("M2M_AUTOFIT").ok()
 }
 
+/// Dev/screenshot harness: a clip name to bind and preview after auto-fit, from
+/// `M2M_AUTOCLIP`, so the Animate step (the retargeted preview and the clip
+/// thumbnails) can be screenshotted without clicking through the workflow.
+#[tauri::command]
+fn dev_autoclip() -> Option<String> {
+    std::env::var("M2M_AUTOCLIP").ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOPAINT` is set, bind and show the
+/// weight-paint overlay after auto-fit, so the Bind step can be screenshotted.
+#[tauri::command]
+fn dev_autopaint() -> bool {
+    std::env::var("M2M_AUTOPAINT").is_ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOMARK` is set, drive the marker-placement
+/// flow after auto-fit (seed markers from the auto-fit joints, then solve) so the
+/// marker Fit step can be screenshotted without clicking in the viewport.
+#[tauri::command]
+fn dev_automark() -> bool {
+    std::env::var("M2M_AUTOMARK").is_ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOMARK_SOLVE` is set, the marker harness
+/// also runs the solve, so the fitted skeleton (not just placement) can be shot.
+#[tauri::command]
+fn dev_automark_solve() -> bool {
+    std::env::var("M2M_AUTOMARK_SOLVE").is_ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOMARK_HOVER` is set, the marker harness
+/// dispatches a synthetic pointer-move over the model so the precision-preview
+/// loupe can be screenshotted (WKWebView drops synthetic OS mouse events, so a
+/// real hover can't be driven from outside).
+#[tauri::command]
+fn dev_automark_hover() -> bool {
+    std::env::var("M2M_AUTOMARK_HOVER").is_ok()
+}
+
+/// Dev/testing harness: `M2M_AUTOMARK_CAPTURE=<template>` opens that template's
+/// marker step with NO markers placed and reveals a "Save markers" button, so a
+/// person can place them by hand and their positions can be captured as a test
+/// fixture. Returns the template name, or null when unset.
+#[tauri::command]
+fn dev_automark_capture() -> Option<String> {
+    std::env::var("M2M_AUTOMARK_CAPTURE").ok()
+}
+
+/// Dev/screenshot harness: `M2M_ANIMATE_VIEW=mesh|skeleton|both` sets the
+/// Animate step's 3-way view before a clip auto-plays, so each can be shot.
+#[tauri::command]
+fn dev_animate_view() -> Option<String> {
+    std::env::var("M2M_ANIMATE_VIEW").ok()
+}
+
+/// Dev/screenshot harness: when `M2M_ANIMATE_MIRROR` is set, the auto-clip flow
+/// turns the Mirror toggle on before previewing, to shoot the mirrored motion.
+#[tauri::command]
+fn dev_animate_mirror() -> bool {
+    std::env::var("M2M_ANIMATE_MIRROR").is_ok()
+}
+
+/// Dev/screenshot harness: `M2M_ANIMATE_ARMSPACE=<0-100>` sets Character
+/// Arm-Space before the auto-clip previews, to shoot narrow vs wide arms.
+#[tauri::command]
+fn dev_animate_arm_space() -> Option<String> {
+    std::env::var("M2M_ANIMATE_ARMSPACE").ok()
+}
+
+/// Dev/screenshot harness: `M2M_AUTOEXPORT` set (optionally to `with`/`without`)
+/// jumps to the Export step and opens the Download modal after the auto-clip
+/// flow, so the modal can be screenshotted. Returns the skin choice, or null.
+#[tauri::command]
+fn dev_autoexport() -> Option<String> {
+    std::env::var("M2M_AUTOEXPORT").ok()
+}
+
+/// Dev/screenshot harness: when `M2M_AUTOPROCEED` is set and the import is
+/// already rigged, drive "Proceed to Animate" (read its own rig, bind, jump to
+/// Animate) so the skip-rigging flow can be screenshotted.
+#[tauri::command]
+fn dev_auto_proceed() -> bool {
+    std::env::var("M2M_AUTOPROCEED").is_ok()
+}
+
+/// Dev/testing harness: when `M2M_AUTO_ORBIT` is set, the Animate flow dispatches
+/// a synthetic left-drag across the viewport so camera orbit can be verified in a
+/// screenshot (WKWebView drops synthetic OS mouse events, so the drag must be
+/// JS-dispatched PointerEvents from inside the webview).
+#[tauri::command]
+fn dev_auto_orbit() -> bool {
+    std::env::var("M2M_AUTO_ORBIT").is_ok()
+}
+
+/// Dev/testing harness: when `M2M_CAPTURE_SELFTEST` is set, the capture flow
+/// places a few markers by synthetic clicks and saves them, so the save path can
+/// be verified end-to-end before a person is asked to place them for real.
+#[tauri::command]
+fn dev_capture_selftest() -> bool {
+    std::env::var("M2M_CAPTURE_SELFTEST").is_ok()
+}
+
+/// Dev/testing: writes a JSON fixture into the repo's `e2e/` directory — a
+/// hand-placed marker set captured for regression testing. Returns the path
+/// written. Dev-only: the target resolves from the crate's compile-time
+/// manifest dir, so it exists only in a source checkout.
+#[tauri::command]
+fn dev_save_fixture(name: String, contents: String) -> Result<String, String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("invalid fixture name: {name:?}"));
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../e2e");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{name}.json"));
+    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// A file the user chose, and what it turned out to contain.
 #[derive(Debug, Serialize)]
 pub struct ImportedFile {
@@ -292,6 +414,7 @@ async fn weight_overlay(
 /// hands it straight to the same loader it draws the imported mesh with. These
 /// are the very bytes `export_model` writes to disk for a `.glb`, so the
 /// preview and the export cannot drift — one code path, two destinations.
+#[allow(clippy::too_many_arguments)] // Tauri command: args come by name from the webview.
 #[tauri::command]
 async fn preview_animation(
     app: tauri::AppHandle,
@@ -300,6 +423,8 @@ async fn preview_animation(
     falloff: f32,
     template: String,
     clip: String,
+    mirror: bool,
+    arm_space: f32,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("preview_animation", || {
@@ -307,7 +432,18 @@ async fn preview_animation(
             let source = std::fs::read(&path).map_err(|e| format!("cannot read the model: {e}"))?;
             let library = library_bytes(&app, &template)?;
             progress(&app, "preview_animation", "retargeting", 0.4);
-            let glb = rig::export_glb(&source, &skeleton, falloff, Some((&library, &clip)))
+            let animation = rig::Animation {
+                library: &library,
+                clip: &clip,
+                mirror,
+                arm_space,
+                // Preview plays the whole clip at its own keys with the mesh
+                // shown; the export options (trim/fps/reduction/skin) are honoured
+                // only by export_model.
+                options: rig::ClipOptions::full(),
+                skin: true,
+            };
+            let glb = rig::export_glb(&source, &skeleton, falloff, Some(animation))
                 .map_err(|e| e.to_string())?;
             progress(&app, "preview_animation", "done", 1.0);
             Ok(tauri::ipc::Response::new(glb))
@@ -344,6 +480,48 @@ async fn fit_skeleton(
             progress(&app, "fit_skeleton", "fitting", 0.3);
             let fitted = rig::fit(&template, &bytes).map_err(|e| e.to_string())?;
             progress(&app, "fit_skeleton", "done", 1.0);
+            Ok(fitted)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reads an already-rigged model's OWN skeleton, so it can go straight to
+/// Animate without a template fit (the "Proceed" path for a rigged import).
+#[tauri::command]
+async fn skeleton_from_import(path: String) -> Result<rig::FittedSkeleton, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        timed("skeleton_from_import", || {
+            let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+            rig::skeleton_from_import(&bytes).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Places a template's skeleton from user-placed markers.
+///
+/// The marker-placement flow: the app sends where a person dropped the markers
+/// (chin, wrists, elbows, knees, groin) plus the model path, and the rig fits
+/// them — the markers pin the key joints and the mesh stands the feet on the
+/// ground. Spawned off the main thread to keep the window responsive.
+#[tauri::command]
+async fn fit_from_markers(
+    app: tauri::AppHandle,
+    template: String,
+    markers: Vec<rig::Marker>,
+    path: String,
+) -> Result<rig::FittedSkeleton, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        timed("fit_from_markers", || {
+            progress(&app, "fit_from_markers", "reading", 0.0);
+            let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+            progress(&app, "fit_from_markers", "fitting", 0.3);
+            let fitted =
+                rig::fit_from_markers(&template, &markers, &bytes).map_err(|e| e.to_string())?;
+            progress(&app, "fit_from_markers", "done", 1.0);
             Ok(fitted)
         })
     })
@@ -389,6 +567,9 @@ async fn bind_weights(
 /// every time a bone moved.
 ///
 /// `Ok(None)` means the user cancelled, which is not an error.
+// A Tauri command takes its arguments by name from the webview, so they stay
+// as flat parameters rather than a bundle the frontend would have to construct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn export_model(
     app: tauri::AppHandle,
@@ -398,6 +579,13 @@ async fn export_model(
     format: String,
     template: String,
     clip: Option<String>,
+    mirror: bool,
+    arm_space: f32,
+    skin: bool,
+    fps: u32,
+    keyframe_reduction: f32,
+    trim_start: f32,
+    trim_end: f32,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         timed("export_model", || {
@@ -428,19 +616,29 @@ async fn export_model(
                 None => None,
             };
             progress(&app, "export_model", "solving", 0.4);
+            let options = rig::ClipOptions {
+                trim_start,
+                trim_end,
+                fps,
+                keyframe_reduction,
+            };
+            let animation =
+                library
+                    .as_deref()
+                    .zip(clip.as_deref())
+                    .map(|(lib, name)| rig::Animation {
+                        library: lib,
+                        clip: name,
+                        mirror,
+                        arm_space,
+                        options,
+                        // "Without Skin" only applies alongside an animation; a
+                        // no-clip export always carries the mesh.
+                        skin,
+                    });
             let bytes = match extension {
-                "fbx" => rig::export_fbx(
-                    &source,
-                    &skeleton,
-                    falloff,
-                    library.as_deref().zip(clip.as_deref()),
-                ),
-                _ => rig::export_glb(
-                    &source,
-                    &skeleton,
-                    falloff,
-                    library.as_deref().zip(clip.as_deref()),
-                ),
+                "fbx" => rig::export_fbx(&source, &skeleton, falloff, animation),
+                _ => rig::export_glb(&source, &skeleton, falloff, animation),
             }
             .map_err(|e| e.to_string())?;
             progress(&app, "export_model", "writing", 0.8);
@@ -477,11 +675,27 @@ pub fn run() {
             report_startup,
             dev_autoload,
             dev_autofit,
+            dev_autoclip,
+            dev_autopaint,
+            dev_automark,
+            dev_automark_solve,
+            dev_automark_hover,
+            dev_automark_capture,
+            dev_capture_selftest,
+            dev_save_fixture,
+            dev_animate_view,
+            dev_animate_mirror,
+            dev_animate_arm_space,
+            dev_autoexport,
+            dev_auto_proceed,
+            dev_auto_orbit,
             log_line,
             import_model,
             load_model,
             skeleton_templates,
             fit_skeleton,
+            skeleton_from_import,
+            fit_from_markers,
             bind_weights,
             export_model,
             animation_clips,
@@ -514,6 +728,24 @@ mod ipc_tests {
                 panic!("delivered as JSON ({} chars), not raw bytes", json.len())
             }
         }
+    }
+
+    /// The marker-capture save writes a fixture and refuses a name that could
+    /// escape the `e2e/` directory.
+    #[test]
+    fn dev_save_fixture_round_trips_and_rejects_bad_names() {
+        assert!(super::dev_save_fixture("../evil".into(), "{}".into()).is_err());
+        assert!(super::dev_save_fixture("a/b".into(), "{}".into()).is_err());
+        assert!(super::dev_save_fixture(String::new(), "{}".into()).is_err());
+
+        let path =
+            super::dev_save_fixture("dev-save-fixture-selftest".into(), "{\"ok\":true}".into())
+                .expect("writes");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("reads back"),
+            "{\"ok\":true}"
+        );
+        std::fs::remove_file(&path).ok();
     }
 
     /// The bundle config actually ships the animation libraries the app looks

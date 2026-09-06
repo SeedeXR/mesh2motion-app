@@ -12,6 +12,7 @@ import { describe, expect, test } from 'vitest'
 import { Box3, PerspectiveCamera, Vector3 } from 'three'
 import {
   applyFraming,
+  boundsOfBones,
   findClip,
   frameBounds,
   frameOfTime,
@@ -20,7 +21,7 @@ import {
   parseAnimated,
   parseModel,
   presetCameraPosition,
-  skeletonSegments,
+  skeletonOctahedra,
   timeOfFrame,
   totalFrames,
   withJointMoved
@@ -220,34 +221,82 @@ describe('presetCameraPosition', () => {
   })
 })
 
-describe('skeletonSegments', () => {
+describe('skeletonOctahedra', () => {
+  // Root at the TOP so it is not a floor-reference root (whose connector is
+  // skipped — see the dedicated test below).
   const line: [number, number, number][] = [
-    [0, 0, 0],
+    [0, 2, 0],
     [0, 1, 0],
-    [0, 2, 0]
+    [0, 0, 0]
   ]
 
-  test('one segment per bone that has a parent', () => {
-    // Three bones in a chain is two lines, not three: the root has nothing to
-    // draw back to.
-    const points = skeletonSegments(line, [null, 0, 1])
+  test('one octahedron per bone that has a parent', () => {
+    // Three bones in a chain is two octahedra, not three: the root has nothing
+    // to draw from. Each octahedron is 6 vertices (18 floats) and 8 triangles
+    // (24 indices).
+    const { positions, indices } = skeletonOctahedra(line, [null, 0, 1], 0.1)
 
-    expect(points).toHaveLength(2 * 2 * 3)
-    expect(Array.from(points)).toEqual([0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 0])
+    expect(positions).toHaveLength(2 * 6 * 3)
+    expect(indices).toHaveLength(2 * 8 * 3)
+  })
+
+  test('a bone runs head=parent to tail=joint, so the taper shows direction', () => {
+    // Bone 1's parent is joint 0: its head tip is the parent and its tail tip is
+    // the joint itself. Getting this backwards would point every bone the wrong
+    // way down the chain.
+    const { positions } = skeletonOctahedra(line, [null, 0, 1], 0.1)
+    expect(Array.from(positions.slice(0, 3))).toEqual([0, 2, 0]) // head tip = parent
+    expect(Array.from(positions.slice(3, 6))).toEqual([0, 1, 0]) // tail tip = joint
+  })
+
+  test('a floor-reference root draws no connector up into the body', () => {
+    // Root at the floor (bottom of the skeleton), like the human rig's `root` at
+    // y≈0 below the hips. Its connector would run a long bone up the centre —
+    // Mixamo draws none, so only the second bone (joint 1 → joint 2) is drawn.
+    const floorRoot: [number, number, number][] = [
+      [0, 0, 0],
+      [0, 1, 0],
+      [0, 2, 0]
+    ]
+    const { positions } = skeletonOctahedra(floorRoot, [null, 0, 1], 0.1)
+    expect(positions).toHaveLength(1 * 6 * 3)
+    expect(Array.from(positions.slice(0, 3))).toEqual([0, 1, 0]) // head = joint 1, not the root
+  })
+
+  test('bones carry a hierarchy-depth colour gradient (root violet → tip sky)', () => {
+    // Two bones: bone 1 at depth 1 (violet), bone 2 at depth 2 = maxDepth (sky).
+    const { colors } = skeletonOctahedra(line, [null, 0, 1], 0.1)
+    expect(colors).toHaveLength(2 * 6 * 3) // one rgb per vertex
+    const bone1 = Array.from(colors.slice(0, 3)) // depth 1 / 2 → halfway
+    const bone2 = Array.from(colors.slice(6 * 3, 6 * 3 + 3)) // depth 2 / 2 → tip
+    expect(bone2[0]).toBeCloseTo(0.22) // tip (sky) colour
+    expect(bone2[1]).toBeCloseTo(0.741)
+    expect(bone2[2]).toBeCloseTo(0.973)
+    expect(bone1[0]).toBeGreaterThan(bone2[0]!) // shallower bone is more violet (higher R)
   })
 
   test('a skeleton of only roots draws nothing', () => {
-    expect(skeletonSegments(line, [null, null, null])).toHaveLength(0)
+    const { positions, indices } = skeletonOctahedra(line, [null, null, null], 0.1)
+    expect(positions).toHaveLength(0)
+    expect(indices).toHaveLength(0)
   })
 
-  test('a parent that does not exist is skipped, not read', () => {
+  test('a parent that does not exist, or a zero-length bone, is skipped not read', () => {
     // `parents` comes from a file's node graph by way of IPC. Reading past the
     // end would put undefined into a Float32Array as NaN, and one NaN takes the
     // whole overlay off screen — with nothing on the console to say why.
-    const points = skeletonSegments(line, [null, 0, 99])
+    const { positions } = skeletonOctahedra(line, [null, 0, 99], 0.1)
+    expect(positions).toHaveLength(18)
+    expect(Array.from(positions).every(Number.isFinite)).toBe(true)
 
-    expect(points).toHaveLength(6)
-    expect(Array.from(points).every(Number.isFinite)).toBe(true)
+    // Two joints at the same spot make a zero-length bone; it is dropped rather
+    // than producing a divide-by-zero of NaNs.
+    const degenerate = skeletonOctahedra(
+      [[0, 0, 0], [0, 0, 0]],
+      [null, 0],
+      0.1
+    )
+    expect(degenerate.positions).toHaveLength(0)
   })
 })
 
@@ -322,6 +371,21 @@ describe('parseAnimated and findClip', () => {
   test('findClip returns undefined rather than guessing', () => {
     const clips = [{ name: 'Walk' }] as unknown as Parameters<typeof findClip>[0]
     expect(findClip(clips, 'Chest_Open')).toBeUndefined()
+  })
+})
+
+describe('boundsOfBones', () => {
+  // The split animal libraries are skeleton-only: setFromObject (which expands
+  // by mesh geometry) reports nothing, which framed the clip preview to an empty
+  // box. boundsOfBones frames from the bones instead. Regression guard for
+  // "the animal clip preview is empty".
+  test('a skeleton-only library has empty mesh-bounds but non-empty bone-bounds', async () => {
+    const { root, bounds } = await parseAnimated(glb('assets/animations/cat-animations.glb'))
+    expect(bounds.isEmpty()).toBe(true)
+    root.updateMatrixWorld(true)
+    const bone = boundsOfBones(root)
+    expect(bone.isEmpty()).toBe(false)
+    expect(bone.getSize(new Vector3()).length()).toBeGreaterThan(0)
   })
 })
 
