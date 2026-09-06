@@ -38,6 +38,33 @@ Verified: imports through `m2m-io` (glb reader, clean report — 0 over-influenc
 
 _New rows are added as each creature is prepared and verified._
 
+## Animal samples (own-clips)
+
+These carry the creature's **own hand-authored clips**, so loading one offers
+"Animate its own clips" directly (no fit/retarget). All verified through `m2m-io`
+(`rigged=true`, 0 over-influence) and in the compiled `.app` (loads, grounded on the
+floor, plays its own clips).
+
+| file | creature | bones | clips | source | licence |
+|------|----------|-------|-------|--------|---------|
+| `shark.glb` | shark | 33 | 7 | original mesh2motion app asset (`legacy/static/animations/shark-animations.glb`) | ships with the app |
+| `bird.glb` | bird | 55 | 5 | original mesh2motion app asset | ships with the app |
+| `spider.glb` | spider | 56 | 10 | original mesh2motion app asset | ships with the app |
+| `horse.glb` | horse | 56 | 14 | original mesh2motion app asset | ships with the app |
+| `fox.glb` | fox | 49 | 14 | original mesh2motion app asset | ships with the app |
+| `dragon.glb` | dragon | 100 | 5 | original mesh2motion app asset | ships with the app |
+| `snake.glb` | snake | 28 | 8 | original mesh2motion app asset | ships with the app |
+| `kaiju.glb` | kaiju | 58 | 10 | original mesh2motion app asset | ships with the app |
+| `fish.glb` | redfish | 19 | 1 (swim, authored) | `animals-3d/fish/redfish_text.mb` (Maya) → FBX → Blender; swim authored (carangiform) | _TODO (R-5 record)_ |
+| `whaleshark.glb` | whale shark | 33 | 1 (swim, authored) | `animals-3d/whale-shark/WhaleShark.blend`; swim authored (thunniform) | _TODO (R-5 record)_ |
+
+The 8 above from `legacy/` are the original mesh2motion app's creature assets (a
+git-mv of the existing app), used here as their own-clips character samples — their
+skeleton-only fit templates already ship in `assets/rigs/` + `assets/animations/`.
+fish + whale shark are the two authored from scratch (aquatic undulation); fish's
+`.mb` texture is not on disk, so it ships with a solid redfish material until the
+source texture is recovered.
+
 ## Textures
 
 The elephant's source rig ships untextured; the maintainer supplied a colour UV

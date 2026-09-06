@@ -1203,6 +1203,15 @@ export function createViewport(): Viewport {
       resize()
 
       bounds = contents.bounds
+      // Ground the model on the grid: no model should sit below the floor. Lift
+      // (or drop) it so its lowest point rests on y=0, and shift the framing
+      // bounds to match. The imported skeleton is a child of `model`, so it
+      // follows; playAnimated copies `model.position`, so clips stay grounded too.
+      const groundY = -bounds.min.y
+      if (Number.isFinite(groundY) && groundY !== 0) {
+        model.position.y += groundY
+        bounds = bounds.clone().translate(new Vector3(0, groundY, 0))
+      }
       // The grid's cell size follows the subject: metre cells under a 30 m
       // creature read as a postage stamp, and under a 20 cm one as a runway.
       const span = Math.max(bounds.getSize(new Vector3()).length(), 0.1)
