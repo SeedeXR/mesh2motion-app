@@ -1217,6 +1217,20 @@ export function createViewport(): Viewport {
       const log = driven === 0 && clip.tracks.length > 0 ? console.warn : console.log
       log(`[animate] ${clipName}: ${driven}/${clip.tracks.length} tracks drive the mesh`)
 
+      // Play in place: authored locomotion clips carry ROOT MOTION (the animal
+      // travels), which reads as the model drifting/flying off — worst on assets
+      // exported Z-up, where the forward travel lands on the viewer's up axis.
+      // Drop the root bones' position tracks so the cycle plays on the spot; the
+      // limbs still move. (A root bone is one whose parent is not itself a bone.)
+      const rootBones = new Set<string>()
+      contents.root.traverse((o) => {
+        const bone = o as unknown as { isBone?: boolean; name: string; parent?: { isBone?: boolean } }
+        if (bone.isBone && bone.parent?.isBone !== true) rootBones.add(bone.name)
+      })
+      clip.tracks = clip.tracks.filter(
+        (t) => !(t.name.endsWith('.position') && rootBones.has(t.name.slice(0, -'.position'.length)))
+      )
+
       // Replace any previous playback subject.
       this.stop()
       clearFittedEditing()
