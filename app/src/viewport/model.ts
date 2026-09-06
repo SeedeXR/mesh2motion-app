@@ -375,6 +375,22 @@ export async function parseAnimated(data: ArrayBuffer): Promise<AnimatedModel> {
 }
 
 /**
+ * A box enclosing a rig's bone joints.
+ *
+ * `Box3.setFromObject` expands by mesh geometry, so a skeleton-only `.glb` (the
+ * split animal libraries carry no mesh) reports an empty box and frames to
+ * nothing. This frames from the bones' own world positions instead.
+ */
+export function boundsOfBones(root: Object3D): Box3 {
+  const box = new Box3()
+  const at = new Vector3()
+  root.traverse((o) => {
+    if (o instanceof Bone) box.expandByPoint(o.getWorldPosition(at))
+  })
+  return box
+}
+
+/**
  * Finds a clip by name, tolerating the prefixes importers add.
  *
  * Our exporter names the clip exactly (`Chest_Open`), but a name can arrive

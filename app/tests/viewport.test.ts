@@ -12,6 +12,7 @@ import { describe, expect, test } from 'vitest'
 import { Box3, PerspectiveCamera, Vector3 } from 'three'
 import {
   applyFraming,
+  boundsOfBones,
   findClip,
   frameBounds,
   frameOfTime,
@@ -370,6 +371,21 @@ describe('parseAnimated and findClip', () => {
   test('findClip returns undefined rather than guessing', () => {
     const clips = [{ name: 'Walk' }] as unknown as Parameters<typeof findClip>[0]
     expect(findClip(clips, 'Chest_Open')).toBeUndefined()
+  })
+})
+
+describe('boundsOfBones', () => {
+  // The split animal libraries are skeleton-only: setFromObject (which expands
+  // by mesh geometry) reports nothing, which framed the clip preview to an empty
+  // box. boundsOfBones frames from the bones instead. Regression guard for
+  // "the animal clip preview is empty".
+  test('a skeleton-only library has empty mesh-bounds but non-empty bone-bounds', async () => {
+    const { root, bounds } = await parseAnimated(glb('assets/animations/cat-animations.glb'))
+    expect(bounds.isEmpty()).toBe(true)
+    root.updateMatrixWorld(true)
+    const bone = boundsOfBones(root)
+    expect(bone.isEmpty()).toBe(false)
+    expect(bone.getSize(new Vector3()).length()).toBeGreaterThan(0)
   })
 })
 

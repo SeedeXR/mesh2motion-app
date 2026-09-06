@@ -79,7 +79,23 @@ and warns when 0 (the bug signature).
 
 Follow-up: the template-fit-onto-already-rigged path still has the graft duplicate-bone bug
 (fix graft_skin to strip the source skeleton) — lower priority now that own-clips + F1
-Proceed both work. Clip previews for own-clips (the top thumbnail) not yet wired.
+Proceed both work.
+
+## Clip-preview thumbnail for animals (the top moving preview)
+The clip chooser's moving thumbnail (`#clip-preview`) played the animation LIBRARY on the
+library character — fine for the human (its library carries a mesh) but EMPTY for animals,
+whose libraries we split to skeleton-only (the 10-22 MB textured mesh lives in the LFS
+character, too heavy for a hover thumbnail). `createClipPreview().load` now detects a
+mesh-less library (`bounds.isEmpty()`) and draws a `SkeletonHelper`, framing from the bones'
+own world positions (`boundsOfBones`, model.ts) — so the animal clip previews as a visible
+moving skeleton instead of an empty box. Verified in the compiled .app (leopard template
+fit → the thumbnail shows the animated leopard skeleton). own-clips mode needs no thumbnail:
+its main viewport already plays the full textured model.
+
+## Root motion (the "leopard moving up" regression)
+Authored locomotion clips carry root translation; played as-is the model drifts off — worst
+on the Z-up animal assets, where forward travel lands on the viewer's up axis. `scene.ts
+playAnimated` now strips the root bones' `.position` tracks so the cycle plays in place.
 
 ## Open questions / notes
 - The app re-fits + re-binds when a user picks a template; the asset's own careful weights
