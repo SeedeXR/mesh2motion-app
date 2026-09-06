@@ -35,6 +35,8 @@ const INSPECT_SCRIPT: &str = include_str!("../../../tools/blender-fbx-import-che
 /// The turntable-render script, embedded for the same reason.
 const RENDER_SCRIPT: &str = include_str!("../../../tools/blender-render-views.py");
 
+const ANIM_SCRIPT: &str = include_str!("../../../tools/blender-render-animation.py");
+
 /// What Blender found when it imported a file.
 ///
 /// Every field past `imported` is optional because a failed import emits only
@@ -86,6 +88,9 @@ pub enum BridgeError {
     /// Maya (`mayapy`) could not be located to run.
     #[error("mayapy not found: set M2M_MAYAPY, or install Maya at the default path")]
     MayaNotFound,
+    /// ffmpeg could not be located to encode a video.
+    #[error("ffmpeg not found: set M2M_FFMPEG, or install it (e.g. `brew install ffmpeg`)")]
+    FfmpegNotFound,
     /// The subprocess or a temp-file operation failed.
     #[error("running the DCC subprocess: {0}")]
     Spawn(String),
@@ -260,6 +265,180 @@ pub fn render_views(
     pngs.sort();
     if pngs.is_empty() {
         return Err(BridgeError::Spawn("Blender rendered no images".to_string()));
+    }
+    Ok(pngs)
+}
+
+/// Resolves the ffmpeg executable (to encode rendered frames into a video, and
+/// to sample frames from a reference video). `M2M_FFMPEG` wins; otherwise the
+/// common install locations and `PATH` are searched. Never assumed present.
+pub fn ffmpeg_path() -> Result<PathBuf, BridgeError> {
+    if let Ok(explicit) = std::env::var("M2M_FFMPEG") {
+        let path = PathBuf::from(explicit);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(BridgeError::FfmpegNotFound)
+        };
+    }
+    let mut candidates: Vec<PathBuf> = [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+        "/opt/local/bin/ffmpeg",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    if let Ok(path_var) = std::env::var("PATH") {
+        candidates.extend(std::env::split_paths(&path_var).map(|d| d.join("ffmpeg")));
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or(BridgeError::FfmpegNotFound)
+}
+
+/// Renders every frame of a clip baked into `glb` from one fixed camera, headless.
+///
+/// Returns the frame PNGs (sorted) and the clip's fps, for [`encode_video`] to
+/// turn into a movie. The frames are named `frame_%04d.png` in a temp dir the
+/// caller cleans; the model and script temp files are cleaned here.
+pub fn render_animation(
+    glb: &[u8],
+    max_frames: u32,
+    blender: &Path,
+) -> Result<(Vec<PathBuf>, u32), BridgeError> {
+    let dir = std::env::temp_dir();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let model = dir.join(format!("m2m-anim-{stamp}.glb"));
+    let script = dir.join(format!("m2m-anim-{stamp}.py"));
+    let out_dir = dir.join(format!("m2m-anim-{stamp}"));
+    std::fs::create_dir_all(&out_dir).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&model, glb).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    std::fs::write(&script, ANIM_SCRIPT).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+
+    let output = std::process::Command::new(blender)
+        .args(["-b", "--factory-startup", "--python"])
+        .arg(&script)
+        .arg("--")
+        .arg(&model)
+        .arg(&out_dir)
+        .arg(max_frames.max(1).to_string())
+        .output()
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    let _ = std::fs::remove_file(&model);
+    let _ = std::fs::remove_file(&script);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(BridgeError::Failed {
+            code: output.status.code().unwrap_or(-1),
+            stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let fps = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("FPS "))
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(24);
+
+    let mut pngs: Vec<PathBuf> = std::fs::read_dir(&out_dir)
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "png"))
+        .collect();
+    pngs.sort();
+    if pngs.is_empty() {
+        return Err(BridgeError::Spawn("Blender rendered no frames".to_string()));
+    }
+    Ok((pngs, fps))
+}
+
+/// Encodes `frames_dir`'s `frame_%04d.png` sequence into an mp4 at `out`, `fps`.
+pub fn encode_video(
+    frames_dir: &Path,
+    fps: u32,
+    out: &Path,
+    ffmpeg: &Path,
+) -> Result<(), BridgeError> {
+    let pattern = frames_dir.join("frame_%04d.png");
+    let output = std::process::Command::new(ffmpeg)
+        .args(["-y", "-framerate", &fps.max(1).to_string(), "-i"])
+        .arg(&pattern)
+        .args([
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(out)
+        .output()
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(BridgeError::Failed {
+            code: output.status.code().unwrap_or(-1),
+            stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
+        });
+    }
+    Ok(())
+}
+
+/// Samples up to `count` evenly-spaced frames from `video` into a temp dir, for
+/// a side-by-side comparison against a rendered clip. Returns the frame PNGs.
+pub fn sample_video_frames(
+    video: &Path,
+    count: u32,
+    ffmpeg: &Path,
+) -> Result<Vec<PathBuf>, BridgeError> {
+    let dir = std::env::temp_dir();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let out_dir = dir.join(format!("m2m-ref-{stamp}"));
+    std::fs::create_dir_all(&out_dir).map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    let pattern = out_dir.join("ref_%04d.png");
+    // `thumbnail=N` picks representative frames; capped by -frames:v.
+    let count = count.clamp(1, 64);
+    let output = std::process::Command::new(ffmpeg)
+        .arg("-i")
+        .arg(video)
+        .args([
+            "-vf",
+            &format!("thumbnail={},scale=512:-1", 300 / count.max(1)),
+            "-frames:v",
+            &count.to_string(),
+            "-vsync",
+            "0",
+        ])
+        .arg(&pattern)
+        .output()
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(BridgeError::Failed {
+            code: output.status.code().unwrap_or(-1),
+            stderr: stderr.lines().rev().take(5).collect::<Vec<_>>().join(" | "),
+        });
+    }
+    let mut pngs: Vec<PathBuf> = std::fs::read_dir(&out_dir)
+        .map_err(|e| BridgeError::Spawn(e.to_string()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "png"))
+        .collect();
+    pngs.sort();
+    if pngs.is_empty() {
+        return Err(BridgeError::Spawn(
+            "ffmpeg sampled no frames from the reference".to_string(),
+        ));
     }
     Ok(pngs)
 }

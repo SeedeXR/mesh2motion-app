@@ -9,7 +9,7 @@
 use base64::Engine;
 use m2m_pipeline as pipeline;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The MCP protocol revision this server speaks.
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -170,6 +170,8 @@ impl Server {
             "export" => self.export(args).map(text),
             "validate_export" => validate_export(args).map(text),
             "render_views" => self.render_views(args),
+            "render_animation" => self.render_animation(args),
+            "compare_to_reference" => self.compare_to_reference(args),
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -249,6 +251,130 @@ impl Server {
             let _ = std::fs::remove_dir_all(dir);
         }
         Ok(content)
+    }
+
+    /// Renders the whole clip from a fixed camera, encodes it to an mp4 with
+    /// ffmpeg (a file path the agent can open), and returns a few sample frames
+    /// inline so the motion is visible without opening the video. Degrades to
+    /// frames-only if ffmpeg is missing.
+    fn render_animation(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let clip = arg_str(args, "clip")?;
+        let max_frames = args
+            .get("max_frames")
+            .and_then(Value::as_u64)
+            .unwrap_or(120)
+            .clamp(8, 240) as u32;
+        let glb = self.animated_glb(&clip)?;
+        let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
+        let (frames, fps) =
+            m2m_bridge::render_animation(&glb, max_frames, &blender).map_err(|e| e.to_string())?;
+        let frames_dir = frames
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+
+        let out = args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("m2m-{}.mp4", sanitize(&clip))));
+
+        let mut content = Vec::new();
+        match (m2m_bridge::ffmpeg_path(), frames_dir.as_deref()) {
+            (Ok(ffmpeg), Some(dir)) => {
+                m2m_bridge::encode_video(dir, fps, &out, &ffmpeg).map_err(|e| e.to_string())?;
+                content.push(json!({ "type": "text", "text": format!(
+                    "rendered {} frames of '{clip}' at {fps} fps, encoded to {}",
+                    frames.len(), out.display()
+                )}));
+            }
+            _ => content.push(json!({ "type": "text", "text": format!(
+                "rendered {} frames of '{clip}' at {fps} fps; ffmpeg not found so no mp4 (set M2M_FFMPEG). Sample frames below.",
+                frames.len()
+            )})),
+        }
+        for path in sample_evenly(&frames, 5) {
+            content.push(image_content(&path)?);
+        }
+        if let Some(dir) = frames_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        Ok(content)
+    }
+
+    /// Renders the clip and samples the same number of frames from a reference
+    /// video, returning both sets inline for a side-by-side visual comparison of
+    /// pose and timing. A qualitative aid — not a numeric similarity score, which
+    /// would mislead across differently framed footage.
+    fn compare_to_reference(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let reference = arg_str(args, "reference")?;
+        if !Path::new(&reference).is_file() {
+            return Err(format!("reference video not found: {reference}"));
+        }
+        let clip = arg_str(args, "clip")?;
+        let n = args
+            .get("frames")
+            .and_then(Value::as_u64)
+            .unwrap_or(5)
+            .clamp(2, 12) as u32;
+        let ffmpeg = m2m_bridge::ffmpeg_path()
+            .map_err(|e| format!("{e} — needed to sample the reference video"))?;
+        let glb = self.animated_glb(&clip)?;
+        let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
+        let (rendered, _fps) =
+            m2m_bridge::render_animation(&glb, 120, &blender).map_err(|e| e.to_string())?;
+        let rendered_dir = rendered
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        let reference_frames = m2m_bridge::sample_video_frames(Path::new(&reference), n, &ffmpeg)
+            .map_err(|e| e.to_string())?;
+        let reference_dir = reference_frames
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+
+        let mut content = vec![json!({ "type": "text", "text": format!(
+            "Comparing clip '{clip}' (rendered) against reference '{reference}'. {n} evenly-spaced frames of each follow — judge pose and timing qualitatively (not a numeric metric).",
+        )})];
+        content.push(json!({ "type": "text", "text": "— rendered clip:" }));
+        for path in sample_evenly(&rendered, n as usize) {
+            content.push(image_content(&path)?);
+        }
+        content.push(json!({ "type": "text", "text": "— reference video:" }));
+        for path in &reference_frames {
+            content.push(image_content(path)?);
+        }
+        for dir in [rendered_dir, reference_dir].into_iter().flatten() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        Ok(content)
+    }
+
+    /// Exports the loaded model with `clip` retargeted on, as a glb ready to
+    /// render — the shared front of render_animation and compare_to_reference.
+    fn animated_glb(&self, clip: &str) -> Result<Vec<u8>, String> {
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let library = self.library_bytes(self.session.template.as_deref().unwrap_or(""))?;
+        let animation = pipeline::Animation {
+            library: &library,
+            clip,
+            mirror: false,
+            arm_space: 50.0,
+            options: pipeline::ClipOptions::full(),
+            skin: true,
+        };
+        pipeline::export_glb(model, fitted, self.session.falloff, Some(animation))
+            .map_err(|e| e.to_string())
     }
 
     fn session_status(&self) -> String {
@@ -494,6 +620,10 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({ "path": { "type": "string" }, "engines": { "type": "array", "items": { "type": "string", "enum": ["blender", "maya"] } } }), json!(["path"])) },
         { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. `overlay` picks what to see: \"solid\" (the shaded mesh), \"skeleton\" (the fitted bones through an X-rayed mesh), or \"weights\" (the mesh tinted by influence count — magenta=unweighted, red=1 bone .. green=4 — so a bad bind is visible). Optional clip + frame to inspect a pose mid-animation.",
           "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "overlay": { "type": "string", "enum": ["solid", "skeleton", "weights"], "description": "What to render (default solid)." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
+        { "name": "render_animation", "description": "Render a whole clip playing on the rigged model in Blender headless, encode it to an mp4 with ffmpeg (a file path you can open), and return a few sample frames inline so the motion is visible. Needs load_asset + fit_skeleton. Degrades to frames-only if ffmpeg is missing.",
+          "inputSchema": obj(json!({ "clip": { "type": "string", "description": "A clip name from list_clips." }, "path": { "type": "string", "description": "Output mp4 path (default: a temp file, path reported back)." }, "max_frames": { "type": "integer", "description": "Cap on frames rendered (8-240, default 120); a longer clip is sampled evenly." } }), json!(["clip"])) },
+        { "name": "compare_to_reference", "description": "Render a clip and sample the same number of frames from a REFERENCE VIDEO (e.g. real footage of the animal), returning both sets of frames inline for a side-by-side visual comparison of pose and timing. A qualitative aid, not a numeric score. Needs ffmpeg + load_asset + fit_skeleton.",
+          "inputSchema": obj(json!({ "clip": { "type": "string" }, "reference": { "type": "string", "description": "Absolute path to a reference video file." }, "frames": { "type": "integer", "description": "Frames of each to compare (2-12, default 5)." } }), json!(["clip", "reference"])) },
     ])
 }
 
@@ -568,6 +698,34 @@ fn text_content(text: &str) -> Vec<Value> {
     vec![json!({ "type": "text", "text": text })]
 }
 
+/// Reads a PNG and wraps it as an MCP image content item (base64).
+fn image_content(path: &Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(json!({ "type": "image", "data": data, "mimeType": "image/png" }))
+}
+
+/// Up to `n` evenly-spaced items across `items` (endpoints included), so a long
+/// frame sequence can be previewed with a handful of images.
+fn sample_evenly(items: &[PathBuf], n: usize) -> Vec<PathBuf> {
+    if items.is_empty() || n == 0 {
+        return Vec::new();
+    }
+    if items.len() <= n {
+        return items.to_vec();
+    }
+    (0..n)
+        .map(|i| items[i * (items.len() - 1) / (n - 1).max(1)].clone())
+        .collect()
+}
+
+/// A filesystem-safe stem from a clip name (for a default output file).
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 fn arg_str(args: &Value, key: &str) -> Result<String, String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -631,7 +789,41 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 11);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 13);
+    }
+
+    #[test]
+    fn sample_evenly_and_sanitize() {
+        let paths: Vec<PathBuf> = (0..10)
+            .map(|i| PathBuf::from(format!("f{i}.png")))
+            .collect();
+        let five = sample_evenly(&paths, 5);
+        assert_eq!(five.len(), 5);
+        assert_eq!(five.first(), Some(&paths[0]), "endpoints included");
+        assert_eq!(five.last(), Some(&paths[9]));
+        assert_eq!(sample_evenly(&paths[..3], 5).len(), 3, "fewer than n → all");
+        assert!(sample_evenly(&[], 5).is_empty());
+        assert_eq!(sanitize("Swim Horizontal/2"), "Swim_Horizontal_2");
+    }
+
+    /// The animation tools name their missing inputs before spending a Blender or
+    /// ffmpeg launch. (The renders themselves need those tools, so only the guard
+    /// rails are unit-tested here.)
+    #[test]
+    fn animation_tools_guard_their_inputs() {
+        let mut server = Server::new();
+
+        let (msg, err) = call(&mut server, "render_animation", json!({}));
+        assert!(err && msg.contains("clip"), "missing clip: {msg}");
+        let (msg, err) = call(&mut server, "render_animation", json!({ "clip": "Idle" }));
+        assert!(err && msg.contains("load_asset"), "before load: {msg}");
+
+        let (msg, err) = call(
+            &mut server,
+            "compare_to_reference",
+            json!({ "clip": "Idle", "reference": "/no/such/video.mp4" }),
+        );
+        assert!(err && msg.contains("reference video not found"), "{msg}");
     }
 
     #[test]

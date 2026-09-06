@@ -34,10 +34,15 @@ commits with the Co-Authored-By trailer.
   bridge `render_views` takes `mode`; MCP validates the overlay before launching
   Blender. Verified visually on the fox (weights heatmap reads torso=green→tail=red;
   skeleton shows joints inside the body). Test: overlay validation + preconditions.
-- [ ] **3. Animation video + reference compare (bridge + MCP).** `render_animation`:
-  render a clip's frames in Blender → encode MP4 with ffmpeg → return path (+ a frame
-  strip as images). `compare_to_reference`: given a reference video path, sample frames
-  from both and return a side-by-side montage (and a coarse silhouette-difference score).
+- [x] **3. Animation video + reference compare (bridge + MCP).** `render_animation` renders
+  a clip's frames from a fixed camera (`tools/blender-render-animation.py`) → encodes MP4
+  with ffmpeg → returns the path + evenly-spaced sample frames inline (degrades to
+  frames-only if ffmpeg is missing). `compare_to_reference` renders the clip and samples the
+  same count of frames from a reference video (ffmpeg `thumbnail`), returning both sets inline
+  for a qualitative side-by-side (no misleading numeric score across differently-framed
+  footage). Bridge: `ffmpeg_path` discovery (M2M_FFMPEG + PATH), `render_animation`,
+  `encode_video`, `sample_video_frames`, `FfmpegNotFound`. Verified end-to-end (whale-shark
+  swim → mp4; leopard-running.mp4 → frames). Tests: helpers (sample_evenly/sanitize) + guards.
 - [ ] **4. Robust joint/session tools (MCP).** `list_joints` (name/pos/parent),
   `adjust_joint` by name + `nudge` delta + `mirror` L↔R, session `undo`, richer
   next-step error hints.
