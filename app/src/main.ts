@@ -224,6 +224,27 @@ async function ensureLibrary(template: string): Promise<void> {
   }
 }
 
+/** The model whose own bytes are loaded into the own-clips preview, so it loads once. */
+let ownPreviewFor: ArrayBuffer | null = null
+
+/** Own-clips mode: the preview plays the imported model's OWN bytes (mesh + clips),
+ *  so the chooser shows the moving creature, the same as the human library does. */
+async function ensureOwnClipsPreview(): Promise<void> {
+  if (modelBytes === null || !isDesktop()) return
+  if (ownPreviewFor !== modelBytes) {
+    ownPreviewFor = modelBytes
+    try {
+      await ensureClipPreview().load(modelBytes)
+    } catch (err) {
+      ownPreviewFor = null
+      console.error('own-clips preview failed to load', err)
+      return
+    }
+  }
+  const show = clip ?? loaded?.import.clips.find((n) => !n.includes('_source_'))
+  if (show !== undefined && show !== null) ensureClipPreview().play(show)
+}
+
 function ensureViewport(): Viewport {
   viewport ??= createViewport()
   return viewport
@@ -657,7 +678,8 @@ function renderAnimateStep(): string {
           )}</span></span></button>`
       )
       .join('')
-    return `<p style="color:var(--fg-2)">Playing this model's own clips.</p>${
+    const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
+    return `${preview}<p style="color:var(--fg-2)">Playing this model's own clips.</p>${
       clip === null ? '' : renderTransport()
     }<div class="clip-list">${rows}</div>`
   }
@@ -1146,6 +1168,9 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       // Kept so an already-rigged import can play its OWN clips without a retarget.
       modelBytes = geometry
       ownClips = false
+      // A new model invalidates the clip-preview caches (library and own-clips).
+      libraryFor = null
+      ownPreviewFor = null
       // A model is what the skeleton step needs, so earning it unlocks that step.
       furthestStep = Math.max(furthestStep, 1)
       // The imported-but-unrigged state is the baseline undo returns to.
@@ -1494,6 +1519,9 @@ function render(): void {
     // Own-clips mode: play the imported model's OWN clip directly.
     const ownClipName = button.dataset['ownclip']
     if (ownClipName !== undefined) {
+      // Hovering plays the clip in the chooser preview; clicking plays it for real.
+      button.addEventListener('mouseenter', () => clipPreview?.play(ownClipName))
+      button.addEventListener('focus', () => clipPreview?.play(ownClipName))
       button.addEventListener('click', () => {
         stopPreview()
         clip = ownClipName
@@ -1533,6 +1561,13 @@ function render(): void {
       if (slot !== null && chosen !== null) {
         slot.appendChild(ensureClipPreview().canvas)
         void ensureLibrary(chosen)
+      }
+    } else {
+      // Own-clips: preview the model's own bytes (mesh + clips) in the chooser.
+      const slot = app.querySelector<HTMLElement>('#clip-preview')
+      if (slot !== null) {
+        slot.appendChild(ensureClipPreview().canvas)
+        void ensureOwnClipsPreview()
       }
     }
   }
