@@ -27,9 +27,13 @@ commits with the Co-Authored-By trailer.
   logging (`m2m_mcp::log`, gated by `M2M_MCP_LOG`, never on stdout) instrumenting every
   tool call with outcome + timing. Tests: unit (grade a clean fit, log format), integration
   (diagnose over the tools), regression (precondition next-step hints). fmt+clippy clean.
-- [ ] **2. Visual eyes (bridge + MCP).** Extend the render script + `render_views`:
-  `overlay=skeleton` (draw the fitted bones inside the mesh), `overlay=weights`
-  (heatmap by summed weight / flag fallback islands). New optional arg on render_views.
+- [x] **2. Visual eyes (bridge + MCP).** `render_views` gained an `overlay` arg:
+  `skeleton` (cyan bone diamonds through an X-rayed Workbench mesh) and `weights`
+  (mesh tinted by per-vertex influence count — magenta=unweighted, red=1 .. green=4,
+  flat-shaded). Render script `tools/blender-render-views.py` reworked with modes;
+  bridge `render_views` takes `mode`; MCP validates the overlay before launching
+  Blender. Verified visually on the fox (weights heatmap reads torso=green→tail=red;
+  skeleton shows joints inside the body). Test: overlay validation + preconditions.
 - [ ] **3. Animation video + reference compare (bridge + MCP).** `render_animation`:
   render a clip's frames in Blender → encode MP4 with ffmpeg → return path (+ a frame
   strip as images). `compare_to_reference`: given a reference video path, sample frames

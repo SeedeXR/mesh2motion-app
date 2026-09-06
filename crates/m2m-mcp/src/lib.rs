@@ -196,6 +196,15 @@ impl Server {
             .clamp(1, 12) as u32;
         let clip = args.get("clip").and_then(Value::as_str);
         let frame = args.get("frame").and_then(Value::as_i64).map(|f| f as i32);
+        let overlay = args
+            .get("overlay")
+            .and_then(Value::as_str)
+            .unwrap_or("solid");
+        if !["solid", "skeleton", "weights"].contains(&overlay) {
+            return Err(format!(
+                "unknown overlay {overlay:?}; use \"solid\", \"skeleton\" or \"weights\""
+            ));
+        }
         let library = match clip {
             Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
             None => None,
@@ -214,14 +223,19 @@ impl Server {
         let glb = pipeline::export_glb(model, fitted, self.session.falloff, animation)
             .map_err(|e| e.to_string())?;
         let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
-        let paths = m2m_bridge::render_views(&glb, num_views, frame, &blender)
+        let paths = m2m_bridge::render_views(&glb, num_views, frame, overlay, &blender)
             .map_err(|e| e.to_string())?;
 
         let mut content = vec![json!({
             "type": "text",
             "text": format!(
-                "{} turntable view(s) of the rig{}",
+                "{} {} view(s) of the rig{}",
                 paths.len(),
+                match overlay {
+                    "skeleton" => "skeleton-overlay",
+                    "weights" => "weight-heatmap (magenta=unweighted, red=1 bone .. green=4)",
+                    _ => "turntable",
+                },
                 clip.map(|c| format!(" playing {c}")).unwrap_or_default()
             )
         })];
@@ -478,8 +492,8 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({ "path": { "type": "string" }, "format": { "type": "string", "enum": ["glb", "fbx"] }, "clip": { "type": "string" } }), json!(["path", "format"])) },
         { "name": "validate_export", "description": "Import an exported file into Blender and/or Maya headless and report what each read back.",
           "inputSchema": obj(json!({ "path": { "type": "string" }, "engines": { "type": "array", "items": { "type": "string", "enum": ["blender", "maya"] } } }), json!(["path"])) },
-        { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. Optional clip + frame to inspect a pose mid-animation.",
-          "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
+        { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. `overlay` picks what to see: \"solid\" (the shaded mesh), \"skeleton\" (the fitted bones through an X-rayed mesh), or \"weights\" (the mesh tinted by influence count — magenta=unweighted, red=1 bone .. green=4 — so a bad bind is visible). Optional clip + frame to inspect a pose mid-animation.",
+          "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "overlay": { "type": "string", "enum": ["solid", "skeleton", "weights"], "description": "What to render (default solid)." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
     ])
 }
 
@@ -750,6 +764,32 @@ mod tests {
         assert!(!err, "{exported}");
         assert!(out.is_file(), "export wrote no file");
         let _ = std::fs::remove_file(&out);
+    }
+
+    /// render_views validates its overlay before spending a Blender launch, and
+    /// names what it needs before an asset is loaded. (The render itself needs
+    /// Blender, so only the guard rails are unit-tested here.)
+    #[test]
+    fn render_views_validates_before_launching_blender() {
+        let mut server = Server::new();
+
+        // Nothing loaded: it names the first step, not a Blender error.
+        let (msg, err) = call(&mut server, "render_views", json!({}));
+        assert!(err && msg.contains("load_asset"), "{msg}");
+
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        // A bad overlay is rejected up front, listing the valid choices.
+        let (msg, err) = call(&mut server, "render_views", json!({ "overlay": "bogus" }));
+        assert!(err, "{msg}");
+        assert!(
+            msg.contains("skeleton") && msg.contains("weights"),
+            "should list the valid overlays: {msg}"
+        );
     }
 
     #[test]

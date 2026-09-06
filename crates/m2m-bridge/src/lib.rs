@@ -209,6 +209,7 @@ pub fn render_views(
     glb: &[u8],
     num_views: u32,
     frame: Option<i32>,
+    mode: &str,
     blender: &Path,
 ) -> Result<Vec<PathBuf>, BridgeError> {
     let dir = std::env::temp_dir();
@@ -230,7 +231,8 @@ pub fn render_views(
         .arg("--")
         .arg(&model)
         .arg(&out_dir)
-        .arg(num_views.max(1).to_string());
+        .arg(num_views.max(1).to_string())
+        .arg(if mode.is_empty() { "solid" } else { mode });
     if let Some(frame) = frame {
         command.arg(frame.to_string());
     }
