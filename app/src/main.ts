@@ -18,7 +18,8 @@ import {
   Pause,
   Rewind,
   FastForward,
-  Square
+  Square,
+  Hand
 } from 'lucide'
 import { History } from './state/history'
 import { STEPS, StepId, type StepDef } from './state/steps'
@@ -29,11 +30,27 @@ import {
   buildInfo,
   devAutoload,
   devAutofit,
+  devAutoclip,
+  devAutopaint,
+  devAutomark,
+  devAutomarkSolve,
+  devAutomarkHover,
+  devAutomarkCapture,
+  devCaptureSelftest,
+  devSaveFixture,
+  devAnimateView,
+  devAnimateMirror,
+  devAnimateArmSpace,
+  devAutoexport,
+  devAutoOrbit,
+  devAutoproceed,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
   weightOverlay,
   fitSkeleton,
+  skeletonFromImport,
+  fitFromMarkers,
   previewAnimation,
   importModel,
   isDesktop,
@@ -44,12 +61,20 @@ import {
   type ClipSummary,
   type FittedSkeleton,
   type ImportedFile,
+  type Marker,
   type SkeletonTemplate
 } from './ipc'
 import { detectBackend } from './viewport/backend'
 import { createViewport, type Viewport } from './viewport/scene'
 import { createClipPreview, type ClipPreview } from './viewport/preview'
 import { type ViewPreset, frameOfTime, timeOfFrame, totalFrames } from './viewport/model'
+import { markerSetFor, slotForClickedSide } from './state/markers'
+import { clipDescription, clipMatches, humanizeClipName } from './state/clip-index'
+import markerGuideHuman from './assets/marker-guide-human.png'
+
+/** A rendered guide image per template, showing where the markers go on a real
+ *  model — the reference's placement thumbnail. Only templates with one show it. */
+const MARKER_GUIDES: Readonly<Record<string, string>> = { human: markerGuideHuman }
 
 // Mirror all webview console output to the Rust terminal for debugging.
 forwardConsoleToTerminal()
@@ -100,13 +125,45 @@ let fitted: FittedSkeleton | null = null
 /** Set while a fit is running — voxelising takes a moment. */
 let fitting = false
 
+/** Marker-placement flow: on while a person is placing markers, before the
+ *  skeleton is solved. Off for the auto-fit flow and once solved. */
+let markerMode = false
+/** Placed marker positions, by slot id (see state/markers.ts). */
+const markerPositions = new Map<string, [number, number, number]>()
+/** The slot the next viewport click fills, or null. */
+let activeSlot: string | null = null
+/** Whether placing one side's marker mirrors it to the other. */
+let useSymmetry = true
+/** Dev/testing: reveal a "Save markers" button so a hand placement can be
+ *  captured as a fixture (set by the M2M_AUTOMARK_CAPTURE harness). */
+let markerCapture = false
+/** Confirmation shown under the "Save markers" button after a save. */
+let markerSaveStatus: string | null = null
+
 /** What binding the mesh to the skeleton produced. */
 let bound: BindReport | null = null
 let binding = false
+/** True while "Proceed to Animate" reads an already-rigged import's own skeleton. */
+let riggingImport = false
+/** The imported model's own glb bytes, kept so its OWN clips can be played back
+ *  directly (no retarget) when it arrives already rigged and animated. */
+let modelBytes: ArrayBuffer | null = null
+/** True when Animate plays the imported model's OWN embedded clips rather than
+ *  retargeting a template library onto a fitted skeleton. */
+let ownClips = false
 
 /** The file the rigged model was last written to. */
 let exported: string | null = null
 let exporting = false
+
+/** Download-modal settings (Mixamo's "Download Settings"). Format and the clip
+ *  options are chosen here; Trim comes from the Animate step's range. */
+let exportFormat: 'glb' | 'fbx' = 'glb'
+let exportSkin = true
+let exportFps: 24 | 30 | 60 = 30
+let keyframeReduction: 'none' | 'low' | 'high' = 'none'
+/** Reduction level → tolerance (radians) the Rust reducer bounds error to. */
+const REDUCTION_TOL: Record<'none' | 'low' | 'high', number> = { none: 0, low: 0.01, high: 0.05 }
 
 /** The chosen creature's clips, once fetched, and the one selected. */
 let clips: ClipSummary[] | null = null
@@ -118,13 +175,32 @@ let paused = false
 let direction: 1 | -1 = 1
 let fps: 24 | 30 = 30
 let clipDuration = 0
+/** Playback speed (Mixamo's "Overdrive"): 0–100, 50 = 1× (so 0–2× of real time). */
+let overdrive = 50
+/** Trim: the fraction of the clip to keep, [start, end] in 0–1. Playback loops
+ *  within it and the export is trimmed to it. Kept as fractions so it survives
+ *  clip and fps changes. */
+let trimStart = 0
+let trimEnd = 1
+/** Mirror the animation left↔right (re-retargets the clip on the Rust side). */
+let mirrored = false
+/** Character Arm-Space: 0–100, 50 neutral. Re-retargets the clip when changed. */
+let armSpace = 50
 /** The rAF handle for the loop that walks the timeline slider during playback. */
 let playhead = 0
+/** The Animate step's 3-way view over the playing clip. Mesh by default, like
+ *  Mixamo (its skull toggle switches to the skeleton). */
+let animateView: 'mesh' | 'skeleton' | 'both' = 'mesh'
+/** Current animation-search query (filters the clip list by name/description/tags). */
+let clipQuery = ''
 
 let viewport: Viewport | null = null
 
 /** Which model-transform tool is active (rotate/move the model), or none. */
 let transformMode: 'none' | 'rotate' | 'translate' = 'none'
+
+/** Whether the Pan view toggle is on (left-drag pans, to follow a travelling clip). */
+let panView = false
 
 /** The clip chooser's moving preview, created on first use, and which creature's
  *  library it has loaded. */
@@ -150,6 +226,27 @@ async function ensureLibrary(template: string): Promise<void> {
     libraryFor = null
     console.error('clip preview library failed to load', err)
   }
+}
+
+/** The model whose own bytes are loaded into the own-clips preview, so it loads once. */
+let ownPreviewFor: ArrayBuffer | null = null
+
+/** Own-clips mode: the preview plays the imported model's OWN bytes (mesh + clips),
+ *  so the chooser shows the moving creature, the same as the human library does. */
+async function ensureOwnClipsPreview(): Promise<void> {
+  if (modelBytes === null || !isDesktop()) return
+  if (ownPreviewFor !== modelBytes) {
+    ownPreviewFor = modelBytes
+    try {
+      await ensureClipPreview().load(modelBytes)
+    } catch (err) {
+      ownPreviewFor = null
+      console.error('own-clips preview failed to load', err)
+      return
+    }
+  }
+  const show = clip ?? loaded?.import.clips.find((n) => !n.includes('_source_'))
+  if (show !== undefined && show !== null) ensureClipPreview().play(show)
 }
 
 function ensureViewport(): Viewport {
@@ -274,9 +371,22 @@ function renderInspector(step: StepDef): string {
     </dl>
     ${
       rigged
-        ? `<p style="color:var(--fg-1)">This model is already rigged. Its skeleton, weights and
-             ${model.clips.length === 1 ? 'clip are' : 'clips are'} kept \u2014 re-rigging is
-             yours to choose, not the default.</p>`
+        ? `<p style="color:var(--fg-1)">This model is already rigged${
+            model.clips.length > 0
+              ? ` and carries ${model.clips.length} ${
+                  model.clips.length === 1 ? 'clip' : 'clips'
+                } \u2014 play them directly, or`
+              : ' \u2014'
+          } re-rig from a template, or retarget our clips onto its own skeleton.</p>
+           ${
+             model.clips.length > 0
+               ? '<button id="play-own" class="action primary">Animate its own clips</button>'
+               : ''
+           }
+           <button id="proceed-rigged" class="action${model.clips.length > 0 ? '' : ' primary'}" ${
+             riggingImport ? 'disabled' : ''
+           }>${riggingImport ? 'Reading rig\u2026' : 'Retarget our clips'}</button>
+           <button id="rerig" class="action" ${riggingImport ? 'disabled' : ''}>Re-rig from template</button>`
         : '<p style="color:var(--fg-2)">No skeleton found. Choose a template in the next step.</p>'
     }
     ${truncated}`
@@ -346,18 +456,97 @@ function poseRow(): string {
   return label === null ? '' : `<dt>Pose</dt><dd>${label}</dd>`
 }
 
-/** The Fit Skeleton step: reports the automatic fit and detected pose, and the
- * viewport lets the user drag joints to adjust it. */
+/** The Fit Skeleton step: marker placement (its default) or, once solved, the
+ * fit report with the viewport letting the user drag joints to adjust it. */
 function renderEditStep(): string {
+  if (markerMode) return renderMarkerPanel()
   if (fitted === null) {
     return '<p style="color:var(--fg-2)">Choose a skeleton first.</p>'
   }
+  const refit = `<button id="refit" class="action" ${fitting ? 'disabled' : ''}>${
+    fitting ? 'Fitting\u2026' : 'Auto-fit again'
+  }</button>`
+  const replace =
+    chosen !== null && markerSetFor(chosen) !== null
+      ? '<button id="replace-markers" class="action">Re-place markers</button>'
+      : ''
   return `<dl class="facts">
       <dt>Bones</dt><dd>${fitted.bones.length}</dd>
       <dt>Scale</dt><dd>${fitted.scale.toFixed(3)}\u00d7</dd>
       ${poseRow()}
     </dl>
-    <p style="color:var(--fg-2)">The skeleton is placed automatically. Drag a joint handle in the viewport to adjust any bone that sits outside the mesh, then bind.</p>`
+    ${refit}${replace}
+    <p style="color:var(--fg-2)">Drag a joint handle to nudge any bone that sits outside the mesh, then bind. Re-place markers to solve again from scratch, or auto-fit to let the mesh place it.</p>`
+}
+
+/** The marker-placement panel (the Mixamo Place-markers step): a guide diagram,
+ * a grouped set of ring markers, the symmetry toggle and the solve / auto-fit
+ * choice. Clicking a ring arms it for the next viewport click. */
+function renderMarkerPanel(): string {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (set === null) return ''
+
+  // Group the slots the way the reference does: single markers on their own row,
+  // left/right pairs on one row side by side.
+  const groups: { label: string; slots: typeof set }[] = []
+  const done = new Set<string>()
+  for (const slot of set) {
+    if (done.has(slot.id)) continue
+    if (slot.pair !== undefined) {
+      const pair = set.find((s) => s.id === slot.pair)
+      const slots = pair === undefined ? [slot] : [slot, pair]
+      slots.forEach((s) => done.add(s.id))
+      groups.push({ label: `${slot.label.replace(/ [LR]$/, '')}s`, slots })
+    } else {
+      done.add(slot.id)
+      groups.push({ label: slot.label, slots: [slot] })
+    }
+  }
+
+  const rows = groups
+    .map((group) => {
+      const rings = group.slots
+        .map((slot) => {
+          const hex = `#${slot.color.toString(16).padStart(6, '0')}`
+          const state = markerPositions.has(slot.id) ? 'placed' : ''
+          const active = slot.id === activeSlot ? 'aria-current="true"' : ''
+          return `<button class="marker-ring ${state}" data-slot="${slot.id}" ${active}
+                     style="--ring:${hex}" title="${escape(slot.label)}" aria-label="${escape(slot.label)}"></button>`
+        })
+        .join('')
+      return `<div class="marker-row"><span class="marker-label">${escape(group.label)}</span><span class="marker-rings">${rings}</span></div>`
+    })
+    .join('')
+
+  const placed = set.filter((s) => markerPositions.has(s.id)).length
+  const total = set.length
+  const canSolve = placed >= 2 && !fitting
+  const active = set.find((s) => s.id === activeSlot)
+  const hint = active?.hint === undefined ? '' : ` \u2014 ${escape(active.hint)}`
+  const prompt =
+    active === undefined
+      ? 'All markers placed \u2014 press Solve to build the rig.'
+      : `Click the <b>${escape(active.label)}</b> on your model${hint}.${useSymmetry ? ' The other side mirrors.' : ''}`
+
+  return `
+    <p style="color:var(--fg-2)">Face the model forward in a T-pose (use the move / rotate tools), then place a marker on each joint and Solve.</p>
+    ${guideImage(chosen)}
+    <p class="marker-prompt">${prompt}</p>
+    <div class="marker-grid">${rows}</div>
+    <label class="toggle"><input type="checkbox" id="symmetry" ${useSymmetry ? 'checked' : ''}/> Use symmetry</label>
+    <button id="solve" class="action primary" ${canSolve ? '' : 'disabled'}>${
+      fitting ? 'Solving\u2026' : `Solve rig (${placed}/${total})`
+    }</button>
+    <button id="autofit" class="action">Auto-fit instead</button>
+    ${markerCapture ? `<button id="save-markers" class="action" ${placed > 0 ? '' : 'disabled'}>Save markers (test)</button>` : ''}
+    ${markerCapture && markerSaveStatus !== null ? `<p class="marker-save-status" style="color:var(--fg-2);word-break:break-all">${escape(markerSaveStatus)}</p>` : ''}`
+}
+
+/** The rendered guide image for a template, or nothing when it has none. */
+function guideImage(template: string | null): string {
+  const src = template === null ? undefined : MARKER_GUIDES[template]
+  if (src === undefined) return ''
+  return `<img class="marker-guide" src="${src}" alt="Where the markers go on a T-posed model" />`
 }
 
 /** The Bind Weights step: solve which bones deform which vertices. */
@@ -426,8 +615,78 @@ async function runBind(): Promise<void> {
   }
 }
 
+/** "Proceed to Animate" for an already-rigged import: read its OWN skeleton,
+ *  bind weights to it, and jump to Animate to retarget our clips onto it —
+ *  skipping the template Choose/Fit steps entirely. */
+async function proceedRigged(): Promise<void> {
+  if (loaded === null || riggingImport || binding) return
+  riggingImport = true
+  render()
+  try {
+    fitted = await skeletonFromImport(loaded.path)
+    // No template; humanoid imports (the common already-rigged case) draw from
+    // the human clip library, and the retarget auto-maps foreign bone names.
+    chosen = 'human'
+    clips = null
+    clip = null
+    // Bind is template-independent (weights solve straight from the skeleton),
+    // so this yields a complete rig with no marker/fit pass. It also unlocks
+    // Animate + Export via furthestStep.
+    await runBind()
+    activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+    record()
+  } finally {
+    riggingImport = false
+    render()
+  }
+}
+
+/** Animate an already-rigged import with its OWN embedded clips — no fitting,
+ *  no retarget. The mesh is already bound to its own skeleton, so its authored
+ *  clips deform it directly (the correct path for a rigged, animated model). */
+function proceedOwnClips(): void {
+  if (loaded === null) return
+  ownClips = true
+  clip = loaded.import.clips[0] ?? null
+  furthestStep = Math.max(furthestStep, STEPS.findIndex((s) => s.id === StepId.Animate))
+  activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  render()
+  void playOwnClip()
+}
+
+/** Plays the selected own-clip on the imported model's own bytes. */
+async function playOwnClip(): Promise<void> {
+  if (modelBytes === null || clip === null) return
+  const duration = await ensureViewport().playAnimated(modelBytes, clip)
+  if (duration === null) return
+  playing = true
+  clipDuration = duration
+  render()
+  startPlayhead()
+  ensureViewport().setPlaybackRate(playbackRate())
+}
+
 /** The Animate step: pick a clip to retarget onto the rig. */
 function renderAnimateStep(): string {
+  // Own-clips mode: list the imported model's OWN clips (played directly).
+  if (ownClips && loaded !== null) {
+    const names = loaded.import.clips.filter((n) => !n.includes('_source_'))
+    if (names.length === 0) return '<p style="color:var(--fg-2)">This model has no clips.</p>'
+    const rows = names
+      .map(
+        (name) =>
+          `<button class="action template clip-item" data-ownclip="${escape(name)}" ${
+            name === clip ? 'aria-current="true"' : ''
+          }><span class="clip-text"><span class="clip-name">${escape(
+            humanizeClipName(name)
+          )}</span></span></button>`
+      )
+      .join('')
+    const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
+    return `${preview}<p style="color:var(--fg-2)">Playing this model's own clips.</p>${
+      clip === null ? '' : renderTransport()
+    }<div class="clip-list">${rows}</div>`
+  }
   if (fitted === null || chosen === null) {
     return '<p style="color:var(--fg-2)">Choose and fit a skeleton first — a clip is retargeted onto one.</p>'
   }
@@ -441,34 +700,56 @@ function renderAnimateStep(): string {
   // A moving preview of the clip under the cursor (or the selected one), played
   // on the library character — see what a motion looks like before committing.
   const preview = '<div class="clip-preview" id="clip-preview" aria-label="Clip preview"></div>'
-  const list = clips
-    .map(
-      (c) => `
-        <button class="action template" data-clip="${escape(c.name)}"
+  // Search across the name, its humanised form, and category tags.
+  const matches = clips.filter((c) => clipMatches(c.name, clipQuery))
+  const search = `<input id="clip-search" class="clip-search" type="search" placeholder="Search animations…" value="${escape(
+    clipQuery
+  )}" aria-label="Search animations"/>`
+  const list =
+    matches.length === 0
+      ? `<p style="color:var(--fg-2)">No animation matches “${escape(clipQuery)}”.</p>`
+      : matches
+          .map(
+            (c) => `
+        <button class="action template clip-item" data-clip="${escape(c.name)}"
                 ${c.name === clip ? 'aria-current="true"' : ''}>
-          <span>${escape(c.name)}</span>
-          <span style="color:var(--fg-2)">${c.duration.toFixed(2)}s</span>
+          <span class="clip-text"><span class="clip-name">${escape(c.name)}</span>
+            <span class="clip-desc">${escape(clipDescription(c.name))}</span></span>
+          <span class="clip-dur">${c.duration.toFixed(2)}s</span>
         </button>`
-    )
-    .join('')
+          )
+          .join('')
 
-  if (clip === null) {
-    return `${preview}${list}<p style="color:var(--fg-2)">Hover a clip to preview it, then pick one. It is retargeted onto your rig — the library and the template do not share a rest pose, so the motion is moved, not copied.</p>`
-  }
+  // 3-way view over the playing clip: mesh, skeleton, or both.
+  const seg = (v: 'mesh' | 'skeleton' | 'both', label: string): string =>
+    `<button class="seg-btn${animateView === v ? ' on' : ''}" data-view="${v}" aria-pressed="${
+      animateView === v
+    }">${label}</button>`
+  const bones = `<div class="seg" role="group" aria-label="View">${seg('mesh', 'Mesh')}${seg(
+    'skeleton',
+    'Skeleton'
+  )}${seg('both', 'Both')}</div>`
 
-  if (!playing) {
-    return `${preview}${list}
-      <button id="preview" class="action">Preview ${escape(clip)}</button>
-      <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
-  }
-  return `${preview}${list}${renderTransport()}
-    <p style="color:var(--fg-2)">${escape(clip)} will be written into the export.</p>`
+  // Playback controls sit directly under the preview, above the (long, scrolling)
+  // clip list, so stop / forward / reverse stay reachable without scrolling.
+  const controls = playing
+    ? renderTransport()
+    : clip !== null
+      ? `<button id="preview" class="action">Play ${escape(clip)}</button>`
+      : ''
+  const caption =
+    clip === null
+      ? 'Click a clip to play it on your rig — it is retargeted, so the motion is moved, not copied (the library and the template do not share a rest pose).'
+      : `${escape(clip)} will be written into the export.`
+  return `${preview}${controls}${bones}${search}${list}<p style="color:var(--fg-2)">${caption}</p>`
 }
 
 /** The playback transport for the Animate step: fps, direction, pause, stop, and
  *  a scrubbable frame timeline. */
 function renderTransport(): string {
   const frames = totalFrames(clipDuration, fps)
+  const startF = Math.round(trimStart * frames)
+  const endF = Math.round(trimEnd * frames)
   const dirOn = (d: 1 | -1): string => (!paused && direction === d ? 'on' : '')
   return `
     <div class="transport" role="group" aria-label="Playback">
@@ -482,7 +763,26 @@ function renderTransport(): string {
       <button class="tp-btn" id="stop" title="Stop" aria-label="Stop"><i data-lucide="square" width="16" height="16" aria-hidden="true"></i></button>
     </div>
     <input id="timeline" class="timeline" type="range" min="0" max="${frames}" step="1" value="0" aria-label="Timeline (frame)"/>
-    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>`
+    <div class="timecode"><span id="frame">0</span> / ${frames} frames</div>
+    <div class="anim-ctl">
+      <div class="anim-head"><span>Overdrive</span><span id="overdrive-val" class="anim-val">${overdrive}</span></div>
+      <input id="overdrive" class="anim-slider" type="range" min="0" max="100" step="1" value="${overdrive}" aria-label="Overdrive (playback speed)"/>
+    </div>
+    <div class="anim-ctl">
+      <div class="anim-head"><span>Character Arm-Space</span><span id="arm-space-val" class="anim-val">${armSpace}</span></div>
+      <input id="arm-space" class="anim-slider" type="range" min="0" max="100" step="1" value="${armSpace}" aria-label="Character Arm-Space"/>
+    </div>
+    <div class="anim-ctl">
+      <div class="anim-head"><span>Trim</span><span class="anim-sub">${frames} total frames</span></div>
+      <div class="trim-range">
+        <input id="trim-start" type="range" min="0" max="${frames}" step="1" value="${startF}" aria-label="Trim start (frame)"/>
+        <input id="trim-end" type="range" min="0" max="${frames}" step="1" value="${endF}" aria-label="Trim end (frame)"/>
+      </div>
+      <div class="anim-ends"><span id="trim-start-val">${startF}</span><span id="trim-end-val">${endF}</span></div>
+    </div>
+    <label class="toggle"><input type="checkbox" id="mirror" ${
+      mirrored ? 'checked' : ''
+    }/> Mirror</label>`
 }
 
 /** Plays the chosen clip in the viewport, or stops it. */
@@ -493,7 +793,7 @@ async function runPreview(): Promise<void> {
   direction = 1
   render()
   try {
-    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip)
+    const glb = await previewAnimation(loaded.path, fitted, 2.0, chosen, clip, mirrored, armSpace)
     const duration = await ensureViewport().playAnimated(glb, clip)
     if (duration === null) {
       playing = false
@@ -503,6 +803,7 @@ async function runPreview(): Promise<void> {
     clipDuration = duration
     render() // the timeline max needs the real duration
     startPlayhead()
+    ensureViewport().setPlaybackRate(playbackRate()) // carry Overdrive across clips
   } catch (err) {
     playing = false
     render()
@@ -519,12 +820,17 @@ function stopPreview(): void {
   render()
 }
 
+/** The signed playback rate: direction × the Overdrive speed (50 → 1×). */
+function playbackRate(): number {
+  return direction * (overdrive / 50)
+}
+
 /** Sets the play direction and resumes. */
 function setDirection(value: 1 | -1): void {
   direction = value
   paused = false
   const vp = ensureViewport()
-  vp.setPlaybackDirection(value)
+  vp.setPlaybackRate(playbackRate())
   vp.setPaused(false)
   render()
 }
@@ -543,6 +849,16 @@ function startPlayhead(): void {
   const tick = (): void => {
     const frames = totalFrames(clipDuration, fps)
     const frame = Math.min(frameOfTime(ensureViewport().playbackTime(), fps), frames)
+    // Keep playback inside the trim range, in whichever direction it runs.
+    const startF = Math.round(trimStart * frames)
+    const endF = Math.round(trimEnd * frames)
+    if (endF > startF && !paused) {
+      if (direction >= 0 && (frame >= endF || frame < startF)) {
+        ensureViewport().seek(timeOfFrame(startF, fps))
+      } else if (direction < 0 && (frame <= startF || frame > endF)) {
+        ensureViewport().seek(timeOfFrame(endF, fps))
+      }
+    }
     const slider = document.querySelector<HTMLInputElement>('#timeline')
     if (slider !== null && document.activeElement !== slider) slider.value = String(frame)
     const label = document.querySelector<HTMLSpanElement>('#frame')
@@ -575,31 +891,89 @@ function renderExportStep(): string {
     return '<p style="color:var(--fg-2)">Bind the weights first — an export carries the skeleton and the weights, not just the mesh.</p>'
   }
 
-  const buttons = (['glb', 'fbx'] as const)
-    .map(
-      (format) =>
-        `<button class="action export" data-format="${format}" ${exporting ? 'disabled' : ''}>${
-          exporting ? 'Writing\u2026' : `Export as .${format}`
-        }</button>`
-    )
-    .join('')
   const done =
     exported === null
       ? `<p style="color:var(--fg-2)">Mesh, skeleton and weights, in one file${
           clip === null ? '' : `, with ${escape(clip)}`
-        }. Both formats carry the same rig.</p>`
+        }.</p>`
       : `<p style="color:var(--ok)">Wrote ${escape(exported)}.</p>`
 
-  return `${buttons}${done}`
+  return `<button class="action primary" id="open-export" ${exporting ? 'disabled' : ''}>${
+    exporting ? 'Writing\u2026' : 'Export\u2026'
+  }</button>${done}${renderExportModal()}`
 }
 
-/** Writes the rigged model to a file the user picks. */
-async function runExport(format: 'glb' | 'fbx'): Promise<void> {
+/** The Mixamo-style export-settings modal (a native <dialog>). */
+function renderExportModal(): string {
+  const opt = (value: string, label: string, on: boolean): string =>
+    `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`
+  // "Without Skin" (skeleton + animation only) needs an animation to be useful.
+  const noClip = clip === null
+  const trimmed = trimStart > 0 || trimEnd < 1
+  const trimNote =
+    clip !== null && trimmed
+      ? `<p class="export-note">Trim: frames ${Math.round(
+          trimStart * totalFrames(clipDuration, exportFps)
+        )}\u2013${Math.round(trimEnd * totalFrames(clipDuration, exportFps))} (from Animate) will be exported.</p>`
+      : ''
+
+  return `<dialog class="export-modal" id="export-modal">
+    <h2>Export Settings</h2>
+    <div class="export-grid">
+      <div class="export-field">
+        <label for="ex-format">Format</label>
+        <select id="ex-format">
+          ${opt('fbx', 'FBX Binary (.fbx)', exportFormat === 'fbx')}
+          ${opt('glb', 'glTF Binary (.glb)', exportFormat === 'glb')}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-skin">Skin</label>
+        <select id="ex-skin" ${noClip ? 'disabled title="Pick an animation to export without skin"' : ''}>
+          ${opt('with', 'With Skin', exportSkin)}
+          ${opt('without', 'Without Skin', !exportSkin)}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-fps">Frames per Second</label>
+        <select id="ex-fps">
+          ${opt('24', '24', exportFps === 24)}
+          ${opt('30', '30', exportFps === 30)}
+          ${opt('60', '60', exportFps === 60)}
+        </select>
+      </div>
+      <div class="export-field">
+        <label for="ex-keyframe">Keyframe Reduction</label>
+        <select id="ex-keyframe">
+          ${opt('none', 'none', keyframeReduction === 'none')}
+          ${opt('low', 'low', keyframeReduction === 'low')}
+          ${opt('high', 'high', keyframeReduction === 'high')}
+        </select>
+      </div>
+    </div>
+    ${trimNote}
+    <div class="export-actions">
+      <button class="action" id="ex-cancel">Cancel</button>
+      <button class="action primary" id="ex-download">Export</button>
+    </div>
+  </dialog>`
+}
+
+/** Writes the rigged model to a file the user picks, with the modal's options. */
+async function runExport(): Promise<void> {
   if (loaded === null || fitted === null || exporting) return
   exporting = true
   render()
   try {
-    const saved = await exportModel(loaded.path, fitted, 2.0, format, chosen ?? '', clip)
+    // "Without Skin" only applies with a clip; a bare-mesh export keeps its skin.
+    const skin = clip === null ? true : exportSkin
+    const saved = await exportModel(loaded.path, fitted, 2.0, exportFormat, chosen ?? '', clip, mirrored, armSpace, {
+      skin,
+      fps: exportFps,
+      keyframe: REDUCTION_TOL[keyframeReduction],
+      trimStart,
+      trimEnd
+    })
     // A cancelled dialog leaves the previous result alone rather than clearing it.
     if (saved !== null) exported = saved
   } finally {
@@ -615,9 +989,149 @@ async function ensureTemplates(): Promise<void> {
   render()
 }
 
+/** A template was chosen: place markers (its default flow) or, for a template
+ *  with no marker set, fall straight through to automatic fitting. */
+function chooseTemplate(name: string): void {
+  if (markerSetFor(name) !== null) void enterMarkerMode(name)
+  // Animals autofit with no markers; jump to the Fit step so the joint handles
+  // (adjust for precision) and Bind (resolve) are surfaced, not hidden.
+  else void runFit(name, true)
+}
+
+/** Enters the marker-placement flow for a template: clears any prior rig, shows
+ *  the bare model, and arms the viewport to place markers on it. */
+async function enterMarkerMode(name: string): Promise<void> {
+  chosen = name
+  markerMode = true
+  markerPositions.clear()
+  activeSlot = markerSetFor(name)?.[0]?.id ?? null
+  // Drop any skeleton from a previous solve so only the bare mesh and the
+  // markers show while placing (the "Re-place markers" case; a no-op on first
+  // entry, when nothing is drawn yet).
+  ensureViewport().clearFittedSkeleton()
+  fitted = null
+  bound = null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
+  furthestStep = Math.max(furthestStep, activeStep)
+  render()
+}
+
+/** Sets a slot's marker to a point, mirroring to its pair when symmetry is on. */
+function setMarkerAt(slotId: string, point: [number, number, number]): void {
+  const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === slotId)
+  if (set === null || slot === undefined) return
+  markerPositions.set(slot.id, point)
+  if (useSymmetry && slot.pair !== undefined) {
+    const mirror = 2 * ensureViewport().symmetryX() - point[0]
+    markerPositions.set(slot.pair, [mirror, point[1], point[2]])
+  }
+}
+
+/** Places the active marker from a click on the model, then advances to the
+ *  next empty slot. A paired marker is routed to the L or R slot by which side
+ *  of the model the click landed on, so the sides can't be placed swapped. */
+function onMarkerPick(point: [number, number, number]): void {
+  if (activeSlot === null) return
+  const set = markerSetFor(chosen ?? '')
+  const slot = set?.find((s) => s.id === activeSlot)
+  const target =
+    slot !== undefined
+      ? slotForClickedSide(slot, point[0], ensureViewport().symmetryX())
+      : activeSlot
+  setMarkerAt(target, point)
+  activeSlot = set?.find((s) => !markerPositions.has(s.id))?.id ?? null
+  drawMarkers()
+  render()
+}
+
+/** Moves an already-placed marker as it is dragged on the model. */
+function onMarkerMove(id: string, point: [number, number, number]): void {
+  setMarkerAt(id, point)
+  drawMarkers()
+}
+
+/** Draws the placed markers in the viewport. */
+function drawMarkers(): void {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null) return
+  ensureViewport().setMarkers(
+    set
+      .filter((s) => markerPositions.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        position: markerPositions.get(s.id) as [number, number, number],
+        color: s.color
+      }))
+  )
+}
+
+/** Saves the placed markers, and which model they were placed on, as a JSON
+ *  fixture in the repo's `e2e/` directory for regression testing. Shows a
+ *  confirmation (or the error) under the button so a save is never in doubt. */
+async function saveMarkers(): Promise<void> {
+  const set = markerSetFor(chosen ?? '')
+  if (set === null || chosen === null) return
+  const byBone: Record<string, [number, number, number]> = {}
+  for (const slot of set) {
+    const p = markerPositions.get(slot.id)
+    if (p !== undefined) byBone[slot.bone] = p
+  }
+  const state = {
+    model: loaded?.name ?? null,
+    modelPath: loaded?.path ?? null,
+    template: chosen,
+    markers: byBone
+  }
+  // Console too, mirrored to the dev terminal, as a redundant record.
+  console.log(`[markers:${chosen}] ${JSON.stringify(byBone)}`)
+  const base = (loaded?.name ?? chosen)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+  try {
+    const path = await devSaveFixture(`${base}-markers`, JSON.stringify(state, null, 2))
+    markerSaveStatus = `Saved ${Object.keys(byBone).length} markers → ${path}`
+  } catch (err) {
+    markerSaveStatus = `Save failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+  render()
+}
+
+/** Solves the rig from the placed markers and draws the fitted skeleton. */
+async function runMarkerFit(): Promise<void> {
+  const set = chosen === null ? null : markerSetFor(chosen)
+  if (chosen === null || set === null || loaded === null || fitting) return
+  const path = loaded.path
+  const markers: Marker[] = set
+    .filter((s) => markerPositions.has(s.id))
+    .map((s) => ({ bone: s.bone, position: markerPositions.get(s.id) as [number, number, number] }))
+  if (markers.length < 2) return
+  fitting = true
+  render()
+  try {
+    const viewport = ensureViewport()
+    viewport.endMarkerPlacement()
+    markerMode = false
+    fitted = await fitFromMarkers(chosen, markers, path)
+    bound = null
+    clips = null
+    clip = null
+    viewport.showFittedSkeleton(fitted.positions, fitted.parents, onJointEdited)
+    furthestStep = Math.max(furthestStep, 3)
+    record()
+  } finally {
+    fitting = false
+    render()
+  }
+}
+
 /** Places the chosen template's skeleton and draws it. */
-async function runFit(name: string): Promise<void> {
+async function runFit(name: string, advance = false): Promise<void> {
   if (loaded === null || fitting) return
+  if (markerMode) {
+    ensureViewport().endMarkerPlacement()
+    markerMode = false
+  }
   chosen = name
   fitting = true
   render()
@@ -631,6 +1145,8 @@ async function runFit(name: string): Promise<void> {
     // A placed skeleton is what binding needs. The Fit step in between has
     // nothing to complete yet, so it does not gate the one after it.
     furthestStep = Math.max(furthestStep, 3)
+    // Autofit from Choose-skeleton lands on the Fit step so its bone handles show.
+    if (advance) activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
     record()
   } finally {
     fitting = false
@@ -653,6 +1169,12 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
       loaded = picked
       const geometry = await loadModel(picked.path)
       geometryBytes = geometry.byteLength
+      // Kept so an already-rigged import can play its OWN clips without a retarget.
+      modelBytes = geometry
+      ownClips = false
+      // A new model invalidates the clip-preview caches (library and own-clips).
+      libraryFor = null
+      ownPreviewFor = null
       // A model is what the skeleton step needs, so earning it unlocks that step.
       furthestStep = Math.max(furthestStep, 1)
       // The imported-but-unrigged state is the baseline undo returns to.
@@ -709,7 +1231,12 @@ function renderGuidance(step: StepDef): string {
 
 /** The floating viewport controls: frame, zoom, and the front/side/top presets.
  *  A mouse-free way to do what orbit/scroll do, and a discoverable one. */
-function renderViewportNav(): string {
+function renderViewportNav(canPan: boolean): string {
+  const pan = canPan
+    ? `<button class="nav-btn" data-nav-mode="pan" aria-pressed="${panView}" title="Pan the view — drag to move the scene and follow the animation" aria-label="Pan the view">
+        <i data-lucide="hand" width="16" height="16" aria-hidden="true"></i>
+      </button>`
+    : ''
   return `
     <div class="viewport-nav" role="toolbar" aria-label="Viewport controls">
       <button class="nav-btn" data-view-action="frame" title="Frame the model" aria-label="Frame the model">
@@ -721,6 +1248,7 @@ function renderViewportNav(): string {
       <button class="nav-btn" data-view-action="zoom-out" title="Zoom out" aria-label="Zoom out">
         <i data-lucide="zoom-out" width="16" height="16" aria-hidden="true"></i>
       </button>
+      ${pan}
       <span class="nav-sep"></span>
       <button class="nav-btn" data-transform="translate" aria-pressed="false" title="Move the model (independent of the grid)" aria-label="Move the model">
         <i data-lucide="move-3d" width="16" height="16" aria-hidden="true"></i>
@@ -765,7 +1293,7 @@ function render(): void {
             <div>${loaded === null ? 'Import a mesh to begin' : 'Viewport rendering arrives with the model preview step'}</div>
           </div>
         </div>
-        ${loaded === null ? '' : renderViewportNav()}
+        ${loaded === null ? '' : renderViewportNav(step.id === StepId.Animate)}
         <div class="guidance">${renderGuidance(step)}</div>
       </main>
 
@@ -786,10 +1314,16 @@ function render(): void {
     const stage = app.querySelector<HTMLElement>('.viewport')
     stage?.querySelector('.viewport-empty')?.remove()
     stage?.prepend(ensureViewport().canvas)
+    // Plain left-drag orbits in Animate (nothing to select there); elsewhere left
+    // stays free for joint/marker picking. Pan mode is Animate-only, so leaving it
+    // releases left back to picking.
+    ensureViewport().setLeftOrbit(step.id === StepId.Animate)
+    if (step.id !== StepId.Animate) panView = false
+    ensureViewport().setPanMode(panView)
   }
 
   createIcons({
-    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle, Pause, Rewind, FastForward, Square }
+    icons: { AlertTriangle, Bone, Upload, Link, Play, Download, Move3d, Rotate3d, Maximize, ZoomIn, ZoomOut, HelpCircle, Pause, Rewind, FastForward, Square, Hand }
   })
 
   // Viewport navigation toolbar: frame / zoom / preset views.
@@ -806,6 +1340,15 @@ function render(): void {
     const preset = button.dataset['viewPreset'] as ViewPreset | undefined
     if (preset === undefined) return
     button.addEventListener('click', () => ensureViewport().setView(preset))
+  })
+
+  // Pan-view toggle (Animate): rebinds left-drag to pan so a trackpad can follow
+  // a travelling clip without the awkward right-drag.
+  const panButton = app.querySelector<HTMLButtonElement>('[data-nav-mode="pan"]')
+  panButton?.addEventListener('click', () => {
+    panView = !panView
+    ensureViewport().setPanMode(panView)
+    panButton.setAttribute('aria-pressed', String(panView))
   })
 
   // Rotate / move the model. Clicking a tool toggles it; the two are mutually
@@ -829,19 +1372,153 @@ function render(): void {
     importButton.addEventListener('click', () => void runImport(importButton))
   }
 
+  // Already-rigged import: skip fitting and animate its own rig, or re-rig.
+  app.querySelector<HTMLButtonElement>('#play-own')?.addEventListener('click', () => proceedOwnClips())
+  app.querySelector<HTMLButtonElement>('#proceed-rigged')?.addEventListener('click', () => void proceedRigged())
+  app.querySelector<HTMLButtonElement>('#rerig')?.addEventListener('click', () => {
+    activeStep = STEPS.findIndex((s) => s.id === StepId.LoadSkeleton)
+    render()
+  })
+
   const bindButton = app.querySelector<HTMLButtonElement>('#bind')
   bindButton?.addEventListener('click', () => void runBind())
 
   app.querySelector<HTMLButtonElement>('#paint')?.addEventListener('click', () => void runPaint())
 
-  app.querySelectorAll<HTMLButtonElement>('.export').forEach((button) => {
-    const format = button.dataset['format']
-    if (format !== 'glb' && format !== 'fbx') return
-    button.addEventListener('click', () => void runExport(format))
+  // Auto-fit again re-runs the automatic placement — handy after orienting or
+  // moving the model on the grid.
+  app
+    .querySelector<HTMLButtonElement>('#refit')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void runFit(chosen)
+    })
+
+  // Marker-placement flow: ring selection, symmetry, solve / auto-fit.
+  app.querySelectorAll<HTMLButtonElement>('.marker-ring').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeSlot = button.dataset['slot'] ?? null
+      render()
+    })
+  })
+  app.querySelector<HTMLInputElement>('#symmetry')?.addEventListener('change', (event) => {
+    useSymmetry = (event.target as HTMLInputElement).checked
+  })
+  app.querySelector<HTMLButtonElement>('#solve')?.addEventListener('click', () => void runMarkerFit())
+  app.querySelector<HTMLButtonElement>('#save-markers')?.addEventListener('click', () => void saveMarkers())
+  app.querySelector<HTMLButtonElement>('#autofit')?.addEventListener('click', () => {
+    if (chosen !== null) void runFit(chosen)
+  })
+  app
+    .querySelector<HTMLButtonElement>('#replace-markers')
+    ?.addEventListener('click', () => {
+      if (chosen !== null) void enterMarkerMode(chosen)
+    })
+
+  // While placing markers, keep the viewport armed to pick and the placed
+  // markers drawn — render() re-runs this binding, and both calls are idempotent.
+  if (step.id === StepId.EditSkeleton && markerMode) {
+    ensureViewport().beginMarkerPlacement({ onPlace: onMarkerPick, onMove: onMarkerMove })
+    drawMarkers()
+  }
+  // Editing the rig needs its bones visible again after the Animate step hid them.
+  if (step.id === StepId.EditSkeleton && !markerMode) {
+    ensureViewport().setSkeletonVisible(true)
+  }
+
+  // Download modal: open it, keep its selects in state, cancel or download.
+  const bindSelect = (selector: string, set: (value: string) => void): void => {
+    const el = app.querySelector<HTMLSelectElement>(selector)
+    el?.addEventListener('change', () => set(el.value))
+  }
+  const exportModal = app.querySelector<HTMLDialogElement>('#export-modal')
+  app.querySelector<HTMLButtonElement>('#open-export')?.addEventListener('click', () => exportModal?.showModal())
+  app.querySelector<HTMLButtonElement>('#ex-cancel')?.addEventListener('click', () => exportModal?.close())
+  bindSelect('#ex-format', (v) => { exportFormat = v === 'fbx' ? 'fbx' : 'glb' })
+  bindSelect('#ex-skin', (v) => { exportSkin = v !== 'without' })
+  bindSelect('#ex-fps', (v) => { exportFps = v === '24' ? 24 : v === '60' ? 60 : 30 })
+  bindSelect('#ex-keyframe', (v) => {
+    keyframeReduction = v === 'low' ? 'low' : v === 'high' ? 'high' : 'none'
+  })
+  app.querySelector<HTMLButtonElement>('#ex-download')?.addEventListener('click', () => {
+    exportModal?.close()
+    void runExport()
   })
 
   app.querySelector<HTMLButtonElement>('#preview')?.addEventListener('click', () => void runPreview())
+  app.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+    const v = button.dataset['view']
+    if (v !== 'mesh' && v !== 'skeleton' && v !== 'both') return
+    button.addEventListener('click', () => {
+      animateView = v
+      ensureViewport().setAnimateView(v)
+      render()
+    })
+  })
   app.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => stopPreview())
+  app.querySelector<HTMLInputElement>('#overdrive')?.addEventListener('input', (event) => {
+    overdrive = Number((event.target as HTMLInputElement).value)
+    ensureViewport().setPlaybackRate(playbackRate())
+    const val = document.querySelector<HTMLElement>('#overdrive-val')
+    if (val !== null) val.textContent = String(overdrive)
+  })
+  const armInput = app.querySelector<HTMLInputElement>('#arm-space')
+  armInput?.addEventListener('input', (event) => {
+    armSpace = Number((event.target as HTMLInputElement).value)
+    const val = document.querySelector<HTMLElement>('#arm-space-val')
+    if (val !== null) val.textContent = String(armSpace)
+  })
+  // Baked on the Rust side, so re-retarget only when the drag settles.
+  armInput?.addEventListener('change', () => {
+    if (playing) {
+      stopPreview()
+      void runPreview()
+    }
+  })
+  // Trim works in frames (like Mixamo's "N total frames"), stored as fractions.
+  const trimFrames = (): number => Math.max(1, totalFrames(clipDuration, fps))
+  const showTrim = (): void => {
+    const f = trimFrames()
+    const s = document.querySelector<HTMLElement>('#trim-start-val')
+    const e = document.querySelector<HTMLElement>('#trim-end-val')
+    if (s !== null) s.textContent = String(Math.round(trimStart * f))
+    if (e !== null) e.textContent = String(Math.round(trimEnd * f))
+  }
+  app.querySelector<HTMLInputElement>('#trim-start')?.addEventListener('input', (event) => {
+    const input = event.target as HTMLInputElement
+    const f = trimFrames()
+    trimStart = Number(input.value) / f
+    if (trimStart > trimEnd) {
+      trimStart = trimEnd
+      input.value = String(Math.round(trimStart * f))
+    }
+    showTrim()
+  })
+  app.querySelector<HTMLInputElement>('#trim-end')?.addEventListener('input', (event) => {
+    const input = event.target as HTMLInputElement
+    const f = trimFrames()
+    trimEnd = Number(input.value) / f
+    if (trimEnd < trimStart) {
+      trimEnd = trimStart
+      input.value = String(Math.round(trimEnd * f))
+    }
+    showTrim()
+  })
+  // Live-filter the clip list as the query changes, without a re-render (which
+  // would drop focus). A full re-render re-applies the same filter from clipQuery.
+  app.querySelector<HTMLInputElement>('#clip-search')?.addEventListener('input', (event) => {
+    clipQuery = (event.target as HTMLInputElement).value
+    app.querySelectorAll<HTMLButtonElement>('.clip-item').forEach((btn) => {
+      btn.hidden = !clipMatches(btn.dataset['clip'] ?? '', clipQuery)
+    })
+  })
+  app.querySelector<HTMLInputElement>('#mirror')?.addEventListener('change', (event) => {
+    mirrored = (event.target as HTMLInputElement).checked
+    // Mirroring is baked on the Rust side, so re-retarget the clip to apply it.
+    if (playing) {
+      stopPreview()
+      void runPreview()
+    }
+  })
   app.querySelector<HTMLButtonElement>('#play-back')?.addEventListener('click', () => setDirection(-1))
   app.querySelector<HTMLButtonElement>('#play-fwd')?.addEventListener('click', () => setDirection(1))
   app.querySelector<HTMLButtonElement>('#play-pause')?.addEventListener('click', () => togglePause())
@@ -861,32 +1538,59 @@ function render(): void {
   app.querySelectorAll<HTMLButtonElement>('.template').forEach((button) => {
     const name = button.dataset['template']
     const clipName = button.dataset['clip']
+    // Own-clips mode: play the imported model's OWN clip directly.
+    const ownClipName = button.dataset['ownclip']
+    if (ownClipName !== undefined) {
+      // Hovering plays the clip in the chooser preview; clicking plays it for real.
+      button.addEventListener('mouseenter', () => clipPreview?.play(ownClipName))
+      button.addEventListener('focus', () => clipPreview?.play(ownClipName))
+      button.addEventListener('click', () => {
+        stopPreview()
+        clip = ownClipName
+        render()
+        void playOwnClip()
+      })
+      return
+    }
     if (clipName !== undefined) {
       // Hovering plays the clip in the chooser preview; clicking selects it.
       button.addEventListener('mouseenter', () => clipPreview?.play(clipName))
       button.addEventListener('focus', () => clipPreview?.play(clipName))
       button.addEventListener('click', () => {
-        // Switching clips stops any playback of the old one.
+        // Clicking a clip loads and plays it right away (Mixamo-style), stopping
+        // any playback of the old one first.
         stopPreview()
         clip = clipName
         exported = null
         clipPreview?.play(clipName)
         record()
-        render()
+        void runPreview()
       })
       return
     }
     if (name === undefined) return
-    button.addEventListener('click', () => void runFit(name))
+    button.addEventListener('click', () => chooseTemplate(name))
   })
 
   if (step.id === StepId.Animate) {
-    void ensureClips()
-    // Mount the persistent preview canvas and load the creature's library once.
-    const slot = app.querySelector<HTMLElement>('#clip-preview')
-    if (slot !== null && chosen !== null) {
-      slot.appendChild(ensureClipPreview().canvas)
-      void ensureLibrary(chosen)
+    ensureViewport().setSkeletonVisible(false)
+    ensureViewport().setAnimateView(animateView)
+    // Own-clips mode plays the model's own bytes; there is no template library.
+    if (!ownClips) {
+      void ensureClips()
+      // Mount the persistent preview canvas and load the creature's library once.
+      const slot = app.querySelector<HTMLElement>('#clip-preview')
+      if (slot !== null && chosen !== null) {
+        slot.appendChild(ensureClipPreview().canvas)
+        void ensureLibrary(chosen)
+      }
+    } else {
+      // Own-clips: preview the model's own bytes (mesh + clips) in the chooser.
+      const slot = app.querySelector<HTMLElement>('#clip-preview')
+      if (slot !== null) {
+        slot.appendChild(ensureClipPreview().canvas)
+        void ensureOwnClipsPreview()
+      }
     }
   }
 
@@ -956,6 +1660,62 @@ async function maybeAutoload(): Promise<void> {
   if (path === null) return
   const button = document.querySelector<HTMLButtonElement>('#import')
   if (button !== null) await runImport(button)
+
+  // Testing: "Proceed to Animate" for an already-rigged import — read its own
+  // rig, bind, jump to Animate, then optionally play a clip retargeted onto it.
+  if (await devAutoproceed().catch(() => false)) {
+    const clipName = await devAutoclip().catch(() => null)
+    // A rigged, animated import plays its OWN clips; otherwise retarget our lib.
+    if (loaded !== null && loaded.import.clips.length > 0) {
+      ownClips = true
+      clip = loaded.import.clips.find((n) => n === clipName) ?? loaded.import.clips[0] ?? null
+      furthestStep = Math.max(furthestStep, STEPS.findIndex((s) => s.id === StepId.Animate))
+      activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+      render()
+      await playOwnClip()
+      render()
+    } else {
+      await proceedRigged()
+      if (clipName !== null && chosen !== null) {
+        await ensureClips()
+        clip = clips?.find((c) => c.name === clipName)?.name ?? clips?.[0]?.name ?? null
+        await ensureLibrary(chosen)
+        render()
+        await runPreview()
+        render()
+      }
+    }
+    return
+  }
+
+  // Testing capture: open a template's marker step EMPTY so a person can place
+  // the markers by hand, with a "Save markers" button to log them as a fixture.
+  const captureTemplate = await devAutomarkCapture().catch(() => null)
+  if (captureTemplate !== null) {
+    markerCapture = true
+    chooseTemplate(captureTemplate)
+    // Self-test: place a couple of markers by synthetic clicks on the model and
+    // save, to prove the place→save→fixture path end-to-end before a person is
+    // asked to place them for real.
+    if (await devCaptureSelftest().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      const drop = (fx: number, fy: number): void =>
+        void canvas.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            clientX: rect.left + rect.width * fx,
+            clientY: rect.top + rect.height * fy,
+            button: 0,
+            bubbles: true
+          })
+        )
+      drop(0.5, 0.35) // upper body — the first (chin) slot
+      drop(0.5, 0.55) // lower body — the next slot advances automatically
+      await saveMarkers()
+    }
+    return
+  }
+
   // Optionally auto-fit a template so the Fit step (and its auto-placement) can
   // be screenshotted without clicking through the workflow.
   let template: string | null = null
@@ -968,6 +1728,131 @@ async function maybeAutoload(): Promise<void> {
   await runFit(template)
   activeStep = STEPS.findIndex((s) => s.id === StepId.EditSkeleton)
   render()
+
+  // Optionally drive the marker-placement flow: seed the markers from the
+  // auto-fit joints (a stand-in for clicking each one) and rest in placement
+  // mode, so the marker Fit step can be screenshotted.
+  if (await devAutomark().catch(() => false)) {
+    const truth = new Map<string, [number, number, number]>()
+    if (fitted !== null) {
+      const positions = fitted.positions
+      fitted.bones.forEach((bone, i) => {
+        const p = positions[i]
+        if (p !== undefined) truth.set(bone, [p[0], p[1], p[2]])
+      })
+    }
+    await enterMarkerMode(template)
+    for (const slot of markerSetFor(template) ?? []) {
+      let at = truth.get(slot.bone)
+      // The chin slot maps to the `head` bone, which sits at the forehead; the
+      // chin/jaw is lower. For the guide render, drop it to jaw level (midway
+      // between the head and neck bones) so the guide matches where to place it.
+      if (slot.id === 'chin') {
+        const head = truth.get('head')
+        const neck = truth.get('neck_01')
+        if (head !== undefined && neck !== undefined) {
+          at = [head[0], (head[1] + neck[1]) / 2, head[2]]
+        }
+      }
+      if (at !== undefined) markerPositions.set(slot.id, at)
+    }
+    activeSlot = null
+    render()
+    drawMarkers()
+    // Optionally hover the model so the precision-preview loupe shows, for a
+    // screenshot. A real OS hover can't be delivered into a WKWebView, so drive
+    // it with a synthetic pointer-move at the model's chest.
+    if (await devAutomarkHover().catch(() => false)) {
+      const canvas = ensureViewport().canvas
+      const rect = canvas.getBoundingClientRect()
+      // Dead-centre lands on the torso for any full-body framing (a fixed
+      // fraction lower down can miss the mesh when the model frames smaller).
+      canvas.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          bubbles: true
+        })
+      )
+    }
+    // Optionally run the solve too, so the fitted skeleton can be screenshotted.
+    if (await devAutomarkSolve().catch(() => false)) await runMarkerFit()
+    return
+  }
+
+  // Optionally bind and show the weight-paint overlay, for the Bind step.
+  if (await devAutopaint().catch(() => false)) {
+    await runBind()
+    activeStep = STEPS.findIndex((s) => s.id === StepId.BindWeights)
+    render()
+    await runPaint()
+    render()
+    return
+  }
+
+  // Optionally bind and preview a clip so the Animate step (retargeted preview +
+  // clip thumbnails) can be screenshotted without clicking through.
+  let autoclip: string | null = null
+  try {
+    autoclip = await devAutoclip()
+  } catch {
+    return
+  }
+  if (autoclip === null) return
+  await runBind()
+  await ensureClips()
+  clip = clips?.find((c) => c.name === autoclip)?.name ?? clips?.[0]?.name ?? null
+  activeStep = STEPS.findIndex((s) => s.id === StepId.Animate)
+  // Dev/screenshot: preselect the 3-way view so the animated skeleton can be shot.
+  const view = await devAnimateView().catch(() => null)
+  if (view === 'mesh' || view === 'skeleton' || view === 'both') {
+    animateView = view
+    ensureViewport().setAnimateView(view)
+  }
+  mirrored = await devAnimateMirror().catch(() => false)
+  const arm = await devAnimateArmSpace().catch(() => null)
+  if (arm !== null && arm !== '') armSpace = Number(arm)
+  render()
+  await ensureLibrary(template)
+  await runPreview()
+  render()
+
+  // Dev/testing: dispatch a synthetic left-drag so camera orbit in Animate can be
+  // verified in a screenshot (a real OS drag can't reach the webview).
+  if (await devAutoOrbit().catch(() => false)) {
+    const canvas = ensureViewport().canvas
+    const rect = canvas.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const fire = (type: string, x: number, y: number, buttons: number): void => {
+      const ev = new PointerEvent(type, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        buttons,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true
+      })
+      canvas.dispatchEvent(ev)
+      window.dispatchEvent(ev)
+    }
+    fire('pointerdown', cx, cy, 1)
+    for (let i = 1; i <= 8; i++) fire('pointermove', cx + i * 35, cy, 1)
+    fire('pointerup', cx + 280, cy, 0)
+    render()
+  }
+
+  // Dev/screenshot: jump to Export and open the Download modal so it can be shot.
+  const autoexport = await devAutoexport().catch(() => null)
+  if (autoexport !== null) {
+    if (autoexport === 'without' || autoexport === 'with') exportSkin = autoexport === 'with'
+    stopPreview() // settle the viewport so no playback re-render closes the modal
+    activeStep = STEPS.findIndex((s) => s.id === StepId.Export)
+    render()
+    document.querySelector<HTMLDialogElement>('#export-modal')?.showModal()
+  }
 }
 // Fire-and-forget at the entry module's end; nothing runs after it.
 await maybeAutoload()

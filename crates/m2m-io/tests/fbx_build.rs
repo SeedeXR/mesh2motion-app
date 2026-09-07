@@ -22,10 +22,14 @@ fn build_square() -> binary::FbxDocument {
         meshes: &[build::Mesh {
             name: "Square",
             positions: &positions,
+            normals: &[],
+            uvs: &[],
+            material: None,
             faces: build::Faces::Triangles(&triangles),
         }],
         bones: &[],
         skins: &[],
+        materials: &[],
         clips: &[],
         time_mode: 6,
     })
@@ -104,6 +108,9 @@ fn the_declared_counts_match_the_objects_written() {
         .map(|i| build::Mesh {
             name: ["A", "B", "C"][i],
             positions: &positions,
+            normals: &[],
+            uvs: &[],
+            material: None,
             faces: build::Faces::Triangles(&triangles),
         })
         .collect();
@@ -111,6 +118,7 @@ fn the_declared_counts_match_the_objects_written() {
         meshes: &meshes,
         bones: &[],
         skins: &[],
+        materials: &[],
         clips: &[],
         time_mode: 6,
     });
@@ -244,6 +252,9 @@ fn build_rigged() -> binary::FbxDocument {
         meshes: &[build::Mesh {
             name: "Square",
             positions: &positions,
+            normals: &[],
+            uvs: &[],
+            material: None,
             faces: build::Faces::Triangles(&triangles),
         }],
         bones: &bones,
@@ -251,6 +262,7 @@ fn build_rigged() -> binary::FbxDocument {
             mesh: 0,
             clusters: &clusters,
         }],
+        materials: &[],
         clips: &[],
         time_mode: 6,
     })
@@ -421,6 +433,9 @@ fn build_animated(time_mode: i32) -> binary::FbxDocument {
         meshes: &[build::Mesh {
             name: "Square",
             positions: &positions,
+            normals: &[],
+            uvs: &[],
+            material: None,
             faces: build::Faces::Triangles(&triangles),
         }],
         bones: &[build::Bone {
@@ -432,6 +447,7 @@ fn build_animated(time_mode: i32) -> binary::FbxDocument {
             pre_rotation: [0.0, 0.0, 0.0],
         }],
         skins: &[],
+        materials: &[],
         clips: &[build::Clip {
             name: "Walk",
             duration: TICK,

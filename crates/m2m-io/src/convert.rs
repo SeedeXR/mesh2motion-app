@@ -14,15 +14,16 @@
 //! # What this carries, and what it does not
 //!
 //! Carried: the node hierarchy with local transforms, triangulated meshes,
-//! skins with their joint lists and inverse bind matrices, and the unit scale.
+//! skins with their joint lists and inverse bind matrices, the unit scale, one
+//! normal and UV per vertex, and each mesh's baseColor material with its
+//! embedded texture — so an FBX source keeps its shading on export (see
+//! [`weld_by_source`] and [`read_material`]).
 //!
-//! Not carried yet: **animation**, normals and UVs. Animation is the real
-//! omission — [`crate::fbx::animation`] already reads it and
-//! [`glb::Clip`] already holds it, so it is work rather than a question. It is
+//! Not carried yet: **animation**. [`crate::fbx::animation`] already reads it and
+//! [`glb::Clip`] already holds it, so it is work rather than a question; it is
 //! left out because the viewport needs geometry before it needs playback, and
 //! shipping half a converter with the gap named beats shipping a whole one
-//! guessed at. Normals and UVs have nowhere to go: [`glb::Primitive`] has no
-//! field for them.
+//! guessed at.
 
 use crate::fbx::dom::Scene;
 use crate::fbx::geometry::{self, GeometricTransform};
@@ -87,8 +88,23 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
 
     let mut primitives: Vec<glb::Primitive> = Vec::new();
     let mut out_skins: Vec<glb::Skin> = Vec::new();
+    let mut materials: Vec<glb::Material> = Vec::new();
+    // Source Material id -> index into `materials`, so a material shared by two
+    // meshes is written once.
+    let mut material_of_id: HashMap<i64, usize> = HashMap::new();
 
     for (node_index, &id) in order.iter().enumerate() {
+        // The material this model draws with, read once and deduplicated.
+        let material = scene
+            .children_of(id, Some("Material"))
+            .first()
+            .map(|&material_id| {
+                *material_of_id.entry(material_id).or_insert_with(|| {
+                    materials.push(read_material(scene, material_id));
+                    materials.len() - 1
+                })
+            });
+
         for geometry_id in scene.children_of(id, Some("Geometry")) {
             let Some(object) = scene.object(geometry_id) else {
                 continue;
@@ -133,18 +149,21 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
             }
 
             // Weld the per-corner expansion back to one vertex per FBX source.
-            // `geometry::parse` expands every polygon corner into its own
-            // vertex so that per-corner normals and UVs have somewhere to live;
-            // we carry neither, so all corners of a source vertex are identical
-            // in what we keep — position and skin weights — and merging them is
-            // lossless. On the reference rig this is 62,520 corners down to
-            // 10,514 vertices, which is what crosses the bulk channel and sits
-            // in the GPU.
+            // `geometry::parse` expands every polygon corner into its own vertex
+            // so per-corner normals and UVs have somewhere to live; welding takes
+            // the first corner's, which is exact for position and skin weights
+            // and an approximation at a hard edge or UV seam (see `weld_by_source`).
+            // On the reference rig this is 62,520 corners down to 10,514 vertices,
+            // which is what crosses the bulk channel and sits in the GPU.
             let welded = weld_by_source(&mesh, &joints, &weights);
             primitives.push(glb::Primitive {
                 mesh: primitives.len(),
                 node: Some(node_index),
                 positions: welded.positions,
+                // Normals, UVs and the material carried from the FBX.
+                normals: welded.normals,
+                uvs: welded.uvs,
+                material,
                 indices: welded.indices,
                 joints: welded.joints,
                 weights: welded.weights,
@@ -156,9 +175,57 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
     Ok(glb::Document {
         nodes,
         primitives,
+        materials,
         skins: out_skins,
         clips: Vec::new(),
         report: glb::GlbReport::default(),
+    })
+}
+
+/// Reads a `Material` object's baseColor: its diffuse colour and, when it has an
+/// embedded texture, the image bytes.
+///
+/// Follows the FBX connection chain `Material <- Texture <- Video` (the writer's
+/// direction, reversed) and reads the `Video`'s embedded `Content`. An external
+/// texture — a `Video` with a filename but no `Content` — keeps the colour but
+/// no image, exactly as the glTF reader treats a texture stored by URI.
+fn read_material(scene: &Scene, material_id: i64) -> glb::Material {
+    let diffuse = scene
+        .object(material_id)
+        .and_then(|m| m.property("DiffuseColor"))
+        .and_then(|p| p.as_vec3())
+        .unwrap_or([1.0, 1.0, 1.0]);
+    let base_color_factor = [diffuse[0] as f32, diffuse[1] as f32, diffuse[2] as f32, 1.0];
+
+    let base_color_image = scene
+        .children_of(material_id, Some("Texture"))
+        .first()
+        .and_then(|&texture| scene.children_of(texture, Some("Video")).first().copied())
+        .and_then(|video| scene.object(video))
+        .and_then(embedded_image);
+
+    glb::Material {
+        base_color_factor,
+        base_color_image,
+    }
+}
+
+/// The image bytes embedded in a `Video` object's `Content` child, when present.
+fn embedded_image(video: &crate::fbx::dom::Object) -> Option<glb::Image> {
+    let content = video.node.children.iter().find(|n| n.name == "Content")?;
+    let bytes = content.properties.iter().find_map(|p| match p {
+        crate::fbx::binary::FbxProperty::Raw(bytes) if !bytes.is_empty() => Some(bytes.clone()),
+        _ => None,
+    })?;
+    // Distinguish PNG from JPEG by signature; the FBX does not record the type.
+    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    Some(glb::Image {
+        data: bytes,
+        mime: mime.to_owned(),
     })
 }
 
@@ -168,6 +235,15 @@ struct Welded {
     indices: Vec<u32>,
     joints: Vec<u16>,
     weights: Vec<f32>,
+    /// One normal per welded vertex — the first corner's — when the mesh had
+    /// them. Welding merges a source vertex's corners, which can carry different
+    /// normals at a hard edge; taking the first is a smoothing approximation
+    /// that keeps the vertex count and the bind exactly as they were.
+    normals: Vec<f32>,
+    /// One UV per welded vertex — the first corner's, V flipped to glTF's axis.
+    /// A UV seam splits a source vertex across two UVs; taking the first is the
+    /// matching approximation, for the same reason as `normals`.
+    uvs: Vec<f32>,
 }
 
 /// Collapses the per-corner expansion, keyed on the FBX source vertex.
@@ -189,6 +265,8 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
     let mut positions = Vec::new();
     let mut out_joints = Vec::new();
     let mut out_weights = Vec::new();
+    let mut out_normals = Vec::new();
+    let mut out_uvs = Vec::new();
     let skinned = !joints.is_empty();
 
     for corner in 0..mesh.vertex_source.len() {
@@ -203,6 +281,21 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
             out_joints.extend_from_slice(&joints[base..base + MAX_INFLUENCES]);
             out_weights.extend_from_slice(&weights[base..base + MAX_INFLUENCES]);
         }
+        if let Some(normals) = mesh
+            .normals
+            .as_ref()
+            .and_then(|n| n.get(corner * 3..corner * 3 + 3))
+        {
+            out_normals.extend_from_slice(normals);
+        }
+        if let Some(uv) = mesh
+            .uvs
+            .as_ref()
+            .and_then(|u| u.get(corner * 2..corner * 2 + 2))
+        {
+            // FBX's V axis runs opposite to glTF's; flip it back.
+            out_uvs.extend_from_slice(&[uv[0], 1.0 - uv[1]]);
+        }
     }
 
     let indices = mesh
@@ -211,10 +304,22 @@ fn weld_by_source(mesh: &geometry::MeshGeometry, joints: &[u16], weights: &[f32]
         .map(|&corner| new_index[mesh.vertex_source[corner as usize] as usize])
         .collect();
 
+    // Only keep attributes that came out complete — one per welded vertex — so a
+    // partially-read layer is dropped rather than misaligned.
+    let vertices = positions.len() / 3;
+    if out_normals.len() != vertices * 3 {
+        out_normals.clear();
+    }
+    if out_uvs.len() != vertices * 2 {
+        out_uvs.clear();
+    }
+
     Welded {
         positions,
         indices,
         joints: out_joints,
         weights: out_weights,
+        normals: out_normals,
+        uvs: out_uvs,
     }
 }

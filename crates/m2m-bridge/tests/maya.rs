@@ -57,12 +57,16 @@ fn our_rigged_cube_fbx() -> Vec<u8> {
     let mesh = build::Mesh {
         name: "Cube",
         positions: &POSITIONS,
+        normals: &[],
+        uvs: &[],
+        material: None,
         faces: build::Faces::Triangles(&TRIANGLES),
     };
     let document = build::build(&build::Scene {
         meshes: &[mesh],
         bones: &bones,
         skins: &skins,
+        materials: &[],
         clips: &[],
         time_mode: 6,
     });

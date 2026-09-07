@@ -57,8 +57,35 @@ pub struct Mesh<'a> {
     pub name: &'a str,
     /// Three floats per vertex.
     pub positions: &'a [f32],
+    /// Three floats per vertex — the vertex normals — or empty for none.
+    /// Written per control point (glTF's per-vertex normals map directly).
+    pub normals: &'a [f32],
+    /// Two floats per vertex — the UVs — or empty for none.
+    pub uvs: &'a [f32],
+    /// The material this mesh draws with, as an index into [`Scene::materials`],
+    /// or `None` for none.
+    pub material: Option<usize>,
     /// The faces.
     pub faces: Faces<'a>,
+}
+
+/// A material to write: a diffuse colour and, optionally, an embedded texture.
+pub struct Material<'a> {
+    /// Name shown in the importer.
+    pub name: &'a str,
+    /// Diffuse (baseColor) RGB, 0..1.
+    pub diffuse: [f64; 3],
+    /// The baseColor texture, embedded, when the material has one.
+    pub texture: Option<Texture<'a>>,
+}
+
+/// An embedded texture: the image bytes and a file name the importer shows.
+pub struct Texture<'a> {
+    /// A file name for the texture, e.g. `color.png`. The image is embedded, so
+    /// this is a label, not a path that has to resolve.
+    pub file_name: &'a str,
+    /// The encoded image bytes (PNG or JPEG), embedded verbatim in a `Video`.
+    pub image: &'a [u8],
 }
 
 /// One bone of a skeleton.
@@ -170,6 +197,8 @@ pub struct Scene<'a> {
     pub bones: &'a [Bone<'a>],
     /// Skins, binding meshes to bones.
     pub skins: &'a [Skin<'a>],
+    /// Materials, referenced by `Mesh::material`.
+    pub materials: &'a [Material<'a>],
     /// Animation clips.
     pub clips: &'a [Clip<'a>],
     /// FBX `TimeMode`, which fixes the frame rate the tick times are read at.
@@ -224,6 +253,12 @@ pub fn build(scene: &Scene) -> FbxDocument {
                 .collect();
             (stack, layer, channels)
         })
+        .collect();
+    // Per material: an id, and — when it has a texture — a texture and a video id.
+    let material_ids: Vec<(i64, Option<(i64, i64)>)> = scene
+        .materials
+        .iter()
+        .map(|m| (id(), m.texture.as_ref().map(|_| (id(), id()))))
         .collect();
     let document_id = id();
 
@@ -283,6 +318,26 @@ pub fn build(scene: &Scene) -> FbxDocument {
                 objects.push(animation_curve_node(curve_id, curve));
                 connections.push(property_connection(curve_id, *node_id, curve.axis));
             }
+        }
+    }
+
+    // Materials, their embedded textures, and the mesh→material links.
+    for (material, &(material_id, texture_video)) in scene.materials.iter().zip(&material_ids) {
+        objects.push(material_node(material_id, material));
+        if let (Some(texture), Some((texture_id, video_id))) =
+            (material.texture.as_ref(), texture_video)
+        {
+            objects.push(texture_node(texture_id, texture, material.name));
+            objects.push(video_node(video_id, texture, material.name));
+            // The texture drives the material's DiffuseColor; the video is the
+            // texture's image.
+            connections.push(property_connection(texture_id, material_id, "DiffuseColor"));
+            connections.push(connection(video_id, texture_id));
+        }
+    }
+    for (mesh, &(_, model_id)) in scene.meshes.iter().zip(&mesh_ids) {
+        if let Some(material) = mesh.material {
+            connections.push(connection(material_ids[material].0, model_id));
         }
     }
 
@@ -504,8 +559,25 @@ fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)], clip_ids: &[Cli
         .flat_map(|(_, _, channels)| channels.iter())
         .map(|(_, curves)| curves.len())
         .sum();
-    let total =
-        1 + geometries + models + attributes + deformers + stacks + layers + curve_nodes + curves;
+    let materials = scene.materials.len();
+    let textures = scene
+        .materials
+        .iter()
+        .filter(|m| m.texture.is_some())
+        .count();
+    let videos = textures;
+    let total = 1
+        + geometries
+        + models
+        + attributes
+        + deformers
+        + materials
+        + textures
+        + videos
+        + stacks
+        + layers
+        + curve_nodes
+        + curves;
 
     let mut children = vec![
         node("Version", vec![FbxProperty::I32(100)], vec![]),
@@ -523,6 +595,13 @@ fn definitions_node(scene: &Scene, skin_ids: &[(i64, Vec<i64>)], clip_ids: &[Cli
     }
     if deformers > 0 {
         children.push(object_type("Deformer", deformers));
+    }
+    if materials > 0 {
+        children.push(object_type("Material", materials));
+    }
+    if textures > 0 {
+        children.push(object_type("Texture", textures));
+        children.push(object_type("Video", videos));
     }
     if stacks > 0 {
         children.push(object_type("AnimationStack", stacks));
@@ -560,6 +639,86 @@ fn geometry_node(id: i64, mesh: &Mesh) -> FbxNode {
             .collect(),
     };
 
+    let mut children = vec![
+        node("GeometryVersion", vec![FbxProperty::I32(124)], vec![]),
+        node("Vertices", vec![FbxProperty::F64Array(vertices)], vec![]),
+        node(
+            "PolygonVertexIndex",
+            vec![FbxProperty::I32Array(polygon_indices)],
+            vec![],
+        ),
+    ];
+
+    // Per-control-point (per-vertex) shading, mapped Direct — glTF's per-vertex
+    // NORMAL and TEXCOORD_0 line up one-to-one with the vertices above, so no
+    // index array is needed. A `Layer` ties the elements together, which Maya
+    // and Blender both require before they read any of them.
+    let mut layer_elements = Vec::new();
+    if !mesh.normals.is_empty() {
+        let normals: Vec<f64> = mesh.normals.iter().map(|&v| f64::from(v)).collect();
+        children.push(node(
+            "LayerElementNormal",
+            vec![FbxProperty::I32(0)],
+            vec![
+                node("Version", vec![FbxProperty::I32(101)], vec![]),
+                node("Name", vec![FbxProperty::Str(String::new())], vec![]),
+                information_type("MappingInformationType", "ByVertice"),
+                information_type("ReferenceInformationType", "Direct"),
+                node("Normals", vec![FbxProperty::F64Array(normals)], vec![]),
+            ],
+        ));
+        layer_elements.push("LayerElementNormal");
+    }
+    if !mesh.uvs.is_empty() {
+        // FBX's V axis runs the opposite way to glTF's, so flip it, or the
+        // texture imports upside down.
+        let uvs: Vec<f64> = mesh
+            .uvs
+            .chunks_exact(2)
+            .flat_map(|uv| [f64::from(uv[0]), 1.0 - f64::from(uv[1])])
+            .collect();
+        children.push(node(
+            "LayerElementUV",
+            vec![FbxProperty::I32(0)],
+            vec![
+                node("Version", vec![FbxProperty::I32(101)], vec![]),
+                node("Name", vec![FbxProperty::Str("map1".into())], vec![]),
+                information_type("MappingInformationType", "ByVertice"),
+                information_type("ReferenceInformationType", "Direct"),
+                node("UV", vec![FbxProperty::F64Array(uvs)], vec![]),
+            ],
+        ));
+        layer_elements.push("LayerElementUV");
+    }
+    if mesh.material.is_some() {
+        children.push(node(
+            "LayerElementMaterial",
+            vec![FbxProperty::I32(0)],
+            vec![
+                node("Version", vec![FbxProperty::I32(101)], vec![]),
+                node("Name", vec![FbxProperty::Str(String::new())], vec![]),
+                information_type("MappingInformationType", "AllSame"),
+                information_type("ReferenceInformationType", "IndexToDirect"),
+                node("Materials", vec![FbxProperty::I32Array(vec![0])], vec![]),
+            ],
+        ));
+        layer_elements.push("LayerElementMaterial");
+    }
+    if !layer_elements.is_empty() {
+        let mut layer = vec![node("Version", vec![FbxProperty::I32(100)], vec![])];
+        for kind in layer_elements {
+            layer.push(node(
+                "LayerElement",
+                vec![],
+                vec![
+                    node("Type", vec![FbxProperty::Str(kind.into())], vec![]),
+                    node("TypedIndex", vec![FbxProperty::I32(0)], vec![]),
+                ],
+            ));
+        }
+        children.push(node("Layer", vec![FbxProperty::I32(0)], layer));
+    }
+
     node(
         "Geometry",
         vec![
@@ -567,12 +726,133 @@ fn geometry_node(id: i64, mesh: &Mesh) -> FbxNode {
             FbxProperty::Str(object_name(mesh.name, "Geometry")),
             FbxProperty::Str("Mesh".into()),
         ],
+        children,
+    )
+}
+
+/// A `MappingInformationType`/`ReferenceInformationType` child — a node whose
+/// single string property names the mapping.
+fn information_type(key: &str, value: &str) -> FbxNode {
+    node(key, vec![FbxProperty::Str(value.into())], vec![])
+}
+
+/// A `Material` object carrying the diffuse colour, as a Phong material. A
+/// texture, when the material has one, is connected to its `DiffuseColor`
+/// property in [`build`].
+fn material_node(id: i64, material: &Material) -> FbxNode {
+    let [r, g, b] = material.diffuse;
+    let color = || {
         vec![
-            node("GeometryVersion", vec![FbxProperty::I32(124)], vec![]),
-            node("Vertices", vec![FbxProperty::F64Array(vertices)], vec![]),
+            FbxProperty::F64(r),
+            FbxProperty::F64(g),
+            FbxProperty::F64(b),
+        ]
+    };
+    node(
+        "Material",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(material.name, "Material")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![
+            node("Version", vec![FbxProperty::I32(102)], vec![]),
             node(
-                "PolygonVertexIndex",
-                vec![FbxProperty::I32Array(polygon_indices)],
+                "ShadingModel",
+                vec![FbxProperty::Str("phong".into())],
+                vec![],
+            ),
+            node("MultiLayer", vec![FbxProperty::I32(0)], vec![]),
+            node(
+                "Properties70",
+                vec![],
+                vec![
+                    property("DiffuseColor", "Color", "", "A", color()),
+                    property("Diffuse", "Vector3D", "Vector", "", color()),
+                ],
+            ),
+        ],
+    )
+}
+
+/// A `Texture` object that samples an embedded `Video` (connected in [`build`])
+/// through the mesh's `map1` UV set.
+fn texture_node(id: i64, texture: &Texture, name: &str) -> FbxNode {
+    node(
+        "Texture",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(name, "Texture")),
+            FbxProperty::Str(String::new()),
+        ],
+        vec![
+            node(
+                "Type",
+                vec![FbxProperty::Str("TextureVideoClip".into())],
+                vec![],
+            ),
+            node("Version", vec![FbxProperty::I32(202)], vec![]),
+            node(
+                "TextureName",
+                vec![FbxProperty::Str(object_name(name, "Texture"))],
+                vec![],
+            ),
+            node(
+                "Properties70",
+                vec![],
+                vec![property(
+                    "UVSet",
+                    "KString",
+                    "",
+                    "",
+                    vec![FbxProperty::Str("map1".into())],
+                )],
+            ),
+            node(
+                "Media",
+                vec![FbxProperty::Str(object_name(name, "Video"))],
+                vec![],
+            ),
+            node(
+                "FileName",
+                vec![FbxProperty::Str(texture.file_name.into())],
+                vec![],
+            ),
+            node(
+                "RelativeFilename",
+                vec![FbxProperty::Str(texture.file_name.into())],
+                vec![],
+            ),
+        ],
+    )
+}
+
+/// A `Video` object with the image bytes embedded as its `Content`, so the
+/// exported file is self-contained — no sidecar image to ship or lose.
+fn video_node(id: i64, texture: &Texture, name: &str) -> FbxNode {
+    node(
+        "Video",
+        vec![
+            FbxProperty::I64(id),
+            FbxProperty::Str(object_name(name, "Video")),
+            FbxProperty::Str("Clip".into()),
+        ],
+        vec![
+            node("Type", vec![FbxProperty::Str("Clip".into())], vec![]),
+            node("UseMipMap", vec![FbxProperty::I32(0)], vec![]),
+            node(
+                "Filename",
+                vec![FbxProperty::Str(texture.file_name.into())],
+                vec![],
+            ),
+            node(
+                "RelativeFilename",
+                vec![FbxProperty::Str(texture.file_name.into())],
+                vec![],
+            ),
+            node(
+                "Content",
+                vec![FbxProperty::Raw(texture.image.to_vec())],
                 vec![],
             ),
         ],

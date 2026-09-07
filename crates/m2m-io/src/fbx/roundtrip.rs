@@ -252,6 +252,9 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
         .map(|i| build::Mesh {
             name: &raw_meshes.names[i],
             positions: &raw_meshes.positions[i],
+            normals: &[],
+            uvs: &[],
+            material: None,
             faces: build::Faces::Polygons(&raw_meshes.polygons[i]),
         })
         .collect();
@@ -342,6 +345,7 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, FbxError> {
         meshes: &meshes,
         bones: &bones,
         skins: &built_skins,
+        materials: &[],
         clips: &clips,
         time_mode,
     });

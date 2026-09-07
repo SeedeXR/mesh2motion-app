@@ -26,12 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mesh = m2m_io::fbx::build::Mesh {
         name: "Cube",
         positions: &positions,
+        normals: &[],
+        uvs: &[],
+        material: None,
         faces: m2m_io::fbx::build::Faces::Triangles(&triangles),
     };
     let document = m2m_io::fbx::build::build(&m2m_io::fbx::build::Scene {
         meshes: &[mesh],
         bones: &[],
         skins: &[],
+        materials: &[],
         clips: &[],
         time_mode: 6,
     });

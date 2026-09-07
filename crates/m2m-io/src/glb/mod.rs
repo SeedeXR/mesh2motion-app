@@ -20,6 +20,8 @@
 mod write;
 pub use write::write;
 
+pub mod graft;
+
 use std::collections::HashMap;
 
 /// What went wrong reading a `.glb`.
@@ -106,6 +108,19 @@ pub struct Primitive {
     pub node: Option<usize>,
     /// `x, y, z` per vertex, in the mesh's own space.
     pub positions: Vec<f32>,
+    /// `x, y, z` per vertex — `NORMAL` — empty when the primitive carries none.
+    ///
+    /// Read so an export that keeps the source's shading can write them; the rig
+    /// itself does not use them.
+    pub normals: Vec<f32>,
+    /// `u, v` per vertex — `TEXCOORD_0` — empty when the primitive carries none.
+    ///
+    /// The texture coordinates a material's image is sampled through; kept for
+    /// the same reason as `normals`.
+    pub uvs: Vec<f32>,
+    /// The material this primitive draws with, as an index into
+    /// [`Document::materials`], or `None` for the default material.
+    pub material: Option<usize>,
     /// Triangle corners into `positions`. Always a multiple of three.
     pub indices: Vec<u32>,
     /// Four joint indices per vertex, empty when unskinned.
@@ -123,6 +138,27 @@ pub struct Primitive {
     /// for overlays the app bakes in, such as the weight-paint view, where the
     /// viewer's loader reads the colours we write.
     pub colors: Vec<f32>,
+}
+
+/// A material's baseColor: a factor and, when present, an image sampled by the
+/// primitive's UVs. Only the baseColor is kept — it is what a rigged export
+/// needs to look like the model it came from, and the rest of a PBR material
+/// (metallic, roughness, normal maps) is not something the rig pipeline touches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Material {
+    /// Linear RGBA baseColor factor, `[1,1,1,1]` when the file gives none.
+    pub base_color_factor: [f32; 4],
+    /// The baseColor texture's image, when the material has one.
+    pub base_color_image: Option<Image>,
+}
+
+/// An embedded image: its bytes and MIME type, exactly as the file stored them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    /// The encoded image bytes (PNG or JPEG).
+    pub data: Vec<u8>,
+    /// The MIME type, e.g. `image/png`.
+    pub mime: String,
 }
 
 /// A node's local transform, kept as TRS rather than a matrix so a bone's
@@ -274,6 +310,9 @@ pub struct Document {
     pub nodes: Vec<Node>,
     /// Triangulated primitives.
     pub primitives: Vec<Primitive>,
+    /// Materials, indexed as the file indexes them; a primitive names one by
+    /// index. Empty when the reader was not asked to keep shading.
+    pub materials: Vec<Material>,
     /// Skins.
     pub skins: Vec<Skin>,
     /// Animations.
@@ -449,16 +488,85 @@ pub fn read(bytes: &[u8]) -> Result<Document, GlbError> {
     let nodes = read_nodes(&gltf, &mut report);
     let mesh_owner = mesh_owners(&gltf);
     let primitives = read_primitives(&gltf, &mesh_owner, get_buffer_data, &mut report)?;
+    let materials = read_materials(bytes, blob);
     let skins = read_skins(&gltf, get_buffer_data, &mut report);
     let clips = read_clips(&gltf, get_buffer_data, &mut report);
 
     Ok(Document {
         nodes,
         primitives,
+        materials,
         skins,
         clips,
         report,
     })
+}
+
+/// Reads each material's baseColor factor and, when it is a texture embedded in
+/// the BIN chunk, its image bytes. A texture stored by URI (external file or
+/// data URI) is not resolved — the reader never fetches, matching how it refuses
+/// external buffers — so such a material keeps its factor but no image.
+fn read_materials(bytes: &[u8], blob: &[u8]) -> Vec<Material> {
+    // Read from the raw JSON with bounds-checked access rather than through the
+    // `gltf` crate's typed image API, which `unwrap`s a missing `mimeType` and
+    // an out-of-range `bufferView` (`image.rs:124`, `:128`) — a malformed image
+    // would otherwise panic the reader. The material order is the JSON array
+    // order, which is the index `primitive.material()` returns.
+    let Some(root) =
+        json_chunk(bytes).and_then(|json| serde_json::from_slice::<serde_json::Value>(json).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(materials) = root.get("materials").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let array = |key: &str| root.get(key).and_then(serde_json::Value::as_array);
+    let (textures, images, views) = (array("textures"), array("images"), array("bufferViews"));
+
+    // The image a texture index resolves to, when it is an embedded bufferView
+    // with a MIME type that fits inside the BIN chunk. Every step is checked.
+    let image_of = |texture_index: usize| -> Option<Image> {
+        let source = textures?.get(texture_index)?.get("source")?.as_u64()? as usize;
+        let image = images?.get(source)?;
+        let view = views?.get(image.get("bufferView")?.as_u64()? as usize)?;
+        let mime = image.get("mimeType")?.as_str()?.to_owned();
+        let offset = view
+            .get("byteOffset")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let length = view.get("byteLength")?.as_u64()? as usize;
+        let data = blob.get(offset..offset.checked_add(length)?)?.to_vec();
+        Some(Image { data, mime })
+    };
+
+    materials
+        .iter()
+        .map(|material| {
+            let pbr = material.get("pbrMetallicRoughness");
+            let base_color_factor = pbr
+                .and_then(|p| p.get("baseColorFactor"))
+                .and_then(serde_json::Value::as_array)
+                .map(|a| {
+                    let mut out = [1.0f32; 4];
+                    for (slot, value) in out.iter_mut().zip(a) {
+                        if let Some(v) = value.as_f64() {
+                            *slot = v as f32;
+                        }
+                    }
+                    out
+                })
+                .unwrap_or([1.0; 4]);
+            let base_color_image = pbr
+                .and_then(|p| p.get("baseColorTexture"))
+                .and_then(|t| t.get("index"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|index| image_of(index as usize));
+            Material {
+                base_color_factor,
+                base_color_image,
+            }
+        })
+        .collect()
 }
 
 /// Extensions this reader can safely ignore when a file *requires* one.
@@ -938,6 +1046,18 @@ fn validate_primitive_accessors(primitive: &gltf::Primitive<'_>) -> (bool, bool)
                 gltf::accessor::Dimensions::Vec3,
                 &[gltf::accessor::DataType::F32],
             ),
+            // TexCoords is now read (for shading passthrough), so it must be
+            // validated too, or a malformed UV accessor panics the gltf crate's
+            // reader the same way an unchecked POSITION would.
+            gltf::Semantic::TexCoords(_) => accessor_is(
+                &accessor,
+                gltf::accessor::Dimensions::Vec2,
+                &[
+                    gltf::accessor::DataType::F32,
+                    gltf::accessor::DataType::U8,
+                    gltf::accessor::DataType::U16,
+                ],
+            ),
             gltf::Semantic::Joints(_) => accessor_is(
                 &accessor,
                 gltf::accessor::Dimensions::Vec4,
@@ -1033,10 +1153,25 @@ fn read_primitive_data<'a>(
         report.half_skinned_primitives += 1;
     }
 
+    // Shading the rig itself does not use, kept so an export can preserve it.
+    let mut normals: Vec<f32> = reader
+        .read_normals()
+        .map(|n| n.flatten().collect())
+        .unwrap_or_default();
+    sanitize(&mut normals, &mut report.non_finite_values);
+    let mut uvs: Vec<f32> = reader
+        .read_tex_coords(0)
+        .map(|t| t.into_f32().flatten().collect())
+        .unwrap_or_default();
+    sanitize(&mut uvs, &mut report.non_finite_values);
+
     Ok(Primitive {
         mesh: mesh_index,
         node: mesh_owner.get(&mesh_index).copied(),
         positions,
+        normals,
+        uvs,
+        material: primitive.material().index(),
         indices,
         joints,
         weights,

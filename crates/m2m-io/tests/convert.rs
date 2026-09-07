@@ -265,9 +265,9 @@ fn a_joint_is_only_deforming_for_the_skin_it_belongs_to() {
 #[test]
 fn welding_collapses_the_per_corner_expansion_losslessly() {
     // `geometry::parse` expands every polygon corner into its own vertex so
-    // per-corner normals and UVs have somewhere to live. We carry neither, so
-    // that expansion is pure bloat on the bulk channel and in the GPU. Welding
-    // by source vertex must remove it WITHOUT changing the geometry.
+    // per-corner normals and UVs have somewhere to live. Welding by source
+    // vertex removes that bloat WITHOUT changing the geometry, and carries one
+    // normal and UV per welded vertex (the first corner's) so shading survives.
     let document = document();
 
     // Measured: the reference rig's two meshes are 10,514 and 14,232 source
@@ -286,6 +286,15 @@ fn welding_collapses_the_per_corner_expansion_losslessly() {
 
     for primitive in &document.primitives {
         let vertices = primitive.positions.len() / 3;
+
+        // Normals and UVs are carried, one per welded vertex, so an FBX source
+        // keeps its shading coordinates on export.
+        assert_eq!(
+            primitive.normals.len(),
+            vertices * 3,
+            "a normal per welded vertex"
+        );
+        assert_eq!(primitive.uvs.len(), vertices * 2, "a UV per welded vertex");
 
         // Triangle count is unchanged — welding merges vertices, never faces.
         // The reference rig triangulates to 20,840 and 28,272 triangles.
@@ -379,4 +388,60 @@ fn welding_does_not_move_a_single_vertex() {
         }
     }
     assert!(checked > 500, "only {checked} corners checked");
+}
+
+/// A material with an embedded texture survives the FBX round trip.
+///
+/// Builds an FBX carrying one material and one embedded image, reads it back,
+/// and checks the converter reconstructs the baseColor and the image bytes —
+/// the read side of the export's texture passthrough.
+#[test]
+fn an_embedded_fbx_texture_is_read_back() {
+    use m2m_io::fbx::{build, encode};
+
+    // A distinctive "PNG" so the assertion is about these exact bytes, not just
+    // that some image came through.
+    const IMAGE: &[u8] = b"\x89PNG\r\n\x1a\nMESH2MOTION-TEST-TEXTURE";
+    let positions = [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let scene = build::Scene {
+        meshes: &[build::Mesh {
+            name: "Tri",
+            positions: &positions,
+            normals: &[],
+            uvs: &[0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            material: Some(0),
+            faces: build::Faces::Triangles(&[0, 1, 2]),
+        }],
+        bones: &[],
+        skins: &[],
+        materials: &[build::Material {
+            name: "Painted",
+            diffuse: [0.25, 0.5, 0.75],
+            texture: Some(build::Texture {
+                file_name: "paint.png",
+                image: IMAGE,
+            }),
+        }],
+        clips: &[],
+        time_mode: 6,
+    };
+    let bytes = encode::encode(&build::build(&scene)).expect("encodes");
+
+    let document = fbx_to_gltf(&Scene::from_document(
+        binary::parse(&bytes).expect("parses"),
+    ))
+    .expect("converts");
+
+    assert_eq!(document.materials.len(), 1, "the material was not read");
+    let material = &document.materials[0];
+    // The diffuse colour, with an implicit opaque alpha.
+    let factor = material.base_color_factor;
+    assert!((factor[0] - 0.25).abs() < 1e-3 && (factor[1] - 0.5).abs() < 1e-3);
+    let image = material
+        .base_color_image
+        .as_ref()
+        .expect("the embedded image was not read");
+    assert_eq!(image.data, IMAGE, "the image bytes did not round-trip");
+    assert_eq!(image.mime, "image/png");
+    assert_eq!(document.primitives[0].material, Some(0));
 }

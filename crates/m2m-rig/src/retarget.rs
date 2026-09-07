@@ -281,6 +281,92 @@ pub fn retarget(
     )
 }
 
+/// Mirrors a clip left↔right across the sagittal (X) plane.
+///
+/// Each `_l`/`_r` bone's rotation track is moved to its partner, and every
+/// rotation is reflected across X — `(x, y, z, w) → (x, -y, -z, w)` — so the
+/// motion plays as its mirror image. A midline bone (no `_l`/`_r` suffix) keeps
+/// its own track, reflected in place. Assumes a left/right-symmetric rest pose,
+/// which the templates are (`calf_l` at +X mirrors `calf_r` at -X).
+pub fn mirror_clip(clip: &Clip, names: &[String]) -> Clip {
+    let partner = |bone: usize| -> usize {
+        let Some(name) = names.get(bone) else {
+            return bone;
+        };
+        let wanted = if let Some(base) = name.strip_suffix("_l") {
+            format!("{base}_r")
+        } else if let Some(base) = name.strip_suffix("_r") {
+            format!("{base}_l")
+        } else {
+            return bone;
+        };
+        names.iter().position(|n| *n == wanted).unwrap_or(bone)
+    };
+    let tracks = clip
+        .tracks
+        .iter()
+        .map(|track| RotationTrack {
+            bone: partner(track.bone),
+            times: track.times.clone(),
+            rotations: track
+                .rotations
+                .iter()
+                .map(|q| Quat::from_xyzw(q.x, -q.y, -q.z, q.w))
+                .collect(),
+        })
+        .collect();
+    Clip {
+        name: clip.name.clone(),
+        tracks,
+    }
+}
+
+/// Widens or narrows the arms by `angle` radians (Mixamo's Character Arm-Space).
+///
+/// Pre-multiplies a spread rotation onto the `upperarm_l`/`upperarm_r` tracks;
+/// the forearm and hand are its children, so they follow. A positive angle
+/// raises the arms away from the body (wider), negative lowers them (narrower).
+/// The right arm gets the opposite sign so the two stay symmetric.
+pub fn spread_arms(clip: &Clip, names: &[String], angle: f32) -> Clip {
+    if angle == 0.0 {
+        return clip.clone();
+    }
+    let index = |name: &str| names.iter().position(|n| n == name);
+    let left = index("upperarm_l");
+    let right = index("upperarm_r");
+    let spread_left = Quat::from_rotation_z(angle);
+    let spread_right = Quat::from_rotation_z(-angle);
+    let tracks = clip
+        .tracks
+        .iter()
+        .map(|track| {
+            let extra = if Some(track.bone) == left {
+                Some(spread_left)
+            } else if Some(track.bone) == right {
+                Some(spread_right)
+            } else {
+                None
+            };
+            match extra {
+                Some(spread) => RotationTrack {
+                    bone: track.bone,
+                    times: track.times.clone(),
+                    rotations: track
+                        .rotations
+                        .iter()
+                        .map(|q| (spread * *q).normalize())
+                        .collect(),
+                },
+                None => track.clone(),
+            }
+        })
+        .collect();
+    Clip {
+        name: clip.name.clone(),
+        tracks,
+    }
+}
+
 /// Bone indices with every parent before its children.
 ///
 /// Bones caught in a parent cycle are placed last, so the walk terminates on a
@@ -393,4 +479,100 @@ pub fn retarget_translations(
     }
     out.sort_by_key(|t| t.bone);
     out
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::{mirror_clip, spread_arms, Clip, RotationTrack};
+    use glam::Quat;
+
+    #[test]
+    fn mirror_swaps_left_right_and_reflects_across_x() {
+        let names: Vec<String> = ["hand_l", "hand_r", "spine"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let q = Quat::from_xyzw(0.1, 0.2, 0.3, 0.9272).normalize();
+        let clip = Clip {
+            name: "wave".into(),
+            tracks: vec![
+                RotationTrack {
+                    bone: 0,
+                    times: vec![0.0],
+                    rotations: vec![q],
+                }, // hand_l
+                RotationTrack {
+                    bone: 2,
+                    times: vec![0.0],
+                    rotations: vec![q],
+                }, // spine (midline)
+            ],
+        };
+
+        let mirrored = mirror_clip(&clip, &names);
+
+        // hand_l's track moved onto hand_r (bone 1), reflected (x, -y, -z, w).
+        let hand = mirrored
+            .tracks
+            .iter()
+            .find(|t| t.bone == 1)
+            .expect("hand_r track");
+        let m = hand.rotations[0];
+        assert!((m.x - q.x).abs() < 1e-6);
+        assert!((m.y + q.y).abs() < 1e-6);
+        assert!((m.z + q.z).abs() < 1e-6);
+        assert!((m.w - q.w).abs() < 1e-6);
+
+        // The midline spine keeps its own bone, reflected in place.
+        let spine = mirrored
+            .tracks
+            .iter()
+            .find(|t| t.bone == 2)
+            .expect("spine track");
+        assert!((spine.rotations[0].y + q.y).abs() < 1e-6);
+        // No track escaped onto hand_l here (only hand_l had a track to move away).
+        assert!(mirrored.tracks.iter().all(|t| t.bone != 0));
+    }
+
+    #[test]
+    fn spread_arms_rotates_the_upperarms_oppositely_and_leaves_others() {
+        use glam::Quat;
+        let names: Vec<String> = ["upperarm_l", "upperarm_r", "spine"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let clip = Clip {
+            name: "t".into(),
+            tracks: vec![
+                RotationTrack {
+                    bone: 0,
+                    times: vec![0.0],
+                    rotations: vec![Quat::IDENTITY],
+                },
+                RotationTrack {
+                    bone: 1,
+                    times: vec![0.0],
+                    rotations: vec![Quat::IDENTITY],
+                },
+                RotationTrack {
+                    bone: 2,
+                    times: vec![0.0],
+                    rotations: vec![Quat::IDENTITY],
+                },
+            ],
+        };
+        let angle = 0.3_f32;
+        let out = spread_arms(&clip, &names, angle);
+        let rot = |bone: usize| {
+            out.tracks
+                .iter()
+                .find(|t| t.bone == bone)
+                .unwrap()
+                .rotations[0]
+        };
+        assert!(rot(0).angle_between(Quat::from_rotation_z(angle)) < 1e-5); // left +angle
+        assert!(rot(1).angle_between(Quat::from_rotation_z(-angle)) < 1e-5); // right -angle
+        assert!(rot(2).angle_between(Quat::IDENTITY) < 1e-6); // spine untouched
+        assert_eq!(spread_arms(&clip, &names, 0.0), clip); // no-op at zero
+    }
 }

@@ -21,9 +21,10 @@ import {
   type Object3D,
   PerspectiveCamera,
   Scene,
+  SkeletonHelper,
   WebGLRenderer
 } from 'three'
-import { applyFraming, frameBounds, parseAnimated } from './model'
+import { applyFraming, boundsOfBones, frameBounds, parseAnimated } from './model'
 
 const FOV = 35
 
@@ -62,6 +63,7 @@ export function createClipPreview(): ClipPreview {
   scene.add(key)
 
   let root: Object3D | null = null
+  let helper: SkeletonHelper | null = null
   let mixer: AnimationMixer | null = null
   let action: AnimationAction | null = null
   let clips: readonly AnimationClip[] = []
@@ -99,10 +101,25 @@ export function createClipPreview(): ClipPreview {
         scene.remove(root)
         release(root)
       }
+      if (helper !== null) {
+        scene.remove(helper)
+        helper.geometry.dispose()
+        ;(helper.material as Material).dispose()
+        helper = null
+      }
       root = contents.root
       scene.add(root)
       clips = contents.clips
       bounds = contents.bounds
+      // Skeleton-only libraries (the split animal rigs) carry no mesh, so the
+      // scene would render empty. Draw the bones and frame from them instead, so
+      // the clip still previews as visible motion.
+      if (bounds.isEmpty()) {
+        root.updateMatrixWorld(true)
+        helper = new SkeletonHelper(root)
+        scene.add(helper)
+        bounds = boundsOfBones(root)
+      }
       mixer = new AnimationMixer(root)
       action = null
       resize()
@@ -120,6 +137,10 @@ export function createClipPreview(): ClipPreview {
     dispose(): void {
       renderer.setAnimationLoop(null)
       if (root !== null) release(root)
+      if (helper !== null) {
+        helper.geometry.dispose()
+        ;(helper.material as Material).dispose()
+      }
       renderer.dispose()
     }
   }

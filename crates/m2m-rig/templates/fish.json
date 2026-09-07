@@ -1,0 +1,66 @@
+{
+  "name": "fish",
+  "skeleton": "rig-fish.glb",
+  "guidance": "The spine runs the length of the body from head to the tail fin. The four fins are short branches off the front of the body — place them on the paired pectorals and the dorsal/pelvic fins; the tail is the end of the spine and drives the swim.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "fish_text:joint1"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "fish_text:joint2",
+        "fish_text:joint3",
+        "fish_text:joint4",
+        "fish_text:joint5",
+        "fish_text:joint6",
+        "fish_text:joint7",
+        "fish_text:joint8"
+      ]
+    },
+    {
+      "name": "fin_a",
+      "kind": "limb",
+      "role": "fin",
+      "bones": [
+        "fish_text:joint9",
+        "fish_text:joint10.001"
+      ]
+    },
+    {
+      "name": "fin_b",
+      "kind": "limb",
+      "role": "fin",
+      "bones": [
+        "fish_text:joint12",
+        "fish_text:joint13",
+        "fish_text:joint14"
+      ]
+    },
+    {
+      "name": "fin_c",
+      "kind": "limb",
+      "role": "fin",
+      "bones": [
+        "fish_text:joint15",
+        "fish_text:joint13.001",
+        "fish_text:joint14.001"
+      ]
+    },
+    {
+      "name": "fin_d",
+      "kind": "limb",
+      "role": "fin",
+      "bones": [
+        "fish_text:joint16",
+        "fish_text:joint10",
+        "fish_text:joint11"
+      ]
+    }
+  ]
+}

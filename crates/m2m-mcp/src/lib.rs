@@ -9,10 +9,53 @@
 use base64::Engine;
 use m2m_pipeline as pipeline;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The MCP protocol revision this server speaks.
 const PROTOCOL_VERSION: &str = "2024-11-05";
+
+/// Structured logging to **stderr** — stdout is the JSON-RPC transport, so a log
+/// line there would corrupt the protocol. Gated by `M2M_MCP_LOG`: `off` silences
+/// everything; `debug` adds per-call detail; anything else (or unset) logs
+/// info + errors. MCP hosts capture a server's stderr, so this is where an
+/// operator sees what the server did and why a call failed.
+pub mod log {
+    /// Is a message at this verbosity enabled? `debug` messages need `M2M_MCP_LOG=debug`.
+    fn enabled(is_debug: bool) -> bool {
+        match std::env::var("M2M_MCP_LOG").ok().as_deref() {
+            Some("off") => false,
+            Some("debug") => true,
+            _ => !is_debug,
+        }
+    }
+
+    /// The formatted line, without the trailing newline — pure, so it is tested.
+    #[must_use]
+    pub fn line(level: &str, msg: &str) -> String {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        format!("[m2m-mcp {millis} {level}] {msg}")
+    }
+
+    pub fn info(msg: &str) {
+        if enabled(false) {
+            eprintln!("{}", line("info", msg));
+        }
+    }
+
+    pub fn error(msg: &str) {
+        if enabled(false) {
+            eprintln!("{}", line("error", msg));
+        }
+    }
+
+    pub fn debug(msg: &str) {
+        if enabled(true) {
+            eprintln!("{}", line("debug", msg));
+        }
+    }
+}
 
 /// A rigging session: what has been loaded and fitted so far. Tools read and
 /// advance it, so an agent drives the pipeline one call at a time.
@@ -23,6 +66,8 @@ struct Session {
     template: Option<String>,
     fitted: Option<pipeline::FittedSkeleton>,
     falloff: f32,
+    /// Snapshots of joint positions before each adjust, for `undo` (newest last).
+    history: Vec<Vec<[f32; 3]>>,
 }
 
 /// The server: a session plus where to find the animation libraries on disk.
@@ -88,14 +133,25 @@ impl Server {
             .and_then(|p| p.get("arguments"))
             .cloned()
             .unwrap_or_else(|| json!({}));
-        match self.run_tool(&name, &args) {
-            Ok(content) => ok(id, json!({ "content": content })),
+        log::info(&format!("tool {name}"));
+        log::debug(&format!("tool {name} args {args}"));
+        let started = std::time::Instant::now();
+        let outcome = self.run_tool(&name, &args);
+        let ms = started.elapsed().as_millis();
+        match outcome {
+            Ok(content) => {
+                log::info(&format!("tool {name} ok ({ms} ms)"));
+                ok(id, json!({ "content": content }))
+            }
             // A tool failure is a normal result with isError, not a protocol error:
             // the agent reads the message and adjusts.
-            Err(message) => ok(
-                id,
-                json!({ "content": text_content(&message), "isError": true }),
-            ),
+            Err(message) => {
+                log::error(&format!("tool {name} failed ({ms} ms): {message}"));
+                ok(
+                    id,
+                    json!({ "content": text_content(&message), "isError": true }),
+                )
+            }
         }
     }
 
@@ -108,13 +164,20 @@ impl Server {
             "session_status" => Ok(text(self.session_status())),
             "list_templates" => list_templates().map(text),
             "load_asset" => self.load_asset(args).map(text),
+            "suggest_template" => self.suggest_template().map(text),
             "fit_skeleton" => self.fit_skeleton(args).map(text),
+            "fit_markers" => self.fit_markers(args).map(text),
+            "list_joints" => self.list_joints().map(text),
             "adjust_joint" => self.adjust_joint(args).map(text),
+            "undo" => self.undo().map(text),
             "bind_weights" => self.bind_weights(args).map(text),
+            "diagnose" => self.diagnose(args).map(text),
             "list_clips" => self.list_clips(args).map(text),
             "export" => self.export(args).map(text),
             "validate_export" => validate_export(args).map(text),
             "render_views" => self.render_views(args),
+            "render_animation" => self.render_animation(args),
+            "compare_to_reference" => self.compare_to_reference(args),
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -141,22 +204,46 @@ impl Server {
             .clamp(1, 12) as u32;
         let clip = args.get("clip").and_then(Value::as_str);
         let frame = args.get("frame").and_then(Value::as_i64).map(|f| f as i32);
+        let overlay = args
+            .get("overlay")
+            .and_then(Value::as_str)
+            .unwrap_or("solid");
+        if !["solid", "skeleton", "weights"].contains(&overlay) {
+            return Err(format!(
+                "unknown overlay {overlay:?}; use \"solid\", \"skeleton\" or \"weights\""
+            ));
+        }
         let library = match clip {
             Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
             None => None,
         };
-        let animation = library.as_deref().zip(clip);
+        let animation = library
+            .as_deref()
+            .zip(clip)
+            .map(|(lib, c)| pipeline::Animation {
+                library: lib,
+                clip: c,
+                mirror: false,
+                arm_space: 50.0,
+                options: pipeline::ClipOptions::full(),
+                skin: true,
+            });
         let glb = pipeline::export_glb(model, fitted, self.session.falloff, animation)
             .map_err(|e| e.to_string())?;
         let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
-        let paths = m2m_bridge::render_views(&glb, num_views, frame, &blender)
+        let paths = m2m_bridge::render_views(&glb, num_views, frame, overlay, &blender)
             .map_err(|e| e.to_string())?;
 
         let mut content = vec![json!({
             "type": "text",
             "text": format!(
-                "{} turntable view(s) of the rig{}",
+                "{} {} view(s) of the rig{}",
                 paths.len(),
+                match overlay {
+                    "skeleton" => "skeleton-overlay",
+                    "weights" => "weight-heatmap (magenta=unweighted, red=1 bone .. green=4)",
+                    _ => "turntable",
+                },
                 clip.map(|c| format!(" playing {c}")).unwrap_or_default()
             )
         })];
@@ -170,6 +257,130 @@ impl Server {
             let _ = std::fs::remove_dir_all(dir);
         }
         Ok(content)
+    }
+
+    /// Renders the whole clip from a fixed camera, encodes it to an mp4 with
+    /// ffmpeg (a file path the agent can open), and returns a few sample frames
+    /// inline so the motion is visible without opening the video. Degrades to
+    /// frames-only if ffmpeg is missing.
+    fn render_animation(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let clip = arg_str(args, "clip")?;
+        let max_frames = args
+            .get("max_frames")
+            .and_then(Value::as_u64)
+            .unwrap_or(120)
+            .clamp(8, 240) as u32;
+        let glb = self.animated_glb(&clip)?;
+        let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
+        let (frames, fps) =
+            m2m_bridge::render_animation(&glb, max_frames, &blender).map_err(|e| e.to_string())?;
+        let frames_dir = frames
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+
+        let out = args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("m2m-{}.mp4", sanitize(&clip))));
+
+        let mut content = Vec::new();
+        match (m2m_bridge::ffmpeg_path(), frames_dir.as_deref()) {
+            (Ok(ffmpeg), Some(dir)) => {
+                m2m_bridge::encode_video(dir, fps, &out, &ffmpeg).map_err(|e| e.to_string())?;
+                content.push(json!({ "type": "text", "text": format!(
+                    "rendered {} frames of '{clip}' at {fps} fps, encoded to {}",
+                    frames.len(), out.display()
+                )}));
+            }
+            _ => content.push(json!({ "type": "text", "text": format!(
+                "rendered {} frames of '{clip}' at {fps} fps; ffmpeg not found so no mp4 (set M2M_FFMPEG). Sample frames below.",
+                frames.len()
+            )})),
+        }
+        for path in sample_evenly(&frames, 5) {
+            content.push(image_content(&path)?);
+        }
+        if let Some(dir) = frames_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        Ok(content)
+    }
+
+    /// Renders the clip and samples the same number of frames from a reference
+    /// video, returning both sets inline for a side-by-side visual comparison of
+    /// pose and timing. A qualitative aid — not a numeric similarity score, which
+    /// would mislead across differently framed footage.
+    fn compare_to_reference(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let reference = arg_str(args, "reference")?;
+        if !Path::new(&reference).is_file() {
+            return Err(format!("reference video not found: {reference}"));
+        }
+        let clip = arg_str(args, "clip")?;
+        let n = args
+            .get("frames")
+            .and_then(Value::as_u64)
+            .unwrap_or(5)
+            .clamp(2, 12) as u32;
+        let ffmpeg = m2m_bridge::ffmpeg_path()
+            .map_err(|e| format!("{e} — needed to sample the reference video"))?;
+        let glb = self.animated_glb(&clip)?;
+        let blender = m2m_bridge::blender_path().map_err(|e| e.to_string())?;
+        let (rendered, _fps) =
+            m2m_bridge::render_animation(&glb, 120, &blender).map_err(|e| e.to_string())?;
+        let rendered_dir = rendered
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        let reference_frames = m2m_bridge::sample_video_frames(Path::new(&reference), n, &ffmpeg)
+            .map_err(|e| e.to_string())?;
+        let reference_dir = reference_frames
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+
+        let mut content = vec![json!({ "type": "text", "text": format!(
+            "Comparing clip '{clip}' (rendered) against reference '{reference}'. {n} evenly-spaced frames of each follow — judge pose and timing qualitatively (not a numeric metric).",
+        )})];
+        content.push(json!({ "type": "text", "text": "— rendered clip:" }));
+        for path in sample_evenly(&rendered, n as usize) {
+            content.push(image_content(&path)?);
+        }
+        content.push(json!({ "type": "text", "text": "— reference video:" }));
+        for path in &reference_frames {
+            content.push(image_content(path)?);
+        }
+        for dir in [rendered_dir, reference_dir].into_iter().flatten() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        Ok(content)
+    }
+
+    /// Exports the loaded model with `clip` retargeted on, as a glb ready to
+    /// render — the shared front of render_animation and compare_to_reference.
+    fn animated_glb(&self, clip: &str) -> Result<Vec<u8>, String> {
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let library = self.library_bytes(self.session.template.as_deref().unwrap_or(""))?;
+        let animation = pipeline::Animation {
+            library: &library,
+            clip,
+            mirror: false,
+            arm_space: 50.0,
+            options: pipeline::ClipOptions::full(),
+            skin: true,
+        };
+        pipeline::export_glb(model, fitted, self.session.falloff, Some(animation))
+            .map_err(|e| e.to_string())
     }
 
     fn session_status(&self) -> String {
@@ -212,27 +423,156 @@ impl Server {
         });
         self.session.template = Some(template);
         self.session.fitted = Some(fitted);
+        // A fresh fit invalidates the previous skeleton's edit history.
+        self.session.history.clear();
         Ok(pretty(&summary))
     }
 
+    /// Rank the shipped templates by how well each one's auto-fit lands inside the
+    /// loaded mesh, best first — a starting point for "which skeleton fits this?".
+    fn suggest_template(&self) -> Result<String, String> {
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let ranked = pipeline::suggest_templates(model).map_err(|e| e.to_string())?;
+        Ok(pretty(
+            &serde_json::to_value(&ranked).map_err(|e| e.to_string())?,
+        ))
+    }
+
+    /// Fit a template by pinning named joints to positions the caller measured on
+    /// the mesh (the marker path), rather than the fully-automatic fit_skeleton.
+    fn fit_markers(&mut self, args: &Value) -> Result<String, String> {
+        let template = arg_str(args, "template")?;
+        let entries = args
+            .get("markers")
+            .and_then(Value::as_array)
+            .ok_or("`markers` must be an array of { bone, position }")?;
+        let mut markers = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let bone = entry
+                .get("bone")
+                .and_then(Value::as_str)
+                .ok_or("each marker needs a `bone` name")?
+                .to_string();
+            let position = vec3_of(
+                entry
+                    .get("position")
+                    .ok_or("each marker needs a `position`")?,
+                "position",
+            )?;
+            markers.push(pipeline::Marker { bone, position });
+        }
+        if markers.is_empty() {
+            return Err("give at least one marker".to_string());
+        }
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted =
+            pipeline::fit_from_markers(&template, &markers, model).map_err(|e| e.to_string())?;
+        let summary = json!({
+            "bones": fitted.bones.len(),
+            "scale": fitted.scale,
+            "markers": markers.len(),
+            "note": "marker-fitted; refine with adjust_joint, then bind_weights",
+        });
+        self.session.template = Some(template);
+        self.session.fitted = Some(fitted);
+        self.session.history.clear();
+        Ok(pretty(&summary))
+    }
+
+    /// List every fitted joint — index, name, world position and parent name —
+    /// so an agent can pick one to adjust by name instead of guessing an index.
+    fn list_joints(&self) -> Result<String, String> {
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let joints: Vec<Value> = (0..fitted.bones.len())
+            .map(|i| {
+                json!({
+                    "index": i,
+                    "name": fitted.bones[i],
+                    "position": fitted.positions[i],
+                    "parent": fitted.parents[i].map(|p| fitted.bones[p].clone()),
+                })
+            })
+            .collect();
+        Ok(pretty(&json!({ "count": joints.len(), "joints": joints })))
+    }
+
+    /// Move one fitted joint before binding. Address it by `index` or `name`; set
+    /// an absolute `position` or a relative `nudge`; `mirror` also moves the
+    /// left/right counterpart (X negated). Every move is snapshotted for `undo`.
     fn adjust_joint(&mut self, args: &Value) -> Result<String, String> {
-        let index = arg_u64(args, "index")? as usize;
-        let position = arg_vec3(args, "position")?;
+        let mirror = args.get("mirror").and_then(Value::as_bool).unwrap_or(false);
+        // Resolve everything that only needs a shared borrow first.
+        let (index, is_nudge, value, midline) = {
+            let fitted = self
+                .session
+                .fitted
+                .as_ref()
+                .ok_or("no fitted skeleton — call fit_skeleton first")?;
+            let index = resolve_joint(fitted, args)?;
+            let (is_nudge, value) = match args.get("nudge") {
+                Some(nudge) => (true, vec3_of(nudge, "nudge")?),
+                None => (false, arg_vec3(args, "position")?),
+            };
+            // Midline for an absolute-position mirror: the mean joint X (a
+            // symmetric rig sits centred there).
+            let midline = fitted.positions.iter().map(|p| p[0]).sum::<f32>()
+                / fitted.positions.len().max(1) as f32;
+            (index, is_nudge, value, midline)
+        };
+
+        // Snapshot for undo, then apply.
+        self.session
+            .history
+            .push(self.session.fitted.as_ref().unwrap().positions.clone());
+        let fitted = self.session.fitted.as_mut().unwrap();
+        apply_move(&mut fitted.positions[index], is_nudge, value);
+        let mut moved =
+            vec![json!({ "joint": fitted.bones[index], "to": fitted.positions[index] })];
+
+        if mirror {
+            let counterpart = mirror_name(&fitted.bones[index])
+                .and_then(|name| fitted.bones.iter().position(|b| *b == name));
+            if let Some(other) = counterpart {
+                let mirrored = if is_nudge {
+                    [-value[0], value[1], value[2]]
+                } else {
+                    [2.0 * midline - value[0], value[1], value[2]]
+                };
+                apply_move(&mut fitted.positions[other], is_nudge, mirrored);
+                moved.push(json!({ "joint": fitted.bones[other], "to": fitted.positions[other] }));
+            }
+        }
+        Ok(pretty(&json!({ "moved": moved })))
+    }
+
+    /// Undo the last adjust_joint, restoring the joint positions before it.
+    fn undo(&mut self) -> Result<String, String> {
+        let previous = self
+            .session
+            .history
+            .pop()
+            .ok_or("nothing to undo — no joint adjustments have been made")?;
         let fitted = self
             .session
             .fitted
             .as_mut()
             .ok_or("no fitted skeleton — call fit_skeleton first")?;
-        let slot = fitted.positions.get_mut(index).ok_or_else(|| {
-            format!(
-                "joint index {index} out of range (0..{})",
-                fitted.bones.len()
-            )
-        })?;
-        *slot = position;
+        fitted.positions = previous;
         Ok(pretty(&json!({
-            "moved": fitted.bones.get(index),
-            "to": position,
+            "undone": true,
+            "adjustments_left_to_undo": self.session.history.len(),
         })))
     }
 
@@ -252,6 +592,30 @@ impl Server {
             .ok_or("no fitted skeleton — call fit_skeleton first")?;
         let report =
             pipeline::bind(model, fitted, self.session.falloff).map_err(|e| e.to_string())?;
+        Ok(pretty(
+            &serde_json::to_value(&report).map_err(|e| e.to_string())?,
+        ))
+    }
+
+    /// Grade the current fit + bind: disconnected islands, the influence
+    /// histogram, unweighted vertices, and which joints poke outside the mesh,
+    /// rolled into a pass/warn/fail verdict with plain findings to act on.
+    fn diagnose(&self, args: &Value) -> Result<String, String> {
+        let falloff = args
+            .get("falloff")
+            .and_then(Value::as_f64)
+            .map_or(self.session.falloff, |f| f as f32);
+        let model = self
+            .session
+            .model_bytes
+            .as_ref()
+            .ok_or("no asset loaded — call load_asset first")?;
+        let fitted = self
+            .session
+            .fitted
+            .as_ref()
+            .ok_or("no fitted skeleton — call fit_skeleton first")?;
+        let report = pipeline::diagnose(model, fitted, falloff).map_err(|e| e.to_string())?;
         Ok(pretty(
             &serde_json::to_value(&report).map_err(|e| e.to_string())?,
         ))
@@ -284,7 +648,17 @@ impl Server {
             Some(_) => Some(self.library_bytes(self.session.template.as_deref().unwrap_or(""))?),
             None => None,
         };
-        let animation = library.as_deref().zip(clip);
+        let animation = library
+            .as_deref()
+            .zip(clip)
+            .map(|(lib, c)| pipeline::Animation {
+                library: lib,
+                clip: c,
+                mirror: false,
+                arm_space: 50.0,
+                options: pipeline::ClipOptions::full(),
+                skin: true,
+            });
         let bytes = match format.as_str() {
             "glb" => pipeline::export_glb(model, fitted, self.session.falloff, animation),
             "fbx" => pipeline::export_fbx(model, fitted, self.session.falloff, animation),
@@ -365,20 +739,34 @@ fn tool_definitions() -> Value {
           "inputSchema": obj(json!({}), json!([])) },
         { "name": "load_asset", "description": "Load a model (glb/gltf/fbx) into the session and report what it contains.",
           "inputSchema": obj(json!({ "path": { "type": "string", "description": "Absolute path to the model file." } }), json!(["path"])) },
+        { "name": "suggest_template", "description": "Rank the shipped templates by how well each one's auto-fit lands inside the loaded mesh (best first), a starting point for choosing a skeleton. Heuristic — try the top few and refine. Needs load_asset first.",
+          "inputSchema": obj(json!({}), json!([])) },
         { "name": "fit_skeleton", "description": "Auto-fit a creature template's skeleton to the loaded mesh.",
           "inputSchema": obj(json!({ "template": { "type": "string", "description": "A template name from list_templates." } }), json!(["template"])) },
-        { "name": "adjust_joint", "description": "Move one fitted joint to refine the placement before binding.",
-          "inputSchema": obj(json!({ "index": { "type": "integer" }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 } }), json!(["index", "position"])) },
+        { "name": "fit_markers", "description": "Fit a template by pinning named joints to positions measured on the mesh (the marker path), instead of the fully-automatic fit. Needs load_asset first.",
+          "inputSchema": obj(json!({ "template": { "type": "string" }, "markers": { "type": "array", "items": { "type": "object", "properties": { "bone": { "type": "string" }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 } }, "required": ["bone", "position"] }, "description": "One { bone, position } per pinned joint." } }), json!(["template", "markers"])) },
+        { "name": "list_joints", "description": "List every fitted joint — index, name, world position, parent — so you can adjust one by name. Needs fit_skeleton first.",
+          "inputSchema": obj(json!({}), json!([])) },
+        { "name": "adjust_joint", "description": "Move one fitted joint to refine placement before binding. Address it by `index` OR `name`; give an absolute `position` OR a relative `nudge`; set `mirror` to also move the left/right counterpart (X mirrored). Undoable with `undo`.",
+          "inputSchema": obj(json!({ "index": { "type": "integer" }, "name": { "type": "string", "description": "Joint name (from list_joints); an alternative to index." }, "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "New absolute world position." }, "nudge": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "Relative delta added to the current position." }, "mirror": { "type": "boolean", "description": "Also move the L/R counterpart (default false)." } }), json!([])) },
+        { "name": "undo", "description": "Undo the last adjust_joint, restoring the joint positions before it.",
+          "inputSchema": obj(json!({}), json!([])) },
         { "name": "bind_weights", "description": "Bind the mesh to the fitted skeleton and report the weighting.",
           "inputSchema": obj(json!({ "falloff": { "type": "number", "description": "Weight falloff (default 2.0)." } }), json!([])) },
+        { "name": "diagnose", "description": "Grade the current fit + bind (pass/warn/fail) with plain findings: unweighted vertices, disconnected islands, the influence histogram, and which joints sit outside the mesh. Needs load_asset + fit_skeleton first.",
+          "inputSchema": obj(json!({ "falloff": { "type": "number", "description": "Weight falloff to grade at (default: the session's)." } }), json!([])) },
         { "name": "list_clips", "description": "List the animation clips a creature's library offers.",
           "inputSchema": obj(json!({ "template": { "type": "string" } }), json!(["template"])) },
         { "name": "export", "description": "Export the rigged model to a file, optionally with a clip retargeted on.",
           "inputSchema": obj(json!({ "path": { "type": "string" }, "format": { "type": "string", "enum": ["glb", "fbx"] }, "clip": { "type": "string" } }), json!(["path", "format"])) },
         { "name": "validate_export", "description": "Import an exported file into Blender and/or Maya headless and report what each read back.",
           "inputSchema": obj(json!({ "path": { "type": "string" }, "engines": { "type": "array", "items": { "type": "string", "enum": ["blender", "maya"] } } }), json!(["path"])) },
-        { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. Optional clip + frame to inspect a pose mid-animation.",
-          "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
+        { "name": "render_views", "description": "Render the rig from several angles (a turntable) in Blender headless and return the images, to see the pose and deformation and refine it. `overlay` picks what to see: \"solid\" (the shaded mesh), \"skeleton\" (the fitted bones through an X-rayed mesh), or \"weights\" (the mesh tinted by influence count — magenta=unweighted, red=1 bone .. green=4 — so a bad bind is visible). Optional clip + frame to inspect a pose mid-animation.",
+          "inputSchema": obj(json!({ "num_views": { "type": "integer", "description": "1-12, default 4." }, "overlay": { "type": "string", "enum": ["solid", "skeleton", "weights"], "description": "What to render (default solid)." }, "clip": { "type": "string", "description": "A clip name to retarget before rendering." }, "frame": { "type": "integer", "description": "Clip frame to render (needs clip)." } }), json!([])) },
+        { "name": "render_animation", "description": "Render a whole clip playing on the rigged model in Blender headless, encode it to an mp4 with ffmpeg (a file path you can open), and return a few sample frames inline so the motion is visible. Needs load_asset + fit_skeleton. Degrades to frames-only if ffmpeg is missing.",
+          "inputSchema": obj(json!({ "clip": { "type": "string", "description": "A clip name from list_clips." }, "path": { "type": "string", "description": "Output mp4 path (default: a temp file, path reported back)." }, "max_frames": { "type": "integer", "description": "Cap on frames rendered (8-240, default 120); a longer clip is sampled evenly." } }), json!(["clip"])) },
+        { "name": "compare_to_reference", "description": "Render a clip and sample the same number of frames from a REFERENCE VIDEO (e.g. real footage of the animal), returning both sets of frames inline for a side-by-side visual comparison of pose and timing. A qualitative aid, not a numeric score. Needs ffmpeg + load_asset + fit_skeleton.",
+          "inputSchema": obj(json!({ "clip": { "type": "string" }, "reference": { "type": "string", "description": "Absolute path to a reference video file." }, "frames": { "type": "integer", "description": "Frames of each to compare (2-12, default 5)." } }), json!(["clip", "reference"])) },
     ])
 }
 
@@ -453,6 +841,34 @@ fn text_content(text: &str) -> Vec<Value> {
     vec![json!({ "type": "text", "text": text })]
 }
 
+/// Reads a PNG and wraps it as an MCP image content item (base64).
+fn image_content(path: &Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(json!({ "type": "image", "data": data, "mimeType": "image/png" }))
+}
+
+/// Up to `n` evenly-spaced items across `items` (endpoints included), so a long
+/// frame sequence can be previewed with a handful of images.
+fn sample_evenly(items: &[PathBuf], n: usize) -> Vec<PathBuf> {
+    if items.is_empty() || n == 0 {
+        return Vec::new();
+    }
+    if items.len() <= n {
+        return items.to_vec();
+    }
+    (0..n)
+        .map(|i| items[i * (items.len() - 1) / (n - 1).max(1)].clone())
+        .collect()
+}
+
+/// A filesystem-safe stem from a clip name (for a default output file).
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 fn arg_str(args: &Value, key: &str) -> Result<String, String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -460,10 +876,83 @@ fn arg_str(args: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing required string argument `{key}`"))
 }
 
-fn arg_u64(args: &Value, key: &str) -> Result<u64, String> {
-    args.get(key)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format!("missing required integer argument `{key}`"))
+/// Sets a position absolutely, or adds a delta when `is_nudge`.
+fn apply_move(slot: &mut [f32; 3], is_nudge: bool, value: [f32; 3]) {
+    if is_nudge {
+        for i in 0..3 {
+            slot[i] += value[i];
+        }
+    } else {
+        *slot = value;
+    }
+}
+
+/// Resolves a joint index from an `index` or a `name` argument.
+fn resolve_joint(fitted: &pipeline::FittedSkeleton, args: &Value) -> Result<usize, String> {
+    if let Some(index) = args.get("index").and_then(Value::as_u64) {
+        let index = index as usize;
+        return if index < fitted.bones.len() {
+            Ok(index)
+        } else {
+            Err(format!(
+                "joint index {index} out of range (0..{})",
+                fitted.bones.len()
+            ))
+        };
+    }
+    if let Some(name) = args.get("name").and_then(Value::as_str) {
+        return fitted
+            .bones
+            .iter()
+            .position(|b| b == name)
+            .ok_or_else(|| format!("no joint named {name:?}; call list_joints to see the names"));
+    }
+    Err("give the joint to move as `index` or `name`".to_string())
+}
+
+/// The left/right counterpart of a bone name, swapping the common side markers.
+/// Returns `None` when the name carries no side (a spine or centre bone).
+fn mirror_name(name: &str) -> Option<String> {
+    const PAIRS: [(&str, &str); 6] = [
+        ("_l", "_r"),
+        ("_L", "_R"),
+        (".l", ".r"),
+        (".L", ".R"),
+        ("left", "right"),
+        ("Left", "Right"),
+    ];
+    for (a, b) in PAIRS {
+        if let Some(stem) = name.strip_suffix(a) {
+            return Some(format!("{stem}{b}"));
+        }
+        if let Some(stem) = name.strip_suffix(b) {
+            return Some(format!("{stem}{a}"));
+        }
+        if name.contains(a) {
+            return Some(name.replacen(a, b, 1));
+        }
+        if name.contains(b) {
+            return Some(name.replacen(b, a, 1));
+        }
+    }
+    None
+}
+
+/// Parses a 3-number array from an arbitrary JSON value (for `nudge`).
+fn vec3_of(value: &Value, key: &str) -> Result<[f32; 3], String> {
+    let a = value
+        .as_array()
+        .ok_or_else(|| format!("`{key}` must be a 3-number array"))?;
+    if a.len() != 3 {
+        return Err(format!("`{key}` must have exactly 3 numbers"));
+    }
+    let mut out = [0.0f32; 3];
+    for (i, v) in a.iter().enumerate() {
+        out[i] = v
+            .as_f64()
+            .ok_or_else(|| format!("`{key}[{i}]` is not a number"))? as f32;
+    }
+    Ok(out)
 }
 
 fn arg_vec3(args: &Value, key: &str) -> Result<[f32; 3], String> {
@@ -516,7 +1005,193 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))
             .expect("response");
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 10);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
+    }
+
+    /// suggest_template ranks the human template top for a human mesh, and
+    /// marker-fitting places the named joints where asked.
+    #[test]
+    fn suggest_ranks_human_and_marker_fit_places_joints() {
+        let mut server = Server::new();
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+
+        let (ranked, err) = call(&mut server, "suggest_template", json!({}));
+        assert!(!err, "{ranked}");
+        let ranked: Value = serde_json::from_str(&ranked).unwrap();
+        assert_eq!(
+            ranked[0]["template"], "human",
+            "the human template should fit a human mesh best: {ranked}"
+        );
+        assert!(ranked[0]["score"].as_f64().unwrap() > 0.9, "{ranked}");
+
+        // Build markers from a real fit's joints, so the bone names are valid.
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        let (listed, _) = call(&mut server, "list_joints", json!({}));
+        let joints: Value = serde_json::from_str(&listed).unwrap();
+        let markers: Vec<Value> = joints["joints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(3)
+            .map(|j| json!({ "bone": j["name"], "position": j["position"] }))
+            .collect();
+
+        let (fitted, err) = call(
+            &mut server,
+            "fit_markers",
+            json!({ "template": "human", "markers": markers }),
+        );
+        assert!(!err, "{fitted}");
+        assert!(fitted.contains("\"bones\": 66"), "{fitted}");
+    }
+
+    #[test]
+    fn mirror_name_and_apply_move() {
+        assert_eq!(mirror_name("upperarm_l").as_deref(), Some("upperarm_r"));
+        assert_eq!(mirror_name("upperarm_r").as_deref(), Some("upperarm_l"));
+        assert_eq!(mirror_name("Hand_L").as_deref(), Some("Hand_R"));
+        assert_eq!(mirror_name("spine"), None);
+
+        let mut p = [1.0, 2.0, 3.0];
+        apply_move(&mut p, false, [5.0, 5.0, 5.0]);
+        assert_eq!(p, [5.0, 5.0, 5.0], "absolute set");
+        apply_move(&mut p, true, [1.0, -1.0, 0.0]);
+        assert_eq!(p, [6.0, 4.0, 5.0], "relative nudge");
+    }
+
+    /// Adjust by name + nudge + mirror moves both sides; undo restores them and
+    /// then reports there is nothing left to undo.
+    #[test]
+    fn adjust_by_name_nudge_mirror_and_undo() {
+        let mut server = Server::new();
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+
+        let (listed, err) = call(&mut server, "list_joints", json!({}));
+        assert!(!err, "{listed}");
+        let joints: Value = serde_json::from_str(&listed).unwrap();
+        let names: Vec<String> = joints["joints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["name"].as_str().unwrap().to_string())
+            .collect();
+        // A bone that has a side AND whose counterpart exists in this rig.
+        let sided = names
+            .iter()
+            .find(|n| mirror_name(n).is_some_and(|m| names.contains(&m)))
+            .cloned()
+            .expect("the human rig has a left/right bone");
+
+        let (moved, err) = call(
+            &mut server,
+            "adjust_joint",
+            json!({ "name": sided, "nudge": [0.05, 0.0, 0.0], "mirror": true }),
+        );
+        assert!(!err, "{moved}");
+        let moved: Value = serde_json::from_str(&moved).unwrap();
+        assert_eq!(
+            moved["moved"].as_array().unwrap().len(),
+            2,
+            "moved both sides"
+        );
+
+        let (undone, err) = call(&mut server, "undo", json!({}));
+        assert!(!err, "{undone}");
+        // The one adjustment is now undone; a second undo has nothing to do.
+        let (msg, err) = call(&mut server, "undo", json!({}));
+        assert!(err && msg.contains("nothing to undo"), "{msg}");
+
+        // Addressing an unknown name points at list_joints.
+        let (msg, err) = call(
+            &mut server,
+            "adjust_joint",
+            json!({ "name": "no_such_bone" }),
+        );
+        assert!(err && msg.contains("list_joints"), "{msg}");
+    }
+
+    #[test]
+    fn sample_evenly_and_sanitize() {
+        let paths: Vec<PathBuf> = (0..10)
+            .map(|i| PathBuf::from(format!("f{i}.png")))
+            .collect();
+        let five = sample_evenly(&paths, 5);
+        assert_eq!(five.len(), 5);
+        assert_eq!(five.first(), Some(&paths[0]), "endpoints included");
+        assert_eq!(five.last(), Some(&paths[9]));
+        assert_eq!(sample_evenly(&paths[..3], 5).len(), 3, "fewer than n → all");
+        assert!(sample_evenly(&[], 5).is_empty());
+        assert_eq!(sanitize("Swim Horizontal/2"), "Swim_Horizontal_2");
+    }
+
+    /// The animation tools name their missing inputs before spending a Blender or
+    /// ffmpeg launch. (The renders themselves need those tools, so only the guard
+    /// rails are unit-tested here.)
+    #[test]
+    fn animation_tools_guard_their_inputs() {
+        let mut server = Server::new();
+
+        let (msg, err) = call(&mut server, "render_animation", json!({}));
+        assert!(err && msg.contains("clip"), "missing clip: {msg}");
+        let (msg, err) = call(&mut server, "render_animation", json!({ "clip": "Idle" }));
+        assert!(err && msg.contains("load_asset"), "before load: {msg}");
+
+        let (msg, err) = call(
+            &mut server,
+            "compare_to_reference",
+            json!({ "clip": "Idle", "reference": "/no/such/video.mp4" }),
+        );
+        assert!(err && msg.contains("reference video not found"), "{msg}");
+    }
+
+    #[test]
+    fn log_line_is_prefixed_and_levelled() {
+        let line = log::line("info", "tool fit_skeleton ok");
+        assert!(line.starts_with("[m2m-mcp "), "{line}");
+        assert!(line.contains(" info] tool fit_skeleton ok"), "{line}");
+    }
+
+    /// diagnose grades a real fit+bind, and refuses (with a next-step hint)
+    /// before a skeleton exists. Integration over the tool interface + a
+    /// regression guard on the "fit first" precondition.
+    #[test]
+    fn diagnose_grades_a_fit_and_guards_its_preconditions() {
+        let mut server = Server::new();
+
+        // Precondition: diagnosing before loading names what to do first.
+        let (msg, err) = call(&mut server, "diagnose", json!({}));
+        assert!(err && msg.contains("load_asset"), "{msg}");
+
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        // ...and before fitting.
+        let (msg, err) = call(&mut server, "diagnose", json!({}));
+        assert!(err && msg.contains("fit_skeleton"), "{msg}");
+
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        let (report, err) = call(&mut server, "diagnose", json!({}));
+        assert!(!err, "{report}");
+        let value: Value = serde_json::from_str(&report).unwrap();
+        assert!(
+            ["pass", "warn", "fail"].contains(&value["grade"].as_str().unwrap()),
+            "{report}"
+        );
+        assert!(value["findings"].as_array().is_some_and(|f| !f.is_empty()));
+        assert_eq!(value["joints"], 66);
+        // The human template fits cleanly, so no vertex should detach.
+        assert_eq!(value["bind"]["unweighted_vertices"], 0, "{report}");
     }
 
     #[test]
@@ -608,6 +1283,32 @@ mod tests {
         assert!(!err, "{exported}");
         assert!(out.is_file(), "export wrote no file");
         let _ = std::fs::remove_file(&out);
+    }
+
+    /// render_views validates its overlay before spending a Blender launch, and
+    /// names what it needs before an asset is loaded. (The render itself needs
+    /// Blender, so only the guard rails are unit-tested here.)
+    #[test]
+    fn render_views_validates_before_launching_blender() {
+        let mut server = Server::new();
+
+        // Nothing loaded: it names the first step, not a Blender error.
+        let (msg, err) = call(&mut server, "render_views", json!({}));
+        assert!(err && msg.contains("load_asset"), "{msg}");
+
+        call(
+            &mut server,
+            "load_asset",
+            json!({ "path": asset("models/model-human.glb") }),
+        );
+        call(&mut server, "fit_skeleton", json!({ "template": "human" }));
+        // A bad overlay is rejected up front, listing the valid choices.
+        let (msg, err) = call(&mut server, "render_views", json!({ "overlay": "bogus" }));
+        assert!(err, "{msg}");
+        assert!(
+            msg.contains("skeleton") && msg.contains("weights"),
+            "should list the valid overlays: {msg}"
+        );
     }
 
     #[test]

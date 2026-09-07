@@ -1,0 +1,136 @@
+{
+  "name": "leopard",
+  "skeleton": "rig-leopard.glb",
+  "guidance": "Large digitigrade felid \u2014 a long supple spine that arches and extends, a long low-carried tail as a counterbalance, and powerful legs on the toes. Keep the head low and level, the paws on a narrow near-midline track.",
+  "chains": [
+    {
+      "name": "root",
+      "kind": "root",
+      "bones": [
+        "Root_M"
+      ]
+    },
+    {
+      "name": "spine",
+      "kind": "spine",
+      "bones": [
+        "Spine1_M",
+        "Spine2_M",
+        "Spine3_M",
+        "Chest_M"
+      ]
+    },
+    {
+      "name": "neck",
+      "kind": "neck",
+      "bones": [
+        "Neck_M",
+        "Neck1_M"
+      ]
+    },
+    {
+      "name": "head",
+      "kind": "head",
+      "bones": [
+        "Head_M"
+      ]
+    },
+    {
+      "name": "tail",
+      "kind": "tail",
+      "bones": [
+        "Tail0_M",
+        "Tail0Part1_M",
+        "Tail0Part2_M",
+        "Tail1_M",
+        "Tail1Part1_M",
+        "Tail1Part2_M",
+        "Tail2_M",
+        "Tail2Part1_M",
+        "Tail2Part2_M",
+        "Tail3_M",
+        "Tail3Part1_M",
+        "Tail3Part2_M",
+        "Tail4_M",
+        "Tail4Part1_M",
+        "Tail4Part2_M",
+        "Tail5_M",
+        "Tail5Part1_M",
+        "Tail5Part2_M",
+        "Tail6_M"
+      ]
+    },
+    {
+      "name": "ear_l",
+      "kind": "accessory",
+      "side": "left",
+      "bones": [
+        "Ear_L",
+        "Ear1_L",
+        "Ear2_L"
+      ]
+    },
+    {
+      "name": "ear_r",
+      "kind": "accessory",
+      "side": "right",
+      "bones": [
+        "Ear_R",
+        "Ear1_R",
+        "Ear2_R"
+      ]
+    },
+    {
+      "name": "front_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "frontHip_L",
+        "frontKnee_L",
+        "frontAnkle_L",
+        "frontToes_L"
+      ]
+    },
+    {
+      "name": "front_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "frontHip_R",
+        "frontKnee_R",
+        "frontAnkle_R",
+        "frontToes_R"
+      ]
+    },
+    {
+      "name": "back_leg_l",
+      "kind": "limb",
+      "side": "left",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "backHip_L",
+        "backKnee_L",
+        "backAnkle_L",
+        "backToes_L"
+      ]
+    },
+    {
+      "name": "back_leg_r",
+      "kind": "limb",
+      "side": "right",
+      "role": "leg",
+      "posture": "digitigrade",
+      "bones": [
+        "backHip_R",
+        "backKnee_R",
+        "backAnkle_R",
+        "backToes_R"
+      ]
+    }
+  ]
+}

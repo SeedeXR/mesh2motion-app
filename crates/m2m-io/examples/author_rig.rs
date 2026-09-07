@@ -500,6 +500,7 @@ fn main() {
     let document = Document {
         nodes,
         primitives: vec![],
+        materials: vec![],
         skins: vec![Skin {
             joints,
             inverse_bind_matrices: vec![],

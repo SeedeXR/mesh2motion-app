@@ -344,6 +344,266 @@ pub fn fit_template(
     Some(fitted)
 }
 
+/// Where a named template bone's joint should sit on the mesh.
+///
+/// The input to the marker-placement pipeline — the Mixamo-style flow where a
+/// person drops a handful of markers (chin, wrists, elbows, knees, groin) onto
+/// their model and the rig solves to fit them. A marker naming a bone the
+/// template does not carry is ignored, so one marker set can serve templates
+/// that differ in which bones they have.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Marker {
+    /// The template bone this marker pins.
+    pub bone: String,
+    /// Where that bone's joint should land, in mesh world space. An `[x, y, z]`
+    /// array, not a `Vec3`, because this crosses IPC — the same reason
+    /// [`Fitted`] positions do (`architecture.md` keeps glam out of the wire).
+    pub position: [f32; 3],
+}
+
+/// Fits a template's skeleton to a mesh from user-placed markers.
+///
+/// # How it differs from [`fit_template`]
+///
+/// [`fit_template`] guesses joint positions from the mesh's shape. This is told
+/// them: each marker is a joint a person placed. So the solve is not a search —
+/// it is a placement that must honour the markers exactly and carry the bones
+/// between and beyond them along smoothly.
+///
+/// # The solve
+///
+/// 1. A uniform **scale and translation** that best maps the marked bones' rest
+///    positions onto their markers, least-squares. Rotation is not fitted — the
+///    orient step has already faced the model forward, the same reason
+///    [`fit_uniform`] scales uniformly and never rotates. Fewer than two markers
+///    cannot fix a scale, so that returns `None`.
+/// 2. Every bone is placed by that transform, then corrected by a per-bone
+///    **delta**: a marked bone's delta lands it exactly on its marker; an
+///    unmarked bone's delta is blended along its chain between the markers that
+///    bracket it (and the chain's cross-chain parent, which anchors the end
+///    nearest the body). A bone past the last marker on its chain rigid-follows
+///    it — a finger carried by its hand, a foot by its knee.
+///
+/// Chains are walked so a chain's parent is always resolved first, which the
+/// shipped rigs' parents-first order guarantees. Returns `None` when the markers
+/// are degenerate (all on one point) or name fewer than two of the template's
+/// bones.
+pub fn fit_from_markers(
+    template: &crate::template::Template,
+    rest: &RestPose,
+    parents: &[Option<usize>],
+    markers: &[Marker],
+    mesh: Option<&Mesh>,
+) -> Option<Fitted> {
+    let index_of: std::collections::HashMap<&str, usize> = rest
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.as_str(), i))
+        .collect();
+
+    // Marked bones as (index, target). A marker for a bone this template does
+    // not have is dropped rather than failing the whole solve.
+    let marked: Vec<(usize, Vec3)> = markers
+        .iter()
+        .filter_map(|m| Some((*index_of.get(m.bone.as_str())?, Vec3::from(m.position))))
+        .collect();
+    if marked.len() < 2 {
+        return None;
+    }
+    let marked_set: std::collections::HashSet<usize> = marked.iter().map(|&(i, _)| i).collect();
+
+    // Uniform scale from the VERTICAL span of the marked joints, then translation
+    // to line the centroids up. Height is the one axis a left/right mirror can't
+    // flip and the reliable one for an upright figure (the same argument
+    // `fit_uniform` makes) — a least-squares fit over all axes goes negative and
+    // rejects the placement the moment a person marks the sides mirrored to the
+    // template, which is a valid placement, not an error.
+    let n = marked.len() as f32;
+    let rest_mean = marked.iter().map(|&(i, _)| rest.positions[i]).sum::<Vec3>() / n;
+    let target_mean = marked.iter().map(|&(_, t)| t).sum::<Vec3>() / n;
+    let y_span = |lo_hi: (f32, f32)| lo_hi.1 - lo_hi.0;
+    let rest_span = y_span(
+        marked
+            .iter()
+            .map(|&(i, _)| rest.positions[i].y)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y))),
+    );
+    let target_span = y_span(
+        marked
+            .iter()
+            .map(|&(_, t)| t.y)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y))),
+    );
+    if rest_span <= f32::EPSILON {
+        return None;
+    }
+    let scale = target_span / rest_span;
+    let offset = target_mean - rest_mean * scale;
+
+    let transformed: Vec<Vec3> = rest.positions.iter().map(|p| *p * scale + offset).collect();
+
+    // Per-bone correction. A marked bone's delta places it exactly; every other
+    // bone blends between the markers along its chain.
+    let marker_delta: std::collections::HashMap<usize, Vec3> = marked
+        .iter()
+        .map(|&(i, t)| (i, t - transformed[i]))
+        .collect();
+    let mut delta = vec![Vec3::ZERO; rest.bones.len()];
+
+    let mut chains: Vec<&[String]> = template.chains.iter().map(|c| c.bones.as_slice()).collect();
+    chains.sort_by_key(|bones| {
+        bones
+            .first()
+            .and_then(|b| index_of.get(b.as_str()).copied())
+            .unwrap_or(usize::MAX)
+    });
+
+    for bones in chains {
+        let idxs: Vec<usize> = bones
+            .iter()
+            .filter_map(|b| index_of.get(b.as_str()).copied())
+            .collect();
+        if idxs.is_empty() {
+            continue;
+        }
+
+        // Arc length along the chain, spaced by the template's own proportions.
+        let mut arclen = vec![0.0f32; idxs.len()];
+        for k in 1..idxs.len() {
+            arclen[k] = arclen[k - 1] + transformed[idxs[k]].distance(transformed[idxs[k - 1]]);
+        }
+
+        // Control points to blend between: the cross-chain parent (already
+        // resolved) as the anchor at the body end, then each marked bone. The
+        // anchor sits one bone before the chain, at that bone's distance back.
+        let parent = parents.get(idxs[0]).copied().flatten();
+        let mut controls: Vec<(f32, Vec3)> = Vec::new();
+        if let Some(p) = parent {
+            let anchor_arclen = -transformed[idxs[0]].distance(transformed[p]);
+            controls.push((anchor_arclen, delta[p]));
+        }
+        for (k, &i) in idxs.iter().enumerate() {
+            if let Some(&d) = marker_delta.get(&i) {
+                controls.push((arclen[k], d));
+            }
+        }
+
+        for (k, &i) in idxs.iter().enumerate() {
+            delta[i] = match marker_delta.get(&i) {
+                Some(&d) => d,
+                None => blend_deltas(&controls, arclen[k]),
+            };
+        }
+    }
+
+    let mut fitted = Fitted {
+        bones: rest.bones.clone(),
+        positions: transformed
+            .iter()
+            .zip(&delta)
+            .map(|(p, d)| *p + *d)
+            .collect(),
+        scale,
+        offset,
+    };
+
+    // Stage B: the mesh places what the markers didn't. Markers pin the knee; the
+    // foot/ankle/toe below it are unmarked, so without the mesh they float or sink
+    // (the reported feet/ankle failure). See docs/research/marker-skeleton-solving.md.
+    if let Some(mesh) = mesh {
+        ground_feet(&mut fitted, mesh, template, &marked_set);
+    }
+    Some(fitted)
+}
+
+/// Stands the unmarked feet on the mesh's ground plane.
+///
+/// The markers pin the knee; the foot, ankle and toe below it are unmarked and
+/// otherwise just rigid-follow the knee, so a leg whose shin is a different length
+/// than the template floats or sinks its foot. Here the mesh decides: the run of
+/// bones below the deepest marked joint is scaled along itself, about that joint,
+/// until the chain's lowest bone — its ground contact — sits on the mesh's lowest
+/// surface. The marked joint never moves, and a leg with no marker is left alone.
+fn ground_feet(
+    fitted: &mut Fitted,
+    mesh: &Mesh,
+    template: &crate::template::Template,
+    marked: &std::collections::HashSet<usize>,
+) {
+    let Some((mesh_min, _)) = mesh.bounds() else {
+        return;
+    };
+    let floor = mesh_min.y;
+    let index_of: std::collections::HashMap<&str, usize> = fitted
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.as_str(), i))
+        .collect();
+
+    for chain in template.of_kind(crate::template::ChainKind::Limb) {
+        if chain.role != Some(crate::template::LimbRole::Leg) {
+            continue;
+        }
+        let idxs: Vec<usize> = chain
+            .bones
+            .iter()
+            .filter_map(|b| index_of.get(b.as_str()).copied())
+            .collect();
+        // Anchor on the deepest marked joint of the leg (the knee); scale the run
+        // below it. No marker on this leg means nothing to anchor to — leave it.
+        let Some(anchor_at) = idxs.iter().rposition(|i| marked.contains(i)) else {
+            continue;
+        };
+        let below = &idxs[anchor_at + 1..];
+        if below.is_empty() {
+            continue;
+        }
+        let anchor = fitted.positions[idxs[anchor_at]];
+        // The ground contact is the lowest bone below the anchor.
+        let toe = below
+            .iter()
+            .copied()
+            .min_by(|&a, &b| fitted.positions[a].y.total_cmp(&fitted.positions[b].y))
+            .expect("below is non-empty");
+        let drop = anchor.y - fitted.positions[toe].y;
+        if drop <= f32::EPSILON {
+            continue; // the foot is not below the knee; nothing to stand on the floor
+        }
+        let scale = (anchor.y - floor) / drop;
+        if !(scale.is_finite() && scale > 0.0) {
+            continue;
+        }
+        for &i in below {
+            fitted.positions[i] = anchor + (fitted.positions[i] - anchor) * scale;
+        }
+    }
+}
+
+/// Linearly blends the two control points bracketing `at`.
+///
+/// Clamps at both ends: before the first control it returns the first, after the
+/// last it returns the last — which is how a chain tip past every marker comes to
+/// rigid-follow the last one. Empty controls (a chain with no parent and no
+/// marker) contribute no correction.
+fn blend_deltas(controls: &[(f32, Vec3)], at: f32) -> Vec3 {
+    let Some(&(first_x, first_d)) = controls.first() else {
+        return Vec3::ZERO;
+    };
+    if at <= first_x {
+        return first_d;
+    }
+    for pair in controls.windows(2) {
+        let ((x0, d0), (x1, d1)) = (pair[0], pair[1]);
+        if at <= x1 {
+            let f = if x1 > x0 { (at - x0) / (x1 - x0) } else { 0.0 };
+            return d0.lerp(d1, f);
+        }
+    }
+    controls.last().map_or(Vec3::ZERO, |&(_, d)| d)
+}
+
 /// Moves each spine joint onto the mesh's midline **at its own height**.
 ///
 /// [`fit_uniform`] gives the whole skeleton one depth, taken from the body's
@@ -657,6 +917,17 @@ pub fn fit_limb(
     }
     let direction = reach.normalize();
 
+    // Keep a lateral limb on its own side of the body. A leg's cone points
+    // nearly straight down, so `along` (distance along the axis) barely depends
+    // on X and the left/right foot tie is broken by vertex order — which aimed
+    // both legs at the *same* foot. Rejecting vertices across the sagittal plane
+    // from the limb's root fixes it, and self-disables for a limb rooted on the
+    // centreline (where `attach_side` is ~0, so the product is never negative).
+    let center_x = mesh
+        .bounds()
+        .map_or(attach.x, |(min, max)| 0.5 * (min.x + max.x));
+    let attach_side = attach.x - center_x;
+
     // Half-angle of the cone. Wide enough to follow an arm from a T-pose down
     // to an A-pose, narrow enough that it cannot cross to the other side of the
     // body or pick up a limb it does not own.
@@ -672,6 +943,9 @@ pub fn fit_limb(
         let along = offset.dot(direction);
         if along / distance < COS_LIMIT {
             continue;
+        }
+        if (vertex.x - center_x) * attach_side < 0.0 {
+            continue; // across the body from this limb's root — a different limb
         }
         // Ranked by how far along the limb's own axis a vertex lies, not by how
         // far away it is. Distance picks whatever is furthest anywhere in the
