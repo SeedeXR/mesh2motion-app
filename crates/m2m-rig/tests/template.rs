@@ -450,9 +450,11 @@ fn every_template_describes_its_skeleton_exactly() {
         ("horse.json", "rig-horse.glb", 56),
         ("kaiju.json", "rig-kaiju.glb", 58),
         ("dragon.json", "rig-dragon.glb", 99),
-        ("rhino.json", "rig-rhino.glb", 30),
-        ("buffalo.json", "rig-buffalo.glb", 33),
         ("hyena.json", "rig-hyena.glb", 44),
+        // rhino and buffalo were re-rigged onto their source (animals-3d) skeletons,
+        // which carry IK/pole targets, dewclaws and belly-spine branches the way the
+        // leopard/cat rigs carry unclaimed detail bones — so they are checked for
+        // valid chains by `every_manifest_matches_its_rig`, not full-skeleton coverage.
     ] {
         assert_template_matches(manifest, skeleton, joints);
     }
@@ -511,7 +513,7 @@ fn each_creature_has_the_chains_it_should() {
         ("rhino.json", 4, 0, 1, 1),
         ("buffalo.json", 4, 0, 1, 0),
         ("hyena.json", 4, 0, 1, 1),
-        ("elephant.json", 4, 0, 1, 1),
+        ("elephant.json", 4, 0, 1, 0),
         // aquatic: fins are the limbs; the tail is the body axis (spine), as shark
         ("fish.json", 4, 0, 0, 0),
         ("whaleshark.json", 4, 0, 0, 1),

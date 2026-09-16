@@ -1,106 +1,20 @@
 {
   "name": "buffalo",
   "skeleton": "rig-buffalo.glb",
-  "guidance": "Large bovine quadruped \u2014 a heavy forequarter and a high shoulder hump over sturdy plantigrade legs, so ground the foot. Keep the back level behind the hump and the head low on a short, muscular neck.",
+  "guidance": "Large bovine quadruped — a heavy forequarter and a high shoulder hump over sturdy columnar legs, a short thick neck carrying a broad low head, and a tufted tail. Keep the topline level and the feet on a wide track.",
   "chains": [
-    {
-      "name": "root",
-      "kind": "root",
-      "bones": [
-        "root"
-      ]
-    },
-    {
-      "name": "spine",
-      "kind": "spine",
-      "bones": [
-        "spine_1",
-        "spine_2",
-        "spine_3"
-      ]
-    },
-    {
-      "name": "neck",
-      "kind": "neck",
-      "bones": [
-        "neck_1",
-        "neck_2",
-        "neck_3"
-      ]
-    },
-    {
-      "name": "head",
-      "kind": "head",
-      "bones": [
-        "head"
-      ]
-    },
-    {
-      "name": "front_leg_l",
-      "kind": "limb",
-      "side": "left",
-      "role": "leg",
-      "posture": "plantigrade",
-      "bones": [
-        "front_shoulder_l",
-        "front_upper_l",
-        "front_lower_l",
-        "front_foot_l"
-      ]
-    },
-    {
-      "name": "front_leg_r",
-      "kind": "limb",
-      "side": "right",
-      "role": "leg",
-      "posture": "plantigrade",
-      "bones": [
-        "front_shoulder_r",
-        "front_upper_r",
-        "front_lower_r",
-        "front_foot_r"
-      ]
-    },
-    {
-      "name": "back_leg_l",
-      "kind": "limb",
-      "side": "left",
-      "role": "leg",
-      "posture": "plantigrade",
-      "bones": [
-        "back_hip_l",
-        "back_upper_l",
-        "back_lower_l",
-        "back_foot_l",
-        "back_toe_l"
-      ]
-    },
-    {
-      "name": "back_leg_r",
-      "kind": "limb",
-      "side": "right",
-      "role": "leg",
-      "posture": "plantigrade",
-      "bones": [
-        "back_hip_r",
-        "back_upper_r",
-        "back_lower_r",
-        "back_foot_r",
-        "back_toe_r"
-      ]
-    },
-    {
-      "name": "tail",
-      "kind": "tail",
-      "bones": [
-        "tail_1",
-        "tail_2",
-        "tail_3",
-        "tail_4",
-        "tail_5",
-        "tail_6",
-        "tail_7"
-      ]
-    }
+    { "name": "root", "kind": "root", "bones": ["Body"] },
+    { "name": "spine", "kind": "spine", "bones": ["Back", "Torso", "Torso2", "Torso3"] },
+    { "name": "neck", "kind": "neck", "bones": ["Neck1", "Neck2", "Neck3"] },
+    { "name": "head", "kind": "head", "bones": ["Head"] },
+    { "name": "front_leg_l", "kind": "limb", "side": "left", "role": "leg", "posture": "plantigrade",
+      "bones": ["FrontUpperLeg.L", "FrontLowerLeg.L", "IKFrontLeg.L"] },
+    { "name": "front_leg_r", "kind": "limb", "side": "right", "role": "leg", "posture": "plantigrade",
+      "bones": ["FrontUpperLeg.R", "FrontLowerLeg.R", "IKFrontLeg.R"] },
+    { "name": "back_leg_l", "kind": "limb", "side": "left", "role": "leg", "posture": "plantigrade",
+      "bones": ["BackLeg.L", "BackUpperLeg.L", "BackLowerLeg.L", "IKBackLeg.L"] },
+    { "name": "back_leg_r", "kind": "limb", "side": "right", "role": "leg", "posture": "plantigrade",
+      "bones": ["BackLeg.R", "BackUpperLeg.R", "BackLowerLeg.R", "IKBackLeg.R"] },
+    { "name": "tail", "kind": "tail", "bones": ["Tail1", "Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7"] }
   ]
 }

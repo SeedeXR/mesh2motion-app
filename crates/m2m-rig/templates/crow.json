@@ -1,20 +1,20 @@
 {
   "name": "crow",
   "skeleton": "rig-crow.glb",
-  "guidance": "A perching bird — a compact body on two short digitigrade legs (ground the toe), a pair of folded wings running clavicle → wrist along the flanks, a short neck and a small head, and a fanned tail behind. Keep the body roughly level and the wings tucked.",
+  "guidance": "A perching bird — a compact body on two short digitigrade legs (ground the toe), a pair of wings running shoulder → wrist along the flanks, a short neck and a small head, and a fanned tail behind. Keep the body roughly level and the wings tucked.",
   "chains": [
-    { "name": "root", "kind": "root", "bones": ["root"] },
-    { "name": "spine", "kind": "spine", "bones": ["spine_1", "spine_2"] },
-    { "name": "neck", "kind": "neck", "bones": ["neck_1"] },
-    { "name": "head", "kind": "head", "bones": ["head"] },
+    { "name": "root", "kind": "root", "bones": ["Root", "Bip001"] },
+    { "name": "spine", "kind": "spine", "bones": ["Bip001-chest"] },
+    { "name": "neck", "kind": "neck", "bones": ["Bip001-neck"] },
+    { "name": "head", "kind": "head", "bones": ["Bip001-head"] },
     { "name": "leg_l", "kind": "limb", "side": "left", "role": "leg", "posture": "digitigrade",
-      "bones": ["leg_upper_l", "leg_lower_l", "leg_ankle_l", "leg_foot_l", "leg_toe_l"] },
+      "bones": ["Bip001-L-Thigh", "Bip001-L-Calf", "Bip001-L-Foot"] },
     { "name": "leg_r", "kind": "limb", "side": "right", "role": "leg", "posture": "digitigrade",
-      "bones": ["leg_upper_r", "leg_lower_r", "leg_ankle_r", "leg_foot_r", "leg_toe_r"] },
+      "bones": ["Bip001-R-Thigh", "Bip001-R-Calf", "Bip001-R-Foot"] },
     { "name": "wing_l", "kind": "limb", "side": "left", "role": "wing",
-      "bones": ["wing_1_l", "wing_2_l", "wing_3_l", "wing_4_l"] },
+      "bones": ["Bip001--L-Wing01", "Bip001--L-Wing02", "Bip001--L-Wing03"] },
     { "name": "wing_r", "kind": "limb", "side": "right", "role": "wing",
-      "bones": ["wing_1_r", "wing_2_r", "wing_3_r", "wing_4_r"] },
-    { "name": "tail", "kind": "tail", "bones": ["tail_1"] }
+      "bones": ["Bip001--R-Wing01", "Bip001--R-Wing02", "Bip001--R-Wing03"] },
+    { "name": "tail", "kind": "tail", "bones": ["Bip001-Tail", "Bip001-Tail_01"] }
   ]
 }

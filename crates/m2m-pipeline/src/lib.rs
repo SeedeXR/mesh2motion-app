@@ -2575,7 +2575,7 @@ mod tests {
                 template.name
             );
         }
-        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 865);
+        assert_eq!(offered.iter().map(|t| t.bones).sum::<usize>(), 861);
     }
 
     #[test]
@@ -3368,6 +3368,8 @@ mod tests {
                     "cat_idle",
                     "cat_stalk",
                     "cat_trot",
+                    "cat_turn_left",
+                    "cat_turn_right",
                     "cat_walk",
                 ],
             ),
@@ -3378,6 +3380,8 @@ mod tests {
                     "leopard_idle",
                     "leopard_stalk",
                     "leopard_trot",
+                    "leopard_turn_left",
+                    "leopard_turn_right",
                     "leopard_walk",
                 ],
             ),
