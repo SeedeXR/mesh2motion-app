@@ -43,7 +43,11 @@ echo "Installed $DEST/$name"
 echo
 echo "==> Building the rigging MCP server (m2m-mcp)…"
 cargo build --release -p m2m-mcp
-MCP="$PWD/target/release/m2m-mcp"
+# Keep a copy in ./output (outside target/, so `cargo clean` cannot remove it)
+# and register THAT path — the server then survives a clean without a rebuild.
+mkdir -p output
+cp -f target/release/m2m-mcp output/m2m-mcp
+MCP="$PWD/output/m2m-mcp"
 
 echo "==> Verifying the MCP server (m2m-mcp --check)…"
 "$MCP" --check || { echo "error: MCP self-check failed" >&2; exit 1; }

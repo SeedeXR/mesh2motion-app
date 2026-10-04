@@ -1181,7 +1181,16 @@ export function createViewport(): Viewport {
     async show(data: ArrayBuffer): Promise<ModelContents> {
       const contents = await parseModel(data)
 
-      clearFittedEditing()
+      // A new model replaces EVERYTHING the previous one left in the scene.
+      // stop() tears down any clip/overlay mesh — playAnimated adds a separate
+      // `animated` mesh and hides the imported one, so without this the old
+      // asset's clip stays on screen beside the new model (two assets at once).
+      // clearFittedSkeleton() removes the old fitted rig; endMarkerPlacement()
+      // removes marker sprites AND their mode (handlers, listeners, loupe,
+      // cached ring textures) so none of it acts on the newly loaded model.
+      this.stop()
+      this.clearFittedSkeleton()
+      this.endMarkerPlacement()
       setTransformMode('none')
       if (model !== null) {
         scene.remove(model)
