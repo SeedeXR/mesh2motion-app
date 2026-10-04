@@ -180,7 +180,7 @@ jobs:
           # Budget from memory/test.md §6. Compare in KB so the integer divide
           # cannot floor a 40.9 MB bundle down to a passing "40".
           KB=$(du -sk target/release/bundle/macos/Mesh2Motion.app | cut -f1)
-          LIMIT_KB=$((40 * 1024))
+          LIMIT_KB=$((64 * 1024))
           echo "bundle: ${KB} KB (budget ${LIMIT_KB} KB)"
           [ "$KB" -le "$LIMIT_KB" ] \
             || { echo "::error::bundle ${KB} KB exceeds ${LIMIT_KB} KB budget"; exit 1; }

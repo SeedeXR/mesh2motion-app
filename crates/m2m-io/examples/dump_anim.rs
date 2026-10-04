@@ -57,14 +57,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             show(curve, 1, 2);
         }
     }
-    for want in ["Definitions"] {
-        match document.root(want) {
-            Some(node) => {
-                println!("--- {want}");
-                show(node, 1, 3);
-            }
-            None => println!("--- no {want} root"),
+    let want = "Definitions";
+    match document.root(want) {
+        Some(node) => {
+            println!("--- {want}");
+            show(node, 1, 3);
         }
+        None => println!("--- no {want} root"),
     }
     Ok(())
 }
