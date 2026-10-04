@@ -83,7 +83,7 @@ Every benchmark records machine, input, and run count.
 | Bind skin, 50k verts, high | ≤ 12 s | ≤ 2.5 GB | biharmonic refinement |
 | FBX import, Mixamo clip | ≤ 500 ms | ≤ 400 MB | |
 | Export GLB, 50k + 20 clips | ≤ 2 s | ≤ 800 MB | |
-| Binary size | — | ≤ 40 MB | `cargo tauri build` |
+| Bundle size | — | ≤ 64 MB | `cargo tauri build`; CI measures the `.app` with character glbs as LFS pointers, so this guards app + ~32 MB of bundled animation libraries (20 species + human). Raised from 40 MB once real biomechanical clips were baked for every species. |
 
 Profiling is mandatory for CPU, GPU, memory, and disk on any change to a hot path.
 Use `cargo instruments` / Instruments.app on macOS; record the trace path in
