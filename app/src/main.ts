@@ -44,6 +44,7 @@ import {
   devAutoexport,
   devAutoOrbit,
   devAutoproceed,
+  devReloadTest,
   onRigProgress,
   forwardConsoleToTerminal,
   exportModel,
@@ -1684,6 +1685,15 @@ async function maybeAutoload(): Promise<void> {
         await runPreview()
         render()
       }
+    }
+    // Testing: after the first model's clip plays, load a SECOND model straight
+    // into the viewport to prove show() disposes the first asset (its clip /
+    // overlay / skeleton mesh) instead of leaving two on screen.
+    const reloadPath = await devReloadTest().catch(() => null)
+    if (reloadPath !== null) {
+      const geo = await loadModel(reloadPath)
+      await ensureViewport().show(geo)
+      render()
     }
     return
   }

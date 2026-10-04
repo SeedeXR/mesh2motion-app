@@ -188,6 +188,15 @@ fn dev_auto_proceed() -> bool {
     std::env::var("M2M_AUTOPROCEED").is_ok()
 }
 
+/// Dev/testing harness: `M2M_RELOAD_TEST=<path>` loads a SECOND model (via the
+/// viewport's show) after the first clip plays, so the dispose-on-load can be
+/// verified — only this second asset should remain, with no leftover
+/// animated/overlay/skeleton mesh from the first load. Returns the path, or null.
+#[tauri::command]
+fn dev_reload_test() -> Option<String> {
+    std::env::var("M2M_RELOAD_TEST").ok()
+}
+
 /// Dev/testing harness: when `M2M_AUTO_ORBIT` is set, the Animate flow dispatches
 /// a synthetic left-drag across the viewport so camera orbit can be verified in a
 /// screenshot (WKWebView drops synthetic OS mouse events, so the drag must be
@@ -689,6 +698,7 @@ pub fn run() {
             dev_autoexport,
             dev_auto_proceed,
             dev_auto_orbit,
+            dev_reload_test,
             log_line,
             import_model,
             load_model,

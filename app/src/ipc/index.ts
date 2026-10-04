@@ -107,6 +107,12 @@ export async function devAutoproceed(): Promise<boolean> {
   return await invoke<boolean>('dev_auto_proceed')
 }
 
+/** Dev/testing: a second model's path to load after the first, to verify the
+ *  viewport disposes the previous asset instead of stacking two on screen. */
+export async function devReloadTest(): Promise<string | null> {
+  return await invoke<string | null>('dev_reload_test')
+}
+
 /** Dev/screenshot: whether to preselect the Mirror toggle before auto-preview. */
 export async function devAnimateMirror(): Promise<boolean> {
   return await invoke<boolean>('dev_animate_mirror')
