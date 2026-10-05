@@ -70,6 +70,16 @@ pub struct FittedSkeleton {
     /// template, whose arms these bone names do not describe. The UI reports it
     /// rather than the app silently assuming a pose (P3-P2).
     pub pose: String,
+    /// Reuse the imported model's **own** skin weights instead of recomputing
+    /// them with the geodesic solver.
+    ///
+    /// Set only by [`skeleton_from_import`]: when a user keeps a rigged model's
+    /// own armature, its authored weights are what makes it deform the way the
+    /// artist (or Mixamo/MakeHuman) intended, and re-solving them throws that
+    /// away. A template fit has no weights to reuse, so it leaves this false and
+    /// takes the solver. `#[serde(default)]` keeps every existing payload false.
+    #[serde(default)]
+    pub reuse_weights: bool,
 }
 
 /// Errors the skeleton step can produce.
@@ -302,6 +312,8 @@ fn fitted_to_skeleton(
         scale: fitted.scale,
         bones: fitted.bones,
         pose,
+        // A template fit has no authored weights — the solver binds it.
+        reuse_weights: false,
     }
 }
 
@@ -595,7 +607,17 @@ fn solve(
     ),
     RigError,
 > {
-    let mesh = mesh_of(&m2m_io::import::load(model)?);
+    let document = m2m_io::import::load(model)?;
+
+    // The model came rigged and the user kept its armature: its own skin weights
+    // are the artist's, and the geodesic solver below would only approximate
+    // them. Reuse them verbatim (this is what makes a MakeHuman/Mixamo import
+    // deform correctly instead of being re-bound from scratch).
+    if skeleton.reuse_weights {
+        return authored_weights(&document, skeleton);
+    }
+
+    let mesh = mesh_of(&document);
     if mesh.positions.is_empty() {
         return Err(RigError::NothingToBind {
             reason: "the model has no vertices",
@@ -659,6 +681,127 @@ fn solve(
         fallback_vertices: weights.fallback_vertices.len(),
         influence_histogram,
         unweighted_vertices,
+    };
+    Ok((mesh, weights, report))
+}
+
+/// Builds skin weights from a rigged import's **own** authored weights rather
+/// than solving new ones — the reuse path ([`FittedSkeleton::reuse_weights`]).
+///
+/// The reader keeps each primitive's `JOINTS_0`/`WEIGHTS_0`. Those joint indices
+/// are slots into the primitive's *own* skin's joint list, and the FBX converter
+/// emits one skin per geometry (so a body+eyes+teeth model has several). They are
+/// remapped here into the single bone order [`skeleton_from_import`] produced —
+/// that of `skins[0]` — and renormalised per vertex, because an import may have
+/// dropped influences past the fourth, so the four that remain need not sum to 1.
+fn authored_weights(
+    document: &m2m_io::glb::Document,
+    skeleton: &FittedSkeleton,
+) -> Result<
+    (
+        m2m_core::mesh::Mesh,
+        m2m_core::skinning::SkinWeights,
+        BindReport,
+    ),
+    RigError,
+> {
+    use m2m_core::skinning::MAX_INFLUENCES;
+
+    let mesh = mesh_of(document);
+    if mesh.positions.is_empty() {
+        return Err(RigError::NothingToBind {
+            reason: "the model has no vertices",
+        });
+    }
+
+    // node index -> bone slot, in the order `skeleton_from_import` used (`skins[0]`).
+    let slot_of_node: std::collections::HashMap<usize, usize> = document
+        .skins
+        .first()
+        .map(|skin| {
+            skin.joints
+                .iter()
+                .enumerate()
+                .map(|(slot, &node)| (node, slot))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let vertex_count = mesh.positions.len();
+    let mut weights = m2m_core::skinning::SkinWeights::zeroed(vertex_count);
+    let mut used_bones = std::collections::HashSet::new();
+    let mut histogram = [0usize; MAX_INFLUENCES];
+    let mut unweighted = 0usize;
+
+    // `mesh_of` appends primitives in order; walk the same order so vertex v of a
+    // primitive lands at `base + v` in the merged mesh.
+    let mut base = 0usize;
+    for primitive in &document.primitives {
+        let pv = primitive.positions.len() / 3;
+        let skin = primitive
+            .node
+            .and_then(|n| document.nodes.get(n))
+            .and_then(|n| n.skin)
+            .and_then(|s| document.skins.get(s));
+        let has_influences = primitive.joints.len() >= pv * MAX_INFLUENCES
+            && primitive.weights.len() >= pv * MAX_INFLUENCES;
+
+        for v in 0..pv {
+            // This vertex's non-zero influences, remapped from the primitive's own
+            // skin slots to `skins[0]` bone slots.
+            let mut influences: Vec<(u16, f32)> = Vec::with_capacity(MAX_INFLUENCES);
+            if let (Some(skin), true) = (skin, has_influences) {
+                for i in 0..MAX_INFLUENCES {
+                    let w = primitive.weights[v * MAX_INFLUENCES + i];
+                    if w <= 0.0 {
+                        continue;
+                    }
+                    let local = primitive.joints[v * MAX_INFLUENCES + i] as usize;
+                    let Some(&node) = skin.joints.get(local) else {
+                        continue;
+                    };
+                    let Some(&bone) = slot_of_node.get(&node) else {
+                        continue; // an influence onto a joint outside skins[0] is dropped
+                    };
+                    match influences.iter_mut().find(|(b, _)| *b as usize == bone) {
+                        Some((_, acc)) => *acc += w,
+                        None => influences.push((bone as u16, w)),
+                    }
+                }
+            }
+
+            let total: f32 = influences.iter().map(|(_, w)| *w).sum();
+            if total <= 0.0 {
+                unweighted += 1;
+                weights.fallback_vertices.push((base + v) as u32);
+                continue;
+            }
+            // influences.len() is 1..=MAX_INFLUENCES (the source has at most four
+            // non-zero, and merging duplicates only shrinks it).
+            if let Some(slot) = histogram.get_mut(influences.len() - 1) {
+                *slot += 1;
+            }
+            let out = base + v;
+            for (slot, (bone, w)) in influences.iter().take(MAX_INFLUENCES).enumerate() {
+                weights.indices[out * MAX_INFLUENCES + slot] = *bone;
+                weights.weights[out * MAX_INFLUENCES + slot] = w / total;
+                used_bones.insert(*bone);
+            }
+        }
+        base += pv;
+    }
+
+    // ponytail: an influence onto a joint outside `skins[0]` is dropped and the
+    // rest renormalised; a genuine multi-armature file would need a merged bone
+    // list, but `skeleton_from_import` already takes only `skins[0]`, so this
+    // stays consistent with the skeleton the user is animating.
+    let report = BindReport {
+        vertices: vertex_count,
+        weighted_bones: used_bones.len(),
+        excluded_bones: skeleton.bones.len().saturating_sub(used_bones.len()),
+        fallback_vertices: weights.fallback_vertices.len(),
+        influence_histogram: histogram,
+        unweighted_vertices: unweighted,
     };
     Ok((mesh, weights, report))
 }
@@ -1538,16 +1681,20 @@ pub fn skeleton_from_import(model: &[u8]) -> Result<FittedSkeleton, RigError> {
             .collect(),
         scale: 1.0,
         pose: "other".to_owned(),
+        // The model came rigged: keep its authored skin weights rather than
+        // re-solving them, so it deforms the way it was skinned.
+        reuse_weights: true,
     })
 }
 
-/// The bundled bone-name tables (Mixamo, Rigify) used to auto-map an imported
-/// rig onto a library. Embedded with `include_str!` so they ship in the binary
-/// rather than being read from disk (the examples read them from the crate dir).
+/// The bundled bone-name tables (Mixamo, Rigify, MakeHuman) used to auto-map an
+/// imported rig onto a library. Embedded with `include_str!` so they ship in the
+/// binary rather than being read from disk (the examples read them from the crate dir).
 fn known_rigs() -> Vec<m2m_rig::automap::KnownRig> {
-    const TABLES: [&str; 2] = [
+    const TABLES: [&str; 3] = [
         include_str!("../../m2m-rig/known-rigs/mixamo.json"),
         include_str!("../../m2m-rig/known-rigs/rigify.json"),
+        include_str!("../../m2m-rig/known-rigs/makehuman.json"),
     ];
     TABLES
         .iter()
@@ -1627,6 +1774,48 @@ fn retarget_source(document: &m2m_io::glb::Document) -> Result<RetargetSource, R
 /// joints differently, which nothing prevents; the survivor is a gap in the
 /// fixtures, not in the reasoning, and is recorded rather than papered over.
 ///
+/// Whether a canonical bone name is a finger/digit bone — used to skip digit
+/// retargeting for a rig whose table opts out (see [`m2m_rig::automap::KnownRig`]).
+fn is_digit_bone(name: &str) -> bool {
+    const DIGITS: [&str; 5] = ["thumb", "index", "middle", "ring", "pinky"];
+    DIGITS.iter().any(|digit| name.starts_with(digit))
+}
+
+/// Pairs a library (source) bone to a target bone: by exact name first (the
+/// template case, where names match), else the name-table + structural
+/// auto-mapper (an imported rig with foreign names), minus any digits a
+/// recognised rig opts out of ([`m2m_rig::automap::KnownRig::retarget_digits`]).
+fn clip_bone_mapping(
+    source: &m2m_rig::automap::Skeleton,
+    target: &m2m_rig::automap::Skeleton,
+) -> std::collections::HashMap<usize, usize> {
+    let target_of_name: std::collections::HashMap<&str, usize> = target
+        .names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    let mut mapping: std::collections::HashMap<usize, usize> = source
+        .names
+        .iter()
+        .enumerate()
+        .filter_map(|(bone, name)| target_of_name.get(name.as_str()).map(|&t| (bone, t)))
+        .collect();
+    if mapping.len() * 2 < source.names.len() {
+        let rigs = known_rigs();
+        let (mut auto, strategy) = m2m_rig::automap::map_bones_best(source, target, &rigs, 0.5);
+        if let m2m_rig::automap::Strategy::Known(name) = &strategy {
+            if rigs.iter().any(|r| &r.name == name && !r.retarget_digits) {
+                auto.retain(|&src, _| !is_digit_bone(&source.names[src]));
+            }
+        }
+        if auto.len() > mapping.len() {
+            mapping = auto;
+        }
+    }
+    mapping
+}
+
 /// # Errors
 ///
 /// [`RigError::UnknownClip`] when the library has no such clip.
@@ -1688,32 +1877,8 @@ fn retarget_clip(
             .collect(),
     };
 
-    // Source bone to target bone, by exact name — the template case, where the
-    // library and the fitted skeleton share names. When that maps too few of the
-    // source (an imported rig with foreign names, e.g. `mixamorig:LeftArm`), fall
-    // back to the name-table + structural auto-mapper, which handles Mixamo/Rigify
-    // and, for meaningless names like `Bone.027`, matches on chain shape instead.
-    let target_of_name: std::collections::HashMap<&str, usize> = skeleton
-        .bones
-        .iter()
-        .enumerate()
-        .map(|(index, name)| (name.as_str(), index))
-        .collect();
-    let mut mapping: std::collections::HashMap<usize, usize> = source
-        .skeleton
-        .names
-        .iter()
-        .enumerate()
-        .filter_map(|(bone, name)| target_of_name.get(name.as_str()).map(|&t| (bone, t)))
-        .collect();
-    if mapping.len() * 2 < source.skeleton.names.len() {
-        let (auto, _strategy) =
-            m2m_rig::automap::map_bones_best(&source.skeleton, &target, &known_rigs(), 0.5);
-        // Only take the auto-map if it reaches more bones than exact names did.
-        if auto.len() > mapping.len() {
-            mapping = auto;
-        }
-    }
+    // Source bone to target bone (see [`clip_bone_mapping`]).
+    let mapping = clip_bone_mapping(&source.skeleton, &target);
 
     let mut rotations = Vec::new();
     let mut translations = Vec::new();
@@ -2457,6 +2622,67 @@ mod tests {
             .bones
             .iter()
             .any(|b| b.to_lowercase().contains("mixamo")));
+        // An imported rig keeps its own skin weights (the reuse path).
+        assert!(skeleton.reuse_weights);
+    }
+
+    /// Binding an imported rig reuses its authored weights, not the solver's.
+    ///
+    /// The whole point of the reuse path: a MakeHuman/Mixamo import already has
+    /// good weights, and re-solving them geodesically is what distorted it. This
+    /// pins that the reuse branch returns the file's own weights — different from
+    /// the geodesic solve, normalised, and referencing valid bones.
+    #[test]
+    fn reuse_weights_preserves_authored_weights() {
+        let bytes = model("test-files/retarget testing/mixamo-sample-rig.glb");
+        let skeleton = super::skeleton_from_import(&bytes).expect("rigged");
+        assert!(skeleton.reuse_weights);
+
+        let falloff = m2m_core::skinning::DEFAULT_FALLOFF;
+        let (_, reused, _) = super::solve(&bytes, &skeleton, falloff).expect("binds");
+
+        // The same model re-solved with reuse OFF takes the geodesic path; the
+        // reused weights must not simply reproduce it.
+        let mut resolved = super::skeleton_from_import(&bytes).expect("rigged");
+        resolved.reuse_weights = false;
+        let (_, solved, _) = super::solve(&bytes, &resolved, falloff).expect("binds");
+
+        assert_eq!(reused.vertex_count(), solved.vertex_count());
+        assert_ne!(
+            reused.weights, solved.weights,
+            "reuse must return the file's weights, not the solver's"
+        );
+
+        // Reused weights are well-formed: each vertex sums to ~1 (or is an
+        // unweighted island) and references a bone that exists.
+        let bones = skeleton.bones.len();
+        for v in 0..reused.vertex_count() {
+            let sum: f32 = reused.influences(v).map(|(_, w)| w).sum();
+            assert!(
+                sum == 0.0 || (sum - 1.0).abs() < 1e-3,
+                "vertex {v} sums to {sum}"
+            );
+            assert!(
+                reused.influences(v).all(|(b, _)| (b as usize) < bones),
+                "vertex {v} names a bone out of range"
+            );
+        }
+    }
+
+    #[test]
+    fn digit_bones_are_recognised() {
+        for name in [
+            "thumb_01_l",
+            "index_02_r",
+            "middle_03_l",
+            "ring_01_r",
+            "pinky_02_l",
+        ] {
+            assert!(super::is_digit_bone(name), "{name} is a digit");
+        }
+        for name in ["upperarm_l", "hand_r", "spine_01", "foot_l"] {
+            assert!(!super::is_digit_bone(name), "{name} is not a digit");
+        }
     }
 
     #[test]
@@ -2783,6 +3009,7 @@ mod tests {
             ],
             scale: 1.0,
             pose: "other".into(),
+            reuse_weights: false,
         };
         let segments = bone_segments(&skeleton);
 
@@ -2945,6 +3172,7 @@ mod tests {
             rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
             pose: "other".into(),
+            reuse_weights: false,
         };
         let err = super::bind(
             &model("models/model-human.glb"),
@@ -3043,6 +3271,7 @@ mod tests {
             ],
             scale: 1.0,
             pose: "other".into(),
+            reuse_weights: false,
         };
 
         let report = super::bind(&two_islands(), &skeleton, 2.0).expect("binds");
@@ -4123,6 +4352,7 @@ mod tests {
             rotations: vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
             scale: 1.0,
             pose: "other".into(),
+            reuse_weights: false,
         };
         let err = super::export_fbx(&model("models/model-human.glb"), &skeleton, 2.0, None)
             .expect_err("refused");

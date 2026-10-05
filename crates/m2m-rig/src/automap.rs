@@ -389,6 +389,25 @@ pub struct KnownRig {
     pub note: String,
     /// Our bone name to theirs.
     pub bones: HashMap<String, String>,
+    /// Whether a library clip's finger motion should be retargeted onto this
+    /// rig's digits, or the fingers left at their rest pose.
+    ///
+    /// `true` by default (Mixamo/Rigify share the library's finger orientation,
+    /// so their digits follow a clip cleanly). A rig whose finger bones are
+    /// oriented differently — MakeHuman — sets this `false`: the world-space
+    /// retarget would curl a clip's fixed grip onto the wrong axis and shatter
+    /// the hand, so its fingers keep their rest pose while its body animates. The
+    /// digit bones still belong in `bones` so the table identifies the rig and
+    /// its hands deform from their own weights.
+    #[serde(default = "retarget_digits_default")]
+    pub retarget_digits: bool,
+}
+
+/// Default for [`KnownRig::retarget_digits`]: retarget fingers unless a table
+/// opts out. A missing field in an existing table therefore keeps today's
+/// behaviour.
+fn retarget_digits_default() -> bool {
+    true
 }
 
 /// Compares bone names ignoring case and punctuation.
