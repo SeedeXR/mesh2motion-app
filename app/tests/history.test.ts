@@ -43,6 +43,19 @@ describe('History', () => {
     expect(h.redo()).toBe('d')
   })
 
+  test('clear forgets the past: the next push is the sole baseline', () => {
+    const h = new History<number>()
+    h.push(1)
+    h.push(2)
+    h.push(3)
+    h.clear()
+    expect(h.canUndo()).toBe(false)
+    expect(h.canRedo()).toBe(false)
+    h.push(42) // the new baseline, with nothing behind it
+    expect(h.canUndo()).toBe(false)
+    expect(h.undo()).toBeNull()
+  })
+
   test('snapshots are returned by identity, not copied', () => {
     const h = new History<{ v: number }>()
     const a = { v: 1 }

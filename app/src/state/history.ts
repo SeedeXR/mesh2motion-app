@@ -39,6 +39,14 @@ export class History<T> {
     return this.states[this.index] ?? null
   }
 
+  /** Forgets all recorded states — the next `push` becomes the sole baseline.
+   *  Used when the pipeline is reset (new import / start over), so undo cannot
+   *  wind back into a discarded model's rig. */
+  clear(): void {
+    this.states.length = 0
+    this.index = -1
+  }
+
   canUndo(): boolean {
     return this.index > 0
   }

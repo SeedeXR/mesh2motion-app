@@ -76,6 +76,15 @@ body {
 
 .step:hover:not(:disabled) { background: var(--bg-3); color: var(--fg-0); }
 .step[aria-current="step"] { background: var(--accent-dim); color: var(--fg-0); }
+/* "Start over" sits apart from the numbered steps: pushed to the rail's foot
+   and set in the muted/warning register so it reads as a way out, not a step. */
+.step.reset {
+  margin-top: auto;
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  justify-content: center;
+}
+.step.reset:hover { background: var(--bg-3); color: var(--err); border-color: var(--err); }
 .step:disabled { color: var(--fg-dis); cursor: not-allowed; }
 .step:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 

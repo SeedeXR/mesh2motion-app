@@ -299,6 +299,56 @@ function restore(state: Snapshot): void {
   render()
 }
 
+/**
+ * Returns every piece of model-derived pipeline state to its initial value and
+ * clears the viewport's rig, markers and running clip. The imported mesh itself
+ * (`loaded`/`modelBytes`/`geometryBytes`) and global preferences (symmetry,
+ * export settings) are left alone: this clears the *rigging*, so a new import or
+ * an explicit "Start over" never inherits the previous model's skeleton,
+ * weights, clip or unlocked steps.
+ */
+function resetPipeline(): void {
+  // Rig / skeleton
+  chosen = null; fitted = null; fitting = false
+  bound = null; binding = false
+  riggingImport = false; ownClips = false
+  transformMode = 'none'; panView = false
+  // Markers
+  markerMode = false; activeSlot = null; markerSaveStatus = null
+  markerPositions.clear()
+  // Animate transport
+  clips = null; clip = null; clipDuration = 0
+  playing = false; paused = false; direction = 1; fps = 30
+  trimStart = 0; trimEnd = 1; mirrored = false; armSpace = 50; overdrive = 50
+  animateView = 'mesh'; clipQuery = ''
+  cancelAnimationFrame(playhead); playhead = 0
+  // Export result (the modal's format/skin/fps settings are a preference, kept)
+  exported = null; exporting = false
+  // Preview caches — the next library / own-clips load rebuilds them
+  libraryFor = null; ownPreviewFor = null
+  // Viewport: drop the rig, markers and any running clip; the mesh stays.
+  if (viewport !== null) {
+    viewport.stop()
+    viewport.clearFittedSkeleton()
+    viewport.endMarkerPlacement()
+  }
+}
+
+/** The "Start over" control: discards all rigging and returns to the Import
+ *  step with a clean slate, keeping the imported mesh so it can be re-rigged or
+ *  replaced. */
+async function resetToImport(): Promise<void> {
+  resetPipeline()
+  activeStep = 0
+  furthestStep = loaded === null ? 0 : 1
+  history.clear()
+  record()
+  render()
+  // Redraw the plain imported mesh: the reset may have left a weight-paint
+  // overlay or a posed clip on screen, and the import step never calls show().
+  if (modelBytes !== null) await ensureViewport().show(modelBytes)
+}
+
 function undo(): void {
   const state = history.undo()
   if (state !== null) restore(state)
@@ -1167,18 +1217,21 @@ async function runImport(button: HTMLButtonElement): Promise<void> {
     const picked = await importModel()
     // A cancelled picker leaves the previous import alone rather than clearing it.
     if (picked !== null) {
+      // A new model starts a clean pipeline — no prior rig, markers, clip or
+      // unlocked step may bleed into it (resetPipeline clears the viewport rig,
+      // the preview caches and the animate transport).
+      resetPipeline()
       loaded = picked
       const geometry = await loadModel(picked.path)
       geometryBytes = geometry.byteLength
       // Kept so an already-rigged import can play its OWN clips without a retarget.
       modelBytes = geometry
-      ownClips = false
-      // A new model invalidates the clip-preview caches (library and own-clips).
-      libraryFor = null
-      ownPreviewFor = null
-      // A model is what the skeleton step needs, so earning it unlocks that step.
-      furthestStep = Math.max(furthestStep, 1)
-      // The imported-but-unrigged state is the baseline undo returns to.
+      // A model is what the skeleton step needs, so earning it unlocks that step;
+      // the downstream steps re-lock because nothing is rigged yet.
+      furthestStep = 1
+      // A new import is its own baseline — the previous model's undo history,
+      // which rewinds into a mesh that is no longer loaded, is discarded.
+      history.clear()
       record()
       // Rendered before drawing, so the canvas is in the DOM and has a size to
       // frame the model against.
@@ -1284,6 +1337,7 @@ function render(): void {
       <nav class="rail" aria-label="Rigging steps">
         <h2>Steps</h2>
         ${renderRail()}
+        ${loaded === null ? '' : '<button class="step reset" id="start-over" title="Discard all rigging and return to the import step">Start over</button>'}
       </nav>
 
       <main class="viewport">
@@ -1597,7 +1651,7 @@ function render(): void {
 
   if (step.id === StepId.LoadSkeleton && loaded !== null) void ensureTemplates()
 
-  app.querySelectorAll<HTMLButtonElement>('.step').forEach((btn) => {
+  app.querySelectorAll<HTMLButtonElement>('.step[data-step]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = Number(btn.dataset['step'])
       if (Number.isInteger(next)) {
@@ -1606,6 +1660,8 @@ function render(): void {
       }
     })
   })
+
+  document.querySelector<HTMLButtonElement>('#start-over')?.addEventListener('click', () => void resetToImport())
 
   void showEnvironment()
 }
