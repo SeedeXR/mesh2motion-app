@@ -135,8 +135,10 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
                         });
                     };
                     joint_nodes.push(joint);
-                    let ibm = cluster.transform_link.inverse() * cluster.transform;
-                    inverse_bind_matrices.push(ibm.as_mat4().to_cols_array());
+                    // Placeholder: `rebind_from_hierarchy` fills the real inverse
+                    // bind once the whole node graph exists. The cluster's own
+                    // matrices cannot be composed directly — see that function.
+                    inverse_bind_matrices.push(glam::Mat4::IDENTITY.to_cols_array());
                 }
 
                 joints = bound.indices;
@@ -172,14 +174,64 @@ pub fn fbx_to_gltf(scene: &Scene) -> Result<glb::Document, FbxError> {
         }
     }
 
-    Ok(glb::Document {
+    let mut document = glb::Document {
         nodes,
         primitives,
         materials,
         skins: out_skins,
         clips: Vec::new(),
         report: glb::GlbReport::default(),
-    })
+    };
+    rebind_from_hierarchy(&mut document);
+    Ok(document)
+}
+
+/// Computes every skin's inverse-bind matrices from the converted node
+/// hierarchy, replacing the placeholders left during conversion.
+///
+/// # Why not the cluster matrices
+///
+/// An FBX cluster records two matrices, `TransformLink` (the bone's bind) and
+/// `Transform` (named "the mesh's bind"), and the textbook inverse bind is
+/// `inverse(TransformLink) * Transform`. That is only safe when an exporter
+/// writes those two fields in agreement. They do not always: MakeHuman writes
+/// `Transform` as the bone's *own* `inverse(TransformLink)` (per-bone, not the
+/// mesh's), so `inverse(TransformLink) * Transform` becomes
+/// `inverse(TransformLink)²` — a double inverse that folds the mesh up. It also
+/// mixes units, since the skeleton sits under a 0.01 armature while the mesh
+/// does not. Validated against Maya's FBX SDK: for MakeHuman's hips our
+/// composed matrix was `(-73,-148,39)` where the SDK's bind is `(-39,-78,0)`.
+///
+/// # What this does instead
+///
+/// The node hierarchy is the one space the joints and the mesh already share.
+/// An import is at its bind pose, so a joint's inverse bind is just
+/// `inverse(jointWorld) * meshWorld`, every term read from `world_transforms` —
+/// no dependence on how a particular file spaced or named its cluster matrices.
+/// (It is what the exporter already does when it rebinds a fitted skeleton.)
+fn rebind_from_hierarchy(document: &mut glb::Document) {
+    use glam::Mat4;
+    let world = document.world_transforms();
+    // A skin is carried by its mesh node; that node's world transform places the
+    // geometry the inverse bind has to undo.
+    let mesh_world: std::collections::HashMap<usize, Mat4> = document
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node, n)| {
+            n.skin
+                .map(|skin| (skin, world.get(node).copied().unwrap_or(Mat4::IDENTITY)))
+        })
+        .collect();
+    for (index, skin) in document.skins.iter_mut().enumerate() {
+        let mesh = mesh_world.get(&index).copied().unwrap_or(Mat4::IDENTITY);
+        for (slot, &joint) in skin.joints.iter().enumerate() {
+            let joint_world = world.get(joint).copied().unwrap_or(Mat4::IDENTITY);
+            if let Some(ibm) = skin.inverse_bind_matrices.get_mut(slot) {
+                *ibm = (joint_world.inverse() * mesh).to_cols_array();
+            }
+        }
+    }
 }
 
 /// Reads a `Material` object's baseColor: its diffuse colour and, when it has an
