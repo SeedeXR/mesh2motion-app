@@ -1951,12 +1951,14 @@ fn retarget_clip(
         moved
     };
 
-    // A reused import rig has one bone per arm segment and no twist joints, so a
-    // library clip's arm twist — transferred verbatim — spins the whole segment
-    // and collapses the shoulder ("candy-wrapper") on high-arm poses. Strip the
-    // axial twist from the arm bones so they swing without spinning. Only the
-    // reuse path needs this: a fitted template shares the library's rig (exact
-    // names, no bridging) and its soft geodesic weights do not collapse.
+    // A reused import rig has one upper-arm bone and no twist joints, so a
+    // library clip's shoulder twist — transferred verbatim — spins the whole
+    // upper arm about its length and collapses the shoulder ("candy-wrapper") on
+    // high-arm poses. Strip the axial twist from the upper arm so it swings
+    // without spinning. The forearm is left alone — it genuinely needs its roll
+    // (folding, reaching) and does not drive the shoulder. Only the reuse path
+    // needs this: a fitted template shares the library's rig (exact names, no
+    // bridging) and its soft geodesic weights do not collapse.
     if skeleton.reuse_weights {
         let world = world_rotation; // rest world rotation per bone, computed above
         let position = |i: usize| {
@@ -1965,9 +1967,9 @@ fn retarget_clip(
                 .get(i)
                 .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
         };
-        // Target arm bones (upper + lower, both sides), and each one's rest
-        // direction toward its child in the parent's frame — the twist axis.
-        const ARMS: [&str; 4] = ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r"];
+        // Target upper-arm bones (both sides), and each one's rest direction
+        // toward its child in the parent's frame — the twist axis.
+        const ARMS: [&str; 2] = ["upperarm_l", "upperarm_r"];
         let twist_axis: std::collections::HashMap<usize, glam::Vec3> = source
             .skeleton
             .names
