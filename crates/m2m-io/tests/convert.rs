@@ -184,7 +184,16 @@ fn the_node_hierarchy_reproduces_the_bind_pose_the_file_recorded() {
     }
 
     let mut worst = 0.0f32;
-    for skin in &document.skins {
+    for (skin_index, skin) in document.skins.iter().enumerate() {
+        // The mesh this skin deforms; its world transform is where the inverse
+        // bind has to put the geometry back.
+        let mesh_node = document
+            .nodes
+            .iter()
+            .position(|n| n.skin == Some(skin_index))
+            .expect("a node carries this skin");
+        let mesh_world = world[mesh_node];
+
         let names: Vec<&str> = skin
             .joints
             .iter()
@@ -223,19 +232,22 @@ fn the_node_hierarchy_reproduces_the_bind_pose_the_file_recorded() {
                 worst = worst.max((a - b).abs());
             }
 
-            // And the matrix itself. At bind the bone's matrix *is*
-            // `TransformLink`, so `jointWorld · IBM` collapses to the mesh
-            // transform the exporter recorded — which for this rig is not the
-            // identity, so the assertion has something to fail against.
+            // And the inverse bind itself. At the bind pose the bone sits at
+            // `jointWorld`, so `jointWorld · IBM` must put the geometry back at
+            // the mesh's own world transform. The arm bones are far from the
+            // mesh node, so an identity (unfilled) or double-inverted IBM fails
+            // this — which is exactly the MakeHuman collapse `rebind_from_hierarchy`
+            // fixes. `cluster.transform` is deliberately not used here: an
+            // exporter can write it as the bone's own inverse rather than the
+            // mesh's, which is what made the textbook composition wrong.
             let ibm = Mat4::from_cols_array(
                 &skin.inverse_bind_matrices
                     [skin.joints.iter().position(|j| j == joint).expect("joint")],
             );
-            let bound = Mat4::from_scale(Vec3::splat(0.01)) * cluster.transform.as_mat4();
             for (a, b) in (world[*joint] * ibm)
                 .to_cols_array()
                 .iter()
-                .zip(bound.to_cols_array().iter())
+                .zip(mesh_world.to_cols_array().iter())
             {
                 worst = worst.max((a - b).abs());
             }
