@@ -250,6 +250,13 @@ export interface FittedSkeleton {
    * assumes a pose — see the pose-handling epic (P3-P2).
    */
   readonly pose: string
+  /**
+   * Reuse the imported model's own skin weights instead of re-solving them.
+   * Set by `skeletonFromImport` for an already-rigged model; absent/false for a
+   * template fit. Carried back to the backend so the bind keeps the artist's
+   * weights (optional: the backend defaults it to false).
+   */
+  readonly reuse_weights?: boolean
 }
 
 /** The creature templates that ship with the app. */

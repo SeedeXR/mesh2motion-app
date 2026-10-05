@@ -465,7 +465,7 @@ fn two_chains_differing_only_in_direction_are_told_apart() {
 }
 
 fn known_rigs() -> Vec<m2m_rig::automap::KnownRig> {
-    ["mixamo.json", "rigify.json"]
+    ["mixamo.json", "rigify.json", "makehuman.json"]
         .iter()
         .map(|file| {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/known-rigs/").to_owned() + file;
@@ -497,6 +497,12 @@ fn a_mixamo_rig_is_recognised_and_mapped_by_name() {
     let mixamo = rigs.iter().find(|r| r.name == "mixamo").expect("the table");
     let coverage = mixamo.coverage(&theirs);
     assert!(coverage > 0.9, "mixamo table covers only {coverage:.2}");
+    // The field is absent from mixamo.json, so the default must keep its fingers
+    // retargetable (only MakeHuman opts out).
+    assert!(
+        mixamo.retarget_digits,
+        "mixamo retargets fingers by default"
+    );
 
     let (mapping, strategy) = m2m_rig::automap::map_bones_best(&ours, &theirs, &rigs, 0.5);
     assert_eq!(strategy, m2m_rig::automap::Strategy::Known("mixamo".into()));
@@ -515,6 +521,89 @@ fn a_mixamo_rig_is_recognised_and_mapped_by_name() {
         "got {}",
         theirs.names[to]
     );
+}
+
+/// A MakeHuman rig is recognised through its table and its bones map by name.
+///
+/// MakeHuman's names (`hips`, `upperarm01.L`, `finger3-1.L`) match neither the
+/// template nor the Mixamo/Rigify tables, so before the table they fell to
+/// structural matching, which mis-pairs limbs and cannot tell fingers apart. The
+/// table maps them by name instead. (Whether a clip's finger motion is then
+/// *applied* is a separate retarget choice — `retarget_digits` — tested in the
+/// pipeline; the mapping itself is by name, which is what this checks.)
+#[test]
+fn a_makehuman_rig_is_recognised() {
+    // Our canonical human rig, renamed to MakeHuman names via the shipped table,
+    // gives a structurally-valid skeleton that carries MakeHuman names.
+    let ours = skeleton_of("rigs/rig-human.glb");
+    let table: serde_json::Value = {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/known-rigs/makehuman.json");
+        serde_json::from_str(&std::fs::read_to_string(path).expect("reads")).expect("parses")
+    };
+    let bones = table["bones"].as_object().expect("bones map");
+    let theirs = Skeleton {
+        names: ours
+            .names
+            .iter()
+            .map(|n| {
+                bones
+                    .get(n)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(n)
+                    .to_owned()
+            })
+            .collect(),
+        parents: ours.parents.clone(),
+        positions: ours.positions.clone(),
+    };
+    let rigs = known_rigs();
+
+    let makehuman = rigs
+        .iter()
+        .find(|r| r.name == "makehuman")
+        .expect("the table");
+    let coverage = makehuman.coverage(&theirs);
+    assert!(coverage > 0.9, "makehuman table covers only {coverage:.2}");
+
+    let (mapping, strategy) = m2m_rig::automap::map_bones_best(&ours, &theirs, &rigs, 0.5);
+    assert_eq!(
+        strategy,
+        m2m_rig::automap::Strategy::Known("makehuman".into()),
+        "MakeHuman must be recognised by table, not matched structurally"
+    );
+
+    // A body bone maps by name through the table (structure mis-pairs limbs).
+    let upperarm = ours
+        .names
+        .iter()
+        .position(|n| n == "upperarm_l")
+        .expect("bone");
+    let to = mapping.get(&upperarm).copied().expect("mapped");
+    assert_eq!(
+        m2m_rig::automap::normalised_bone_name(&theirs.names[to]),
+        m2m_rig::automap::normalised_bone_name("upperarm01.L"),
+        "got {}",
+        theirs.names[to]
+    );
+
+    // A middle-finger bone maps to MakeHuman's middle finger by name — only the
+    // table gets this right; structure cannot tell the fingers apart.
+    let middle = ours
+        .names
+        .iter()
+        .position(|n| n == "middle_01_l")
+        .expect("bone");
+    let to = mapping.get(&middle).copied().expect("mapped");
+    assert_eq!(
+        m2m_rig::automap::normalised_bone_name(&theirs.names[to]),
+        m2m_rig::automap::normalised_bone_name("finger3-1.L"),
+        "got {}",
+        theirs.names[to]
+    );
+
+    // MakeHuman opts out of finger retargeting (its digits are oriented unlike
+    // the library's); the body still animates.
+    assert!(!makehuman.retarget_digits);
 }
 
 /// A rig with Rigify's deform names is recognised as Rigify, not Mixamo.
