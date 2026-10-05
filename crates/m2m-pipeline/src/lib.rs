@@ -1781,6 +1781,23 @@ fn is_digit_bone(name: &str) -> bool {
     DIGITS.iter().any(|digit| name.starts_with(digit))
 }
 
+/// Drops the twist component of a rotation about `axis`, keeping the swing.
+///
+/// Swing/twist decomposition: the part of `q` that spins about `axis` is the
+/// quaternion whose vector part is `q`'s vector projected onto `axis`; removing
+/// it leaves the part that tilts `axis` itself. Used to stop a single-bone arm
+/// from spinning about its own length (see [`retarget_clip`]).
+fn swing_only(q: glam::Quat, axis: glam::Vec3) -> glam::Quat {
+    let projected = axis * glam::Vec3::new(q.x, q.y, q.z).dot(axis);
+    let twist = glam::Quat::from_xyzw(projected.x, projected.y, projected.z, q.w);
+    // A twist with no length means `q` is a pure swing already (its axis is
+    // perpendicular to `axis`); leave it untouched rather than divide by zero.
+    if twist.length_squared() < 1e-12 {
+        return q;
+    }
+    (q * twist.normalize().inverse()).normalize()
+}
+
 /// Pairs a library (source) bone to a target bone: by exact name first (the
 /// template case, where names match), else the name-table + structural
 /// auto-mapper (an imported rig with foreign names), minus any digits a
@@ -1928,11 +1945,55 @@ fn retarget_clip(
     };
     // Character Arm-Space: widen/narrow the arms around the neutral 50 (±30°).
     let angle = (arm_space - 50.0) / 50.0 * 30.0_f32.to_radians();
-    let moved = if angle != 0.0 {
+    let mut moved = if angle != 0.0 {
         m2m_rig::retarget::spread_arms(&moved, &skeleton.bones, angle)
     } else {
         moved
     };
+
+    // A reused import rig has one bone per arm segment and no twist joints, so a
+    // library clip's arm twist — transferred verbatim — spins the whole segment
+    // and collapses the shoulder ("candy-wrapper") on high-arm poses. Strip the
+    // axial twist from the arm bones so they swing without spinning. Only the
+    // reuse path needs this: a fitted template shares the library's rig (exact
+    // names, no bridging) and its soft geodesic weights do not collapse.
+    if skeleton.reuse_weights {
+        let world = world_rotation; // rest world rotation per bone, computed above
+        let position = |i: usize| {
+            skeleton
+                .positions
+                .get(i)
+                .map_or(glam::Vec3::ZERO, |p| glam::Vec3::from(*p))
+        };
+        // Target arm bones (upper + lower, both sides), and each one's rest
+        // direction toward its child in the parent's frame — the twist axis.
+        const ARMS: [&str; 4] = ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r"];
+        let twist_axis: std::collections::HashMap<usize, glam::Vec3> = source
+            .skeleton
+            .names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| ARMS.contains(&name.as_str()))
+            .filter_map(|(src, _)| mapping.get(&src).copied())
+            .filter_map(|bone| {
+                let child =
+                    (0..skeleton.bones.len()).find(|&c| skeleton.parents[c] == Some(bone))?;
+                let parent = skeleton.parents.get(bone).copied().flatten();
+                let parent_world = parent.map_or(glam::Quat::IDENTITY, |p| world[p]);
+                let axis = (parent_world.inverse() * (position(child) - position(bone)))
+                    .normalize_or_zero();
+                (axis != glam::Vec3::ZERO).then_some((bone, axis))
+            })
+            .collect();
+        for track in moved.tracks.iter_mut() {
+            if let Some(&axis) = twist_axis.get(&track.bone) {
+                for q in track.rotations.iter_mut() {
+                    *q = swing_only(*q, axis);
+                }
+            }
+        }
+    }
+
     let scale = m2m_rig::retarget::height_scale(&source.skeleton, &target);
     let moved_translations = m2m_rig::retarget::retarget_translations(
         &source.translations,
@@ -2597,6 +2658,22 @@ mod tests {
     fn model(relative: &str) -> Vec<u8> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/").to_owned() + relative;
         std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+    }
+
+    /// `swing_only` removes rotation about its axis and keeps rotation across it.
+    #[test]
+    fn swing_only_strips_axial_twist() {
+        use glam::{Quat, Vec3};
+        let axis = Vec3::X;
+        let twist = Quat::from_axis_angle(Vec3::X, 1.2);
+        let swing = Quat::from_axis_angle(Vec3::Y, 0.7);
+
+        // A pure twist about the axis is removed.
+        assert!(super::swing_only(twist, axis).angle_between(Quat::IDENTITY) < 1e-4);
+        // A pure swing across the axis is untouched.
+        assert!(super::swing_only(swing, axis).angle_between(swing) < 1e-4);
+        // In a swing∘twist, only the twist is dropped.
+        assert!(super::swing_only(swing * twist, axis).angle_between(swing) < 1e-3);
     }
 
     #[test]
