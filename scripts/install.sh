@@ -10,6 +10,16 @@ cd "$(dirname "$0")/.."
 OUT="output"
 DEST="/Applications"
 
+# Build BOTH the .app and the .dmg by default. tauri.conf.json's default target
+# is app-only, so without this the dmg in ./output goes stale while the .app is
+# rebuilt — the exact "the app works but the dmg doesn't" trap. An explicit
+# --bundles in the caller's args wins.
+args=("$@")
+case " $* " in
+  *" --bundles "*) ;;
+  *) args+=(--bundles app dmg) ;;
+esac
+
 # Full Apple credentials present? Then build + sign + notarize + verify;
 # otherwise a plain (unsigned, local) build.
 signing=0
@@ -22,10 +32,10 @@ fi
 
 if [ "$signing" = 1 ]; then
   echo "==> Apple credentials found — building, signing and notarizing…"
-  bash scripts/notarize.sh "$@"
+  bash scripts/notarize.sh "${args[@]}"
 else
   echo "==> No Apple credentials — building unsigned (fine for local use)…"
-  bash scripts/build.sh "$@"
+  bash scripts/build.sh "${args[@]}"
 fi
 
 APP=$(find "$OUT" -maxdepth 1 -name '*.app' | head -1 || true)
@@ -36,6 +46,10 @@ echo "==> Installing $name into ${DEST}…"
 rm -rf "${DEST:?}/$name"
 cp -R "$APP" "$DEST/"
 echo "Installed $DEST/$name"
+
+# The dmg is the distributable; report it so it is not overlooked.
+DMG=$(find "$OUT" -maxdepth 1 -name '*.dmg' | head -1 || true)
+[ -n "$DMG" ] && echo "Distributable dmg: $DMG"
 
 # --- The rigging MCP server -------------------------------------------------
 # Build the MCP binary (agents drive the whole pipeline through it), verify it
