@@ -320,7 +320,11 @@ fn read_as_glb(path: &str) -> Result<tauri::ipc::Response, String> {
         m2m_io::glb::read(&bytes).map_err(|e| e.to_string())?;
         return Ok(tauri::ipc::Response::new(bytes));
     }
-    let document = m2m_io::import::load(&bytes).map_err(|e| e.to_string())?;
+    let mut document = m2m_io::import::load(&bytes).map_err(|e| e.to_string())?;
+    // Flatten skinned mesh nodes to identity so the viewport (three.js) does not
+    // fold the mesh up with the FBX armature's scale. Display only — the rigging
+    // pipeline reads the mesh through `mesh_of`, which is unaffected.
+    document.bake_skinned_meshes();
     let glb = m2m_io::glb::write(&document).map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(glb))
 }

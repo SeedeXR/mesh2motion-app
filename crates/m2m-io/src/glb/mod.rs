@@ -437,6 +437,63 @@ impl Document {
         seen.dedup();
         seen.len()
     }
+
+    /// Bakes every skinned mesh node's world transform into its geometry and
+    /// leaves the node at identity, so the skin alone places the mesh.
+    ///
+    /// glTF ignores a skinned mesh node's own transform, and Blender honours
+    /// that — but three.js (which the viewport renders with) applies the node's
+    /// scale. A model converted from an FBX carries that scale (MakeHuman puts
+    /// its skeleton under a 0.01 armature), which three.js folds the mesh up
+    /// with while Blender shows it fine. Flattening the node matches a skinned
+    /// mesh three.js already renders cleanly.
+    ///
+    /// With the geometry now in world space, each inverse bind is just the
+    /// inverse of its joint's world transform.
+    pub fn bake_skinned_meshes(&mut self) {
+        let world = self.world_transforms();
+        let skinned = |n: usize| self.nodes.get(n).is_some_and(|node| node.skin.is_some());
+
+        for primitive in &mut self.primitives {
+            let Some(node) = primitive.node.filter(|&n| skinned(n)) else {
+                continue;
+            };
+            let matrix = world.get(node).copied().unwrap_or(glam::Mat4::IDENTITY);
+            for point in primitive.positions.chunks_exact_mut(3) {
+                let moved = matrix.transform_point3(glam::Vec3::new(point[0], point[1], point[2]));
+                point.copy_from_slice(&moved.to_array());
+            }
+            if !primitive.normals.is_empty() {
+                let normal_matrix = matrix.inverse().transpose();
+                for normal in primitive.normals.chunks_exact_mut(3) {
+                    let moved = normal_matrix
+                        .transform_vector3(glam::Vec3::new(normal[0], normal[1], normal[2]))
+                        .normalize_or_zero();
+                    normal.copy_from_slice(&moved.to_array());
+                }
+            }
+        }
+
+        for skin in &mut self.skins {
+            for (slot, &joint) in skin.joints.iter().enumerate() {
+                let joint_world = world.get(joint).copied().unwrap_or(glam::Mat4::IDENTITY);
+                if let Some(ibm) = skin.inverse_bind_matrices.get_mut(slot) {
+                    *ibm = joint_world.inverse().to_cols_array();
+                }
+            }
+        }
+
+        for node in &mut self.nodes {
+            if node.skin.is_some() {
+                node.parent = None;
+                node.transform = Trs {
+                    translation: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0; 3],
+                };
+            }
+        }
+    }
 }
 
 /// Reads a self-contained `.glb`.
