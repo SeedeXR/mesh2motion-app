@@ -457,3 +457,59 @@ fn an_embedded_fbx_texture_is_read_back() {
     assert_eq!(image.mime, "image/png");
     assert_eq!(document.primitives[0].material, Some(0));
 }
+
+/// Baking flattens every skinned mesh node to identity and puts the geometry in
+/// world metres — the structure three.js renders without folding the mesh up
+/// with the FBX armature's scale.
+#[test]
+fn baking_flattens_skinned_nodes_for_display() {
+    use glam::Vec3;
+    let mut document = fbx_to_gltf(&scene()).expect("converts");
+    document.bake_skinned_meshes();
+
+    for node in &document.nodes {
+        if node.skin.is_some() {
+            assert_eq!(
+                node.transform.scale,
+                [1.0, 1.0, 1.0],
+                "skinned node {:?} was not flattened",
+                node.name
+            );
+            assert_eq!(node.transform.translation, [0.0, 0.0, 0.0]);
+            assert!(
+                node.parent.is_none(),
+                "a skinned node must be an identity root"
+            );
+        }
+    }
+
+    // World-space geometry now spans a human-ish height on its own, with no node
+    // scale left to apply.
+    let tallest = document
+        .primitives
+        .iter()
+        .map(|p| {
+            let ys: Vec<f32> = p.positions.chunks_exact(3).map(|v| v[1]).collect();
+            ys.iter().copied().fold(f32::MIN, f32::max)
+                - ys.iter().copied().fold(f32::MAX, f32::min)
+        })
+        .fold(0.0f32, f32::max);
+    assert!(
+        (1.2..2.5).contains(&tallest),
+        "baked character is {tallest} m tall"
+    );
+
+    // And the bind is consistent: at the bind pose each joint, times its inverse
+    // bind, lands at identity (the mesh node is now identity).
+    let world = document.world_transforms();
+    for skin in &document.skins {
+        for (slot, &joint) in skin.joints.iter().enumerate() {
+            let m = world[joint] * glam::Mat4::from_cols_array(&skin.inverse_bind_matrices[slot]);
+            let offset = (m * Vec3::ZERO.extend(1.0)).truncate().length();
+            assert!(
+                offset < 1e-3,
+                "joint {slot} inverse bind is off by {offset}"
+            );
+        }
+    }
+}
